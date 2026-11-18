@@ -19,7 +19,7 @@ dream_http_client 3.0.1 introduces per-file recording strategy for better perfor
 Recordings are now stored in individual files instead of a single `recordings.json` file.
 
 **Filename Format:**
-```
+```text
 {method}_{host}_{path}_{hash}.json
 ```
 
@@ -120,22 +120,22 @@ New recordings are saved as individual files. Existing `recordings.json` files s
 
 All 97 tests pass:
 
-```
+```text
 97 passed, no failures
 ```
 
 ## Documentation
 
 - [dream_http_client](https://hexdocs.pm/dream_http_client) - v3.0.1
-- [Full Documentation](https://github.com/TrustBound/dream/tree/main/modules/http_client)
+- [Full Documentation](https://github.com/TrustBound/dream_http_client/tree/main)
 
 ## Community
 
-- 📖 [Full Documentation](https://github.com/TrustBound/dream/tree/main/modules/http_client)
+- 📖 [Full Documentation](https://github.com/TrustBound/dream_http_client/tree/main)
 - 💬 [Discussions](https://github.com/TrustBound/dream/discussions)
 - 🐛 [Report Issues](https://github.com/TrustBound/dream/issues)
 - 🤝 [Contributing Guide](https://github.com/TrustBound/dream/blob/main/CONTRIBUTING.md)
 
 ---
 
-**Full Changelog:** [CHANGELOG.md](https://github.com/TrustBound/dream/blob/main/modules/http_client/CHANGELOG.md)
+**Full Changelog:** [CHANGELOG.md](https://github.com/TrustBound/dream_http_client/blob/main/CHANGELOG.md)

@@ -32,17 +32,25 @@ import gleam/string
 ///
 /// ## Examples
 ///
+/// ### Describe a request <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_request.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let request = recording.RecordedRequest(
-///   method: http.Get,
-///   scheme: http.Https,
-///   host: "api.example.com",
-///   port: option.None,
-///   path: "/users/123",
-///   query: option.Some("fields=name,email"),
-///   headers: [#("Authorization", "Bearer token123")],
-///   body: "",
-/// )
+/// import dream_http_client/recording
+/// import gleam/http
+/// import gleam/option
+///
+/// pub fn user_request() -> recording.RecordedRequest {
+///   recording.RecordedRequest(
+///     method: http.Get,
+///     scheme: http.Https,
+///     host: "api.example.com",
+///     port: option.None,
+///     path: "/users/123",
+///     query: option.Some("fields=name,email"),
+///     headers: [#("Authorization", "Bearer token123")],
+///     body: "",
+///   )
+/// }
 /// ```
 pub type RecordedRequest {
   RecordedRequest(
@@ -69,23 +77,29 @@ pub type RecordedRequest {
 ///
 /// ## Examples
 ///
-/// ```gleam
-/// // Blocking response
-/// let blocking = recording.BlockingResponse(
-///   status: 200,
-///   headers: [#("Content-Type", "application/json")],
-///   body: "{\"users\": []}",
-/// )
+/// ### Describe responses <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_response.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// // Streaming response
-/// let streaming = recording.StreamingResponse(
-///   status: 200,
-///   headers: [#("Content-Type", "text/event-stream")],
-///   chunks: [
-///     recording.Chunk(data: <<"chunk1":utf8>>, delay_ms: 100),
-///     recording.Chunk(data: <<"chunk2":utf8>>, delay_ms: 100),
-///   ],
-/// )
+/// ```gleam
+/// import dream_http_client/recording
+///
+/// pub fn blocking() -> recording.RecordedResponse {
+///   recording.BlockingResponse(
+///     status: 200,
+///     headers: [#("Content-Type", "application/json")],
+///     body: "{\"users\": []}",
+///   )
+/// }
+///
+/// pub fn streaming() -> recording.RecordedResponse {
+///   recording.StreamingResponse(
+///     status: 200,
+///     headers: [#("Content-Type", "text/event-stream")],
+///     chunks: [
+///       recording.Chunk(data: <<"chunk1":utf8>>, delay_ms: 100),
+///       recording.Chunk(data: <<"chunk2":utf8>>, delay_ms: 100),
+///     ],
+///   )
+/// }
 /// ```
 pub type RecordedResponse {
   BlockingResponse(status: Int, headers: List(#(String, String)), body: String)
@@ -109,11 +123,18 @@ pub type RecordedResponse {
 ///
 /// ## Examples
 ///
+/// ### Describe a chunk <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_chunk.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let chunk = recording.Chunk(
-///   data: <<"Hello, ":utf8>>,
-///   delay_ms: 50,  // 50ms delay before this chunk
-/// )
+/// import dream_http_client/recording
+///
+/// pub fn greeting_chunk() -> recording.Chunk {
+///   recording.Chunk(
+///     data: <<"Hello, ":utf8>>,
+///     // 50ms delay before this chunk
+///     delay_ms: 50,
+///   )
+/// }
 /// ```
 pub type Chunk {
   Chunk(data: BitArray, delay_ms: Int)
@@ -131,11 +152,17 @@ pub type Chunk {
 ///
 /// ## Examples
 ///
+/// ### Pair a request with a response <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_recording.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let recording = recording.Recording(
-///   request: recorded_request,
-///   response: recorded_response,
-/// )
+/// import dream_http_client/recording
+///
+/// pub fn pair(
+///   recorded_request: recording.RecordedRequest,
+///   recorded_response: recording.RecordedResponse,
+/// ) -> recording.Recording {
+///   recording.Recording(request: recorded_request, response: recorded_response)
+/// }
 /// ```
 pub type Recording {
   Recording(request: RecordedRequest, response: RecordedResponse)
@@ -154,11 +181,14 @@ pub type Recording {
 ///
 /// ## Examples
 ///
+/// ### Build a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_file.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let file = recording.RecordingFile(
-///   version: "1.0",
-///   entries: [recording1, recording2, recording3],
-/// )
+/// import dream_http_client/recording
+///
+/// pub fn file_of(entries: List(recording.Recording)) -> recording.RecordingFile {
+///   recording.RecordingFile(version: "1.0", entries: entries)
+/// }
 /// ```
 ///
 /// ## Notes
@@ -190,15 +220,18 @@ pub type RecordingFile {
 ///
 /// ## Examples
 ///
-/// ```gleam
-/// let file = recording.RecordingFile(
-///   version: "1.0",
-///   entries: [recording1, recording2],
-/// )
+/// ### Encode a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_encode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// let json_value = recording.encode_recording_file(file)
-/// let json_string = json.to_string(json_value)
-/// // Now write json_string to disk
+/// ```gleam
+/// import dream_http_client/recording
+/// import gleam/json
+///
+/// pub fn to_json_string(entries: List(recording.Recording)) -> String {
+///   let file = recording.RecordingFile(version: "1.0", entries: entries)
+///   let json_value = recording.encode_recording_file(file)
+///   // Now write the string to disk
+///   json.to_string(json_value)
+/// }
 /// ```
 ///
 /// ## Notes
@@ -369,16 +402,30 @@ fn encode_scheme(scheme: http.Scheme) -> json.Json {
 ///
 /// ## Examples
 ///
-/// ```gleam
-/// // Read JSON from an individual recording file
-/// let assert Ok(json_content) = simplifile.read("mocks/GET_api.example.com_users_a3f5b2.json")
+/// ### Decode a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_decode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// // Decode to RecordingFile (each file contains one entry)
-/// case recording.decode_recording_file(json_content) {
-///   Ok(file) -> {
-///     io.println("Loaded " <> int.to_string(list.length(file.entries)) <> " recording(s)")
+/// ```gleam
+/// import dream_http_client/recording
+/// import gleam/int
+/// import gleam/list
+/// import gleam/result
+/// import gleam/string
+/// import simplifile
+///
+/// pub fn count_entries(path: String) -> Result(String, String) {
+///   // Read JSON from one recording file
+///   use json_content <- result.try(
+///     simplifile.read(path) |> result.map_error(string.inspect),
+///   )
+///
+///   // Decode it to a RecordingFile (each file holds one entry)
+///   case recording.decode_recording_file(json_content) {
+///     Ok(file) ->
+///       Ok(
+///         "Loaded " <> int.to_string(list.length(file.entries)) <> " recording(s)",
+///       )
+///     Error(reason) -> Error("Failed to decode: " <> reason)
 ///   }
-///   Error(reason) -> io.println_error("Failed to decode: " <> reason)
 /// }
 /// ```
 ///
@@ -391,12 +438,8 @@ fn encode_scheme(scheme: http.Scheme) -> json.Json {
 pub fn decode_recording_file(
   json_string: String,
 ) -> Result(RecordingFile, String) {
-  use json_value <- result.try(
-    json.parse(json_string, decode.dynamic)
-    |> result.map_error(format_json_error),
-  )
-  decode.run(json_value, decode_recording_file_decoder())
-  |> result.map_error(format_decode_errors)
+  json.parse(json_string, decode_recording_file_decoder())
+  |> result.map_error(format_json_error)
 }
 
 fn decode_recording_file_decoder() -> decode.Decoder(RecordingFile) {
@@ -413,24 +456,16 @@ fn format_json_error(error: json.DecodeError) -> String {
     json.UnexpectedEndOfInput -> "Unexpected end of JSON input"
     json.UnexpectedByte(msg) -> "Unexpected byte: " <> msg
     json.UnexpectedSequence(msg) -> "Unexpected sequence: " <> msg
-    json.UnableToDecode(errors) ->
-      "Unable to decode: " <> string.inspect(errors)
+    json.UnableToDecode(errors) -> format_decode_errors(errors)
   }
 }
 
+// decode.run gives at least one error. The message names the first one.
 fn format_decode_errors(errors: List(decode.DecodeError)) -> String {
-  case list.first(errors) {
-    Ok(error) -> format_single_decode_error(error)
-    Error(empty_list_error) -> {
-      // We did not get any concrete decode errors back; log that situation so
-      // it is visible when troubleshooting.
-      io.println_error(
-        "Decode error with no details in recording file: "
-        <> string.inspect(empty_list_error),
-      )
-      "Decode error with no details"
-    }
-  }
+  errors
+  |> list.take(1)
+  |> list.map(format_single_decode_error)
+  |> string.concat
 }
 
 fn format_single_decode_error(error: decode.DecodeError) -> String {

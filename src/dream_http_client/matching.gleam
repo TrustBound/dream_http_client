@@ -33,14 +33,18 @@ import gleam/string
 ///
 /// ## Example
 ///
+/// ### Key on method and URL <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_matching_key.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/matching
 /// import dream_http_client/recorder.{key}
 ///
-/// let key_fn =
-///   matching.request_key(method: True, url: True, headers: False, body: False)
+/// pub fn method_and_url_builder() -> recorder.RecorderBuilder {
+///   let key_fn =
+///     matching.request_key(method: True, url: True, headers: False, body: False)
 ///
-/// let builder = recorder.new() |> key(key_fn)
+///   recorder.new() |> key(key_fn)
+/// }
 /// ```
 pub type MatchKey =
   fn(recording.RecordedRequest) -> String
@@ -64,31 +68,40 @@ pub type MatchKey =
 ///
 /// ## Example
 ///
+/// ### Key without the Authorization header <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_matching_scrubbed_key.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/matching
+/// import dream_http_client/recorder.{
+///   directory, key, mode, request_transformer, start,
+/// }
 /// import dream_http_client/recording
-/// import dream_http_client/recorder.{directory, key, mode, request_transformer, start}
 /// import gleam/list
-///
-/// // Build a key that ignores headers and body.
-/// let key =
-///   matching.request_key(method: True, url: True, headers: False, body: False)
+/// import gleam/result
 ///
 /// // Drop Authorization before keying and before writing to disk.
-/// fn drop_auth(req: recording.RecordedRequest) -> recording.RecordedRequest {
+/// fn drop_auth(request: recording.RecordedRequest) -> recording.RecordedRequest {
 ///   let headers =
-///     req.headers
-///     |> list.filter(fn(h) { h.0 != "Authorization" })
-///   recording.RecordedRequest(..req, headers: headers)
+///     request.headers
+///     |> list.filter(fn(header) { header.0 != "Authorization" })
+///   recording.RecordedRequest(..request, headers: headers)
 /// }
 ///
-/// let assert Ok(rec) =
-///   recorder.new()
-///   |> mode("record")
-///   |> directory("mocks/api")
-///   |> key(key)
-///   |> request_transformer(drop_auth)
-///   |> start()
+/// pub fn start_scrubbed(mocks_directory: String) -> Result(Bool, String) {
+///   // Build a key that ignores headers and body.
+///   let key_fn =
+///     matching.request_key(method: True, url: True, headers: False, body: False)
+///
+///   use rec <- result.map(
+///     recorder.new()
+///     |> mode("record")
+///     |> directory(mocks_directory)
+///     |> key(key_fn)
+///     |> request_transformer(drop_auth)
+///     |> start(),
+///   )
+///   recorder.is_record_mode(rec)
+/// }
 /// ```
 pub fn request_key(
   method method: Bool,

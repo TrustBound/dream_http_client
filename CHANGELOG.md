@@ -14,12 +14,28 @@ version.
 
 ### Fixed
 
+- A streamed response with an empty body now ends at once: `stream_yielder`
+  yields nothing and `start_stream` calls `on_stream_end([])`. Before, the
+  stream waited until it timed out.
+- Transport errors now come back as the `TransportError` docs describe. An
+  HTTP/2 stream reset gives `StreamReset(code, description)`, an HTTP/2
+  connection error gives `ConnectionError`, a closed connection gives
+  `RemoteClosed`, and a killed connection gives `ProcessDown`. Before, most of
+  them came back as `Unexpected`. A GOAWAY now gets the one stale-connection
+  retry.
+- A streamed redirect now works like `send`. A 3xx response with no Location
+  returns `HttpFailure` at once instead of waiting until it timed out, and a
+  redirect loop returns `Unexpected("Too many redirects (max 5)")` instead of
+  streaming the sixth response as a success.
+- A stream no longer leaves a process running after the process that started
+  it stops, and each stream has one timeout, so no late reply arrives.
 - Fixed PUT, POST, and PATCH requests hanging when sent with an empty body.
   The underlying gun dispatch now uses `gun:request/5` directly instead of
   method-specific functions that behave inconsistently for empty bodies.
 
 ### Changed
 
+- Moved to its own repository
 - Requests that trust different certificate authorities no longer share a
   pooled connection.
 - **HTTP backend replaced: `httpc` → `gun`.** The underlying HTTP client has

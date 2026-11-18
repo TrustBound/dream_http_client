@@ -30,13 +30,20 @@ import simplifile
 ///
 /// ## Examples
 ///
+/// ### Load recordings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_storage_load.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// // Load recordings for inspection
-/// case storage.load_recordings("mocks/api") {
-///   Ok(recordings) -> {
-///     io.println("Loaded " <> int.to_string(list.length(recordings)) <> " recordings")
+/// import dream_http_client/storage
+/// import gleam/int
+/// import gleam/list
+///
+/// pub fn describe_recordings(mocks_directory: String) -> String {
+///   // Load recordings for inspection
+///   case storage.load_recordings(mocks_directory) {
+///     Ok(recordings) ->
+///       "Loaded " <> int.to_string(list.length(recordings)) <> " recordings"
+///     Error(reason) -> "Failed to load: " <> reason
 ///   }
-///   Error(reason) -> io.println_error("Failed to load: " <> reason)
 /// }
 /// ```
 ///
@@ -120,16 +127,26 @@ pub fn load_recordings(
 ///
 /// ## Examples
 ///
+/// ### Save one recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_storage_save_one.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let rec = recording.Recording(request: req, response: resp)
+/// import dream_http_client/matching
+/// import dream_http_client/recording
+/// import dream_http_client/storage
 ///
-/// // Compute a key string using the same key policy you use for playback:
-/// let key_fn = matching.request_key(method: True, url: True, headers: False, body: False)
-/// let key = key_fn(rec.request)
+/// pub fn save_one(
+///   mocks_directory: String,
+///   recorded: recording.Recording,
+/// ) -> String {
+///   // Compute the key with the same key policy you use for playback
+///   let key_fn =
+///     matching.request_key(method: True, url: True, headers: False, body: False)
+///   let key = key_fn(recorded.request)
 ///
-/// case storage.save_recording_immediately("mocks/api", rec, key) {
-///   Ok(_) -> io.println("Saved recording")
-///   Error(reason) -> io.println_error("Failed to save: " <> reason)
+///   case storage.save_recording_immediately(mocks_directory, recorded, key) {
+///     Ok(_) -> "Saved recording"
+///     Error(reason) -> "Failed to save: " <> reason
+///   }
 /// }
 /// ```
 ///
@@ -144,21 +161,14 @@ pub fn save_recording_immediately(
   key: String,
 ) -> Result(Nil, String) {
   // Create directory if it doesn't exist
-  case simplifile.create_directory_all(directory) {
-    Ok(Nil) -> Ok(Nil)
-    Error(simplifile.Eexist) -> {
-      // Directory already exists - that's fine
-      Ok(Nil)
-    }
-    Error(directory_error) -> {
-      Error(
-        "Failed to create directory "
-        <> directory
-        <> ": "
-        <> string.inspect(directory_error),
-      )
-    }
-  }
+  // An existing directory is fine: create_directory_all returns Ok for it.
+  simplifile.create_directory_all(directory)
+  |> result.map_error(fn(directory_error) {
+    "Failed to create directory "
+    <> directory
+    <> ": "
+    <> string.inspect(directory_error)
+  })
   |> result.try(fn(_) {
     // Create recording file with single entry
     let recording_file = recording.RecordingFile(version: "1.0", entries: [rec])
@@ -206,16 +216,24 @@ pub fn save_recording_immediately(
 ///
 /// ## Examples
 ///
-/// ```gleam
-/// let recordings = [
-///   create_test_recording(),
-///   create_another_recording(),
-/// ]
-/// let key_fn = matching.request_key(method: True, url: True, headers: False, body: False)
+/// ### Save many recordings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_storage_save_many.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// case storage.save_recordings("mocks/api", recordings, key_fn) {
-///   Ok(_) -> io.println("Saved recordings successfully")
-///   Error(reason) -> io.println_error("Failed to save: " <> reason)
+/// ```gleam
+/// import dream_http_client/matching
+/// import dream_http_client/recording
+/// import dream_http_client/storage
+///
+/// pub fn save_all(
+///   mocks_directory: String,
+///   recordings: List(recording.Recording),
+/// ) -> String {
+///   let key_fn =
+///     matching.request_key(method: True, url: True, headers: False, body: False)
+///
+///   case storage.save_recordings(mocks_directory, recordings, key_fn) {
+///     Ok(_) -> "Saved recordings successfully"
+///     Error(reason) -> "Failed to save: " <> reason
+///   }
 /// }
 /// ```
 ///
@@ -230,21 +248,14 @@ pub fn save_recordings(
   key_fn: matching.MatchKey,
 ) -> Result(Nil, String) {
   // Create directory if it doesn't exist
-  case simplifile.create_directory_all(directory) {
-    Ok(Nil) -> Ok(Nil)
-    Error(simplifile.Eexist) -> {
-      // Directory already exists - that's fine
-      Ok(Nil)
-    }
-    Error(directory_error) -> {
-      Error(
-        "Failed to create directory "
-        <> directory
-        <> ": "
-        <> string.inspect(directory_error),
-      )
-    }
-  }
+  // An existing directory is fine: create_directory_all returns Ok for it.
+  simplifile.create_directory_all(directory)
+  |> result.map_error(fn(directory_error) {
+    "Failed to create directory "
+    <> directory
+    <> ": "
+    <> string.inspect(directory_error)
+  })
   |> result.try(fn(_) {
     // Save each recording to its own file
     recordings

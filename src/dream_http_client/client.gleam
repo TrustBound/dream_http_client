@@ -7,15 +7,22 @@
 ////
 //// ## Quick Example — blocking request
 ////
-//// ```gleam
-//// import dream_http_client/client.{add_header, host, path, send}
+//// ### Call an API with a token <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_call_api.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ////
-//// pub fn call_api(token: String) -> Result(String, String) {
+//// ```gleam
+//// import dream_http_client/client.{add_header, host, path, port, scheme, send}
+//// import gleam/http
+//// import gleam/result
+////
+//// pub fn call_api(token: String) -> Result(String, client.SendError) {
 ////   client.new()
-////   |> host("api.example.com")
-////   |> path("/users/123")
+////   |> scheme(http.Http)
+////   |> host("localhost")
+////   |> port(9876)
+////   |> path("/text")
 ////   |> add_header("Authorization", "Bearer " <> token)
 ////   |> send()
+////   |> result.map(fn(response) { response.body })
 //// }
 //// ```
 ////
@@ -41,22 +48,32 @@
 //// (`send()`, `stream_yielder()`, `start_stream()`) fully support both
 //// recording and playback.
 ////
+//// ### Record a call <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_record_call.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+////
 //// ```gleam
-//// import dream_http_client/client.{host, path, recorder, send}
+//// import dream_http_client/client.{host, path, port, recorder, scheme, send}
 //// import dream_http_client/recorder.{directory, mode, start}
+//// import gleam/http
+//// import gleam/result
+//// import gleam/string
 ////
-//// let assert Ok(rec) =
-////   recorder.new()
-////   |> directory("mocks/api")
-////   |> mode("record")
-////   |> start()
-////
-//// let assert Ok(body) =
+//// pub fn record_call(mocks_directory: String) -> Result(String, String) {
+////   use rec <- result.try(
+////     recorder.new()
+////     |> directory(mocks_directory)
+////     |> mode("record")
+////     |> start(),
+////   )
 ////   client.new()
-////   |> host("api.example.com")
-////   |> path("/users/123")
+////   |> scheme(http.Http)
+////   |> host("localhost")
+////   |> port(9876)
+////   |> path("/text")
 ////   |> recorder(rec)
 ////   |> send()
+////   |> result.map(fn(response) { response.body })
+////   |> result.map_error(string.inspect)
+//// }
 //// ```
 ////
 //// ## Inspecting requests
@@ -64,19 +81,21 @@
 //// `ClientRequest` is opaque to keep the public API stable; use the `get_*`
 //// functions for logging/testing.
 ////
+//// ### Read the target of a request <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_describe_target.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+////
 //// ```gleam
 //// import dream_http_client/client.{get_host, get_path, host, path}
-//// import gleam/io
 ////
-//// let req = client.new() |> host("api.example.com") |> path("/users/123")
-//// io.println("Calling: " <> get_host(req) <> get_path(req))
+//// pub fn describe_target() -> String {
+////   let request = client.new() |> host("api.example.com") |> path("/users/123")
+////   "Calling: " <> get_host(request) <> get_path(request)
+//// }
 //// ```
 
 import dream_http_client/internal
 import dream_http_client/recorder
 import dream_http_client/recording
 import gleam/bytes_tree
-import gleam/dynamic
 import gleam/dynamic/decode as d
 import gleam/erlang/atom
 import gleam/erlang/process
@@ -105,13 +124,16 @@ import gleam/yielder
 /// Headers are constructed automatically by builder functions like `add_header()`,
 /// but you'll work with this type when inspecting headers:
 ///
+/// ### Read the first header <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_first_header.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let headers = client.get_headers(request)
-/// case headers {
-///   [Header(name, value), ..] -> {
-///     io.println(name <> ": " <> value)
+/// import dream_http_client/client.{Header}
+///
+/// pub fn first_header(request: client.ClientRequest) -> String {
+///   case client.get_headers(request) {
+///     [Header(name, value), ..] -> name <> ": " <> value
+///     [] -> "No headers"
 ///   }
-///   [] -> io.println("No headers")
 /// }
 /// ```
 ///
@@ -138,13 +160,18 @@ pub type Header {
 ///
 /// ## Example
 ///
+/// ### Match on the response <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_describe_response.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// case client.send(request) {
-///   Ok(HttpResponse(status: 200, headers: headers, body: body)) ->
-///     process_success(headers, body)
-///   Ok(HttpResponse(status: status, body: body, ..)) ->
-///     handle_redirect(status, body)
-///   Error(_) -> handle_error()
+/// import dream_http_client/client.{HttpResponse}
+/// import gleam/int
+///
+/// pub fn describe_response(request: client.ClientRequest) -> String {
+///   case client.send(request) {
+///     Ok(HttpResponse(status: 200, body: body, ..)) -> "OK: " <> body
+///     Ok(HttpResponse(status: status, ..)) -> "Status " <> int.to_string(status)
+///     Error(_) -> "Request failed"
+///   }
 /// }
 /// ```
 pub type HttpResponse {
@@ -190,16 +217,23 @@ pub type HttpResponse {
 ///
 /// ## Example
 ///
+/// ### Explain a transport error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_explain_transport_error.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// case error {
-///   ConnectFailed(reason: reason) ->
-///     io.println("Cannot reach server: " <> reason)
-///   TimedOut(timeout_ms: ms) ->
-///     io.println("Timed out after " <> int.to_string(ms) <> "ms")
-///   StreamReset(code: code, description: desc) ->
-///     io.println("Stream reset: " <> code <> " — " <> desc)
-///   _ ->
-///     io.println(transport_error_to_string(error))
+/// import dream_http_client/client.{
+///   type TransportError, ConnectFailed, StreamReset, TimedOut,
+///   transport_error_to_string,
+/// }
+/// import gleam/int
+///
+/// pub fn explain(error: TransportError) -> String {
+///   case error {
+///     ConnectFailed(reason: reason) -> "Cannot reach server: " <> reason
+///     TimedOut(timeout_ms: ms) -> "Timed out after " <> int.to_string(ms) <> "ms"
+///     StreamReset(code: code, description: description) ->
+///       "Stream reset: " <> code <> " - " <> description
+///     _ -> transport_error_to_string(error)
+///   }
 /// }
 /// ```
 pub type TransportError {
@@ -230,14 +264,22 @@ pub type TransportError {
 ///
 /// ## Example
 ///
+/// ### Explain a stream failure <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_explain_stream_failure.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// case failure {
-///   HttpFailure(response: response) ->
-///     io.println("HTTP " <> int.to_string(response.status))
-///   TransportFailure(error: ConnectFailed(reason: reason)) ->
-///     io.println("Cannot connect: " <> reason)
-///   TransportFailure(error: error) ->
-///     io.println(transport_error_to_string(error))
+/// import dream_http_client/client.{
+///   type StreamFailure, ConnectFailed, HttpFailure, TransportFailure,
+///   transport_error_to_string,
+/// }
+/// import gleam/int
+///
+/// pub fn explain_failure(failure: StreamFailure) -> String {
+///   case failure {
+///     HttpFailure(response: response) -> "HTTP " <> int.to_string(response.status)
+///     TransportFailure(error: ConnectFailed(reason: reason)) ->
+///       "Cannot connect: " <> reason
+///     TransportFailure(error: error) -> transport_error_to_string(error)
+///   }
 /// }
 /// ```
 pub type StreamFailure {
@@ -252,9 +294,14 @@ pub type StreamFailure {
 ///
 /// ## Example
 ///
+/// ### Describe a transport error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_error_to_string.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let msg = transport_error_to_string(ConnectFailed(reason: "Connection refused"))
-/// // => "Connection failed: Connection refused"
+/// import dream_http_client/client.{ConnectFailed, transport_error_to_string}
+///
+/// pub fn connect_failed_message() -> String {
+///   transport_error_to_string(ConnectFailed(reason: "Connection refused"))
+/// }
 /// ```
 pub fn transport_error_to_string(error: TransportError) -> String {
   case error {
@@ -284,9 +331,16 @@ pub fn transport_error_to_string(error: TransportError) -> String {
 ///
 /// ## Example
 ///
+/// ### Describe a stream failure <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_stream_failure_to_string.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let msg = stream_failure_to_string(TransportFailure(error: TimedOut(timeout_ms: 5000)))
-/// // => "Timed out after 5000ms"
+/// import dream_http_client/client.{
+///   TimedOut, TransportFailure, stream_failure_to_string,
+/// }
+///
+/// pub fn timeout_message() -> String {
+///   stream_failure_to_string(TransportFailure(error: TimedOut(timeout_ms: 5000)))
+/// }
 /// ```
 pub fn stream_failure_to_string(failure: StreamFailure) -> String {
   case failure {
@@ -312,16 +366,24 @@ pub fn stream_failure_to_string(failure: StreamFailure) -> String {
 ///
 /// ## Example
 ///
+/// ### Handle every send error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_send_error.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// case client.send(request) {
-///   Ok(response) ->
-///     io.println("Got " <> int.to_string(response.status))
-///   Error(ResponseError(response: response)) ->
-///     io.println("HTTP " <> int.to_string(response.status))
-///   Error(RequestError(error: ConnectFailed(reason: reason))) ->
-///     io.println("Cannot connect: " <> reason)
-///   Error(RequestError(error: error)) ->
-///     io.println("Failed: " <> transport_error_to_string(error))
+/// import dream_http_client/client.{
+///   ConnectFailed, RequestError, ResponseError, transport_error_to_string,
+/// }
+/// import gleam/int
+///
+/// pub fn send_and_describe(request: client.ClientRequest) -> String {
+///   case client.send(request) {
+///     Ok(response) -> "Got " <> int.to_string(response.status)
+///     Error(ResponseError(response: response)) ->
+///       "HTTP " <> int.to_string(response.status)
+///     Error(RequestError(error: ConnectFailed(reason: reason))) ->
+///       "Cannot connect: " <> reason
+///     Error(RequestError(error: error)) ->
+///       "Failed: " <> transport_error_to_string(error)
+///   }
 /// }
 /// ```
 pub type SendError {
@@ -352,15 +414,18 @@ pub type SendError {
 ///
 /// ## Example
 ///
+/// ### Use HTTP/2 only <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_http2_only.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client.{Http2Only}
 /// import gleam/http
 ///
-/// client.new()
+/// pub fn http2_only_request() -> client.ClientRequest {
+///   client.new()
 ///   |> client.scheme(http.Http)
 ///   |> client.host("internal-service.local")
 ///   |> client.protocols(Http2Only)
-///   |> client.send()
+/// }
 /// ```
 pub type Protocols {
   Http1Only
@@ -387,12 +452,16 @@ pub type Protocols {
 ///
 /// ## Example
 ///
+/// ### Log warnings only <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_log_level.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client.{LogWarning}
 ///
-/// client.transport_config()
+/// pub fn warnings_only() -> Nil {
+///   client.transport_config()
 ///   |> client.log_level(LogWarning)
 ///   |> client.configure_transport()
+/// }
 /// ```
 pub type LogLevel {
   LogDebug
@@ -465,14 +534,18 @@ pub opaque type ClientRequest {
 ///
 /// ## Example
 ///
+/// ### Build a request <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_new.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client.{host, method, new, path}
 /// import gleam/http.{Get}
 ///
-/// new()
-/// |> host("api.example.com")
-/// |> path("/users/123")
-/// |> method(Get)
+/// pub fn user_request() -> client.ClientRequest {
+///   new()
+///   |> host("api.example.com")
+///   |> path("/users/123")
+///   |> method(Get)
+/// }
 /// ```
 pub fn new() -> ClientRequest {
   ClientRequest(
@@ -512,12 +585,16 @@ pub fn new() -> ClientRequest {
 ///
 /// ## Example
 ///
+/// ### Set the method <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_method.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 /// import gleam/http
 ///
-/// client.new()
-/// |> client.method(http.Post)
+/// pub fn post_request() -> client.ClientRequest {
+///   client.new()
+///   |> client.method(http.Post)
+/// }
 /// ```
 pub fn method(
   client_request: ClientRequest,
@@ -541,12 +618,16 @@ pub fn method(
 ///
 /// ## Example
 ///
+/// ### Set the scheme <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_scheme.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 /// import gleam/http
 ///
-/// client.new()
-/// |> client.scheme(http.Http)  // Use HTTP instead of HTTPS
+/// pub fn plain_http_request() -> client.ClientRequest {
+///   client.new()
+///   |> client.scheme(http.Http)
+/// }
 /// ```
 pub fn scheme(
   client_request: ClientRequest,
@@ -570,11 +651,15 @@ pub fn scheme(
 ///
 /// ## Example
 ///
+/// ### Set the host <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_host.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 ///
-/// client.new()
-/// |> client.host("api.example.com")
+/// pub fn api_request() -> client.ClientRequest {
+///   client.new()
+///   |> client.host("api.example.com")
+/// }
 /// ```
 pub fn host(
   client_request: ClientRequest,
@@ -599,12 +684,16 @@ pub fn host(
 ///
 /// ## Example
 ///
+/// ### Set the port <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_port.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 ///
-/// client.new()
-/// |> client.host("localhost")
-/// |> client.port(3000)  // Use port 3000 instead of default
+/// pub fn local_request() -> client.ClientRequest {
+///   client.new()
+///   |> client.host("localhost")
+///   |> client.port(3000)
+/// }
 /// ```
 pub fn port(client_request: ClientRequest, port_value: Int) -> ClientRequest {
   ClientRequest(..client_request, port: option.Some(port_value))
@@ -625,11 +714,15 @@ pub fn port(client_request: ClientRequest, port_value: Int) -> ClientRequest {
 ///
 /// ## Example
 ///
+/// ### Set the path <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_path.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 ///
-/// client.new()
-/// |> client.path("/api/users/123")
+/// pub fn user_request() -> client.ClientRequest {
+///   client.new()
+///   |> client.path("/api/users/123")
+/// }
 /// ```
 pub fn path(
   client_request: ClientRequest,
@@ -653,12 +746,16 @@ pub fn path(
 ///
 /// ## Example
 ///
+/// ### Set the query string <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_query.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 ///
-/// client.new()
-/// |> client.path("/api/users")
-/// |> client.query("page=1&limit=10")
+/// pub fn first_page_request() -> client.ClientRequest {
+///   client.new()
+///   |> client.path("/api/users")
+///   |> client.query("page=1&limit=10")
+/// }
 /// ```
 pub fn query(
   client_request: ClientRequest,
@@ -683,14 +780,18 @@ pub fn query(
 ///
 /// ## Example
 ///
-/// ```gleam
-/// import dream_http_client/client
+/// ### Set the headers <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_headers.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// client.new()
-/// |> client.headers([
-///   #("Authorization", "Bearer " <> token),
-///   #("Content-Type", "application/json"),
-/// ])
+/// ```gleam
+/// import dream_http_client/client.{Header}
+///
+/// pub fn json_api_request(token: String) -> client.ClientRequest {
+///   client.new()
+///   |> client.headers([
+///     Header("Authorization", "Bearer " <> token),
+///     Header("Content-Type", "application/json"),
+///   ])
+/// }
 /// ```
 pub fn headers(
   client_request: ClientRequest,
@@ -715,18 +816,24 @@ pub fn headers(
 ///
 /// ## Example
 ///
+/// ### Send a JSON body <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_body.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
+/// import gleam/http
 /// import gleam/json
 ///
-/// let json_body = json.object([
-///   #("name", json.string("Alice")),
-///   #("email", json.string("alice@example.com")),
-/// ])
+/// pub fn create_user_request() -> client.ClientRequest {
+///   let json_body =
+///     json.object([
+///       #("name", json.string("Alice")),
+///       #("email", json.string("alice@example.com")),
+///     ])
 ///
-/// client.new()
-/// |> client.method(http.Post)
-/// |> client.body(json.to_string(json_body))
+///   client.new()
+///   |> client.method(http.Post)
+///   |> client.body(json.to_string(json_body))
+/// }
 /// ```
 pub fn body(
   client_request: ClientRequest,
@@ -751,18 +858,24 @@ pub fn body(
 ///
 /// ## Example
 ///
+/// ### Attach a recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_recorder.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// import dream_http_client/client
 /// import dream_http_client/client.{host, recorder}
 /// import dream_http_client/recorder.{directory, mode, start}
+/// import gleam/result
 ///
-/// let assert Ok(rec) =
-///   recorder.new()
-///   |> directory("mocks")
-///   |> mode("record")
-///   |> start()
-///
-/// client.new() |> host("api.example.com") |> recorder(rec)
+/// pub fn recorded_request(
+///   mocks_directory: String,
+/// ) -> Result(client.ClientRequest, String) {
+///   use rec <- result.map(
+///     recorder.new()
+///     |> directory(mocks_directory)
+///     |> mode("record")
+///     |> start(),
+///   )
+///   client.new() |> host("api.example.com") |> recorder(rec)
+/// }
 /// ```
 pub fn recorder(
   client_request: ClientRequest,
@@ -782,12 +895,16 @@ pub fn recorder(
 ///
 /// ## Example
 ///
+/// ### Set a timeout <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_timeout.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client.{host, timeout}
 ///
-/// client.new()
-/// |> host("slow-api.example.com")
-/// |> timeout(60_000)  // 60 second timeout
+/// pub fn slow_request() -> client.ClientRequest {
+///   client.new()
+///   |> host("slow-api.example.com")
+///   |> timeout(60_000)
+/// }
 /// ```
 pub fn timeout(
   client_request: ClientRequest,
@@ -809,13 +926,23 @@ pub fn timeout(
 ///
 /// ## Example
 ///
+/// ### Set a connect timeout <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_connect_timeout.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
+/// import gleam/http
+/// import gleam/result
 ///
-/// client.new()
-/// |> client.host("api.example.com")
-/// |> client.connect_timeout(5000)
-/// |> client.send()
+/// pub fn fetch_with_connect_timeout() -> Result(String, client.SendError) {
+///   client.new()
+///   |> client.scheme(http.Http)
+///   |> client.host("localhost")
+///   |> client.port(9876)
+///   |> client.path("/text")
+///   |> client.connect_timeout(5000)
+///   |> client.send()
+///   |> result.map(fn(response) { response.body })
+/// }
 /// ```
 pub fn connect_timeout(
   client_request: ClientRequest,
@@ -838,15 +965,24 @@ pub fn connect_timeout(
 ///
 /// ## Example
 ///
+/// ### Inspect a redirect <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_auto_redirect.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
+/// import gleam/http
+/// import gleam/result
 ///
-/// // Disable auto-redirect to inspect the 3xx response
-/// client.new()
-/// |> client.host("api.example.com")
-/// |> client.path("/old-endpoint")
-/// |> client.auto_redirect(False)
-/// |> client.send()
+/// pub fn redirect_status() -> Result(Int, client.SendError) {
+///   // Disable auto-redirect to inspect the 3xx response
+///   client.new()
+///   |> client.scheme(http.Http)
+///   |> client.host("localhost")
+///   |> client.port(9876)
+///   |> client.path("/redirect/301")
+///   |> client.auto_redirect(False)
+///   |> client.send()
+///   |> result.map(fn(response) { response.status })
+/// }
 /// ```
 pub fn auto_redirect(
   client_request: ClientRequest,
@@ -863,15 +999,18 @@ pub fn auto_redirect(
 ///
 /// For HTTP/2 over cleartext (h2c), use `Http2Only` with `scheme(http.Http)`:
 ///
+/// ### Use HTTP/2 only <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_http2_only.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client.{Http2Only}
 /// import gleam/http
 ///
-/// client.new()
+/// pub fn http2_only_request() -> client.ClientRequest {
+///   client.new()
 ///   |> client.scheme(http.Http)
 ///   |> client.host("internal-service.local")
 ///   |> client.protocols(Http2Only)
-///   |> client.send()
+/// }
 /// ```
 pub fn protocols(
   client_request: ClientRequest,
@@ -893,6 +1032,33 @@ pub fn protocols(
 /// ignore it.
 ///
 /// If the file cannot be read, the request fails with a transport error.
+///
+/// ## Example
+///
+/// ### Read the request settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_request_settings.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn internal_request() -> client.ClientRequest {
+///   client.new()
+///   |> client.host("internal.example.com")
+///   |> client.certificate_authority_file("certs/internal-ca.pem")
+///   |> client.connect_timeout(2000)
+///   |> client.auto_redirect(False)
+/// }
+///
+/// pub fn request_settings(
+///   request: client.ClientRequest,
+/// ) -> #(Option(String), Option(Int), Option(Bool)) {
+///   #(
+///     client.get_certificate_authority_file(request),
+///     client.get_connect_timeout(request),
+///     client.get_auto_redirect(request),
+///   )
+/// }
+/// ```
 pub fn certificate_authority_file(
   client_request: ClientRequest,
   path: String,
@@ -918,13 +1084,17 @@ pub fn certificate_authority_file(
 ///
 /// ## Example
 ///
+/// ### Configure the pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_config.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 ///
-/// client.transport_config()
-/// |> client.max_connections(200)
-/// |> client.idle_timeout(120_000)
-/// |> client.configure_transport()
+/// pub fn configure_pool() -> Nil {
+///   client.transport_config()
+///   |> client.max_connections(200)
+///   |> client.idle_timeout(120_000)
+///   |> client.configure_transport()
+/// }
 /// ```
 pub opaque type TransportConfig {
   TransportConfig(
@@ -965,6 +1135,32 @@ pub opaque type TransportConfig {
 /// - log_level: LogInfo (minimum severity for dream log output)
 /// - default_certificate_authority_file: None (trust the system certificate
 ///   authorities over TLS)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn transport_config() -> TransportConfig {
   TransportConfig(
     max_connections: 50,
@@ -998,10 +1194,16 @@ pub fn transport_config() -> TransportConfig {
 ///
 /// ## Example
 ///
+/// ### Allow more connections <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_max_connections.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// client.transport_config()
-/// |> client.max_connections(200)
-/// |> client.configure_transport()
+/// import dream_http_client/client
+///
+/// pub fn allow_more_connections() -> Nil {
+///   client.transport_config()
+///   |> client.max_connections(200)
+///   |> client.configure_transport()
+/// }
 /// ```
 pub fn max_connections(config: TransportConfig, count: Int) -> TransportConfig {
   TransportConfig(..config, max_connections: count)
@@ -1019,10 +1221,16 @@ pub fn max_connections(config: TransportConfig, count: Int) -> TransportConfig {
 ///
 /// ## Example
 ///
+/// ### Keep idle connections longer <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_idle_timeout.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// client.transport_config()
-/// |> client.idle_timeout(120_000)
-/// |> client.configure_transport()
+/// import dream_http_client/client
+///
+/// pub fn keep_idle_connections() -> Nil {
+///   client.transport_config()
+///   |> client.idle_timeout(120_000)
+///   |> client.configure_transport()
+/// }
 /// ```
 pub fn idle_timeout(config: TransportConfig, ms: Int) -> TransportConfig {
   TransportConfig(..config, idle_timeout: ms)
@@ -1037,6 +1245,32 @@ pub fn idle_timeout(config: TransportConfig, ms: Int) -> TransportConfig {
 ///
 /// - `config`: The transport config to modify
 /// - `ms`: Connection timeout in milliseconds (default: 15_000)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn default_connect_timeout(
   config: TransportConfig,
   ms: Int,
@@ -1050,6 +1284,32 @@ pub fn default_connect_timeout(
 ///
 /// - `config`: The transport config to modify
 /// - `ms`: DNS lookup timeout in milliseconds (default: 5_000)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn domain_lookup_timeout(
   config: TransportConfig,
   ms: Int,
@@ -1063,6 +1323,32 @@ pub fn domain_lookup_timeout(
 ///
 /// - `config`: The transport config to modify
 /// - `ms`: TLS negotiation timeout in milliseconds (default: 10_000)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn tls_handshake_timeout(
   config: TransportConfig,
   ms: Int,
@@ -1078,6 +1364,32 @@ pub fn tls_handshake_timeout(
 ///
 /// - `config`: The transport config to modify
 /// - `count`: Number of retry attempts (default: 3)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn retry(config: TransportConfig, count: Int) -> TransportConfig {
   TransportConfig(..config, retry: count)
 }
@@ -1088,6 +1400,32 @@ pub fn retry(config: TransportConfig, count: Int) -> TransportConfig {
 ///
 /// - `config`: The transport config to modify
 /// - `ms`: Delay between retries in milliseconds (default: 1_000)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn retry_timeout(config: TransportConfig, ms: Int) -> TransportConfig {
   TransportConfig(..config, retry_timeout: ms)
 }
@@ -1101,6 +1439,32 @@ pub fn retry_timeout(config: TransportConfig, ms: Int) -> TransportConfig {
 ///
 /// - `config`: The transport config to modify
 /// - `ms`: Ping interval in milliseconds (default: 30_000)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn keepalive(config: TransportConfig, ms: Int) -> TransportConfig {
   TransportConfig(..config, keepalive: ms)
 }
@@ -1114,6 +1478,32 @@ pub fn keepalive(config: TransportConfig, ms: Int) -> TransportConfig {
 ///
 /// - `config`: The transport config to modify
 /// - `count`: Max unacknowledged pings (default: 3)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn keepalive_tolerance(
   config: TransportConfig,
   count: Int,
@@ -1130,6 +1520,32 @@ pub fn keepalive_tolerance(
 ///
 /// - `config`: The transport config to modify
 /// - `count`: Max concurrent streams (default: 100)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn max_concurrent_streams(
   config: TransportConfig,
   count: Int,
@@ -1143,6 +1559,32 @@ pub fn max_concurrent_streams(
 ///
 /// - `config`: The transport config to modify
 /// - `size`: Window size in bytes (default: 65_535)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn initial_connection_window_size(
   config: TransportConfig,
   size: Int,
@@ -1156,6 +1598,32 @@ pub fn initial_connection_window_size(
 ///
 /// - `config`: The transport config to modify
 /// - `size`: Window size in bytes (default: 65_535)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn initial_stream_window_size(
   config: TransportConfig,
   size: Int,
@@ -1172,6 +1640,32 @@ pub fn initial_stream_window_size(
 ///
 /// - `config`: The transport config to modify
 /// - `ms`: Shutdown wait in milliseconds (default: 15_000)
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn closing_timeout(config: TransportConfig, ms: Int) -> TransportConfig {
   TransportConfig(..config, closing_timeout: ms)
 }
@@ -1189,78 +1683,485 @@ pub fn closing_timeout(config: TransportConfig, ms: Int) -> TransportConfig {
 ///
 /// ## Example
 ///
+/// ### Log warnings only <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_log_level.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client.{LogWarning}
 ///
-/// client.transport_config()
-/// |> client.log_level(LogWarning)
-/// |> client.configure_transport()
+/// pub fn warnings_only() -> Nil {
+///   client.transport_config()
+///   |> client.log_level(LogWarning)
+///   |> client.configure_transport()
+/// }
 /// ```
 pub fn log_level(config: TransportConfig, level: LogLevel) -> TransportConfig {
   TransportConfig(..config, log_level: level)
 }
 
 /// Get the configured maximum TCP connections per host
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_max_connections(config: TransportConfig) -> Int {
   config.max_connections
 }
 
 /// Get the configured idle connection timeout in milliseconds
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_idle_timeout(config: TransportConfig) -> Int {
   config.idle_timeout
 }
 
 /// Get the configured default TCP connection timeout in milliseconds
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_default_connect_timeout(config: TransportConfig) -> Int {
   config.default_connect_timeout
 }
 
 /// Get the configured DNS resolution timeout in milliseconds
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_domain_lookup_timeout(config: TransportConfig) -> Int {
   config.domain_lookup_timeout
 }
 
 /// Get the configured TLS handshake timeout in milliseconds
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_tls_handshake_timeout(config: TransportConfig) -> Int {
   config.tls_handshake_timeout
 }
 
 /// Get the configured number of reconnection attempts
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_retry(config: TransportConfig) -> Int {
   config.retry
 }
 
 /// Get the configured delay between reconnection attempts in milliseconds
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_retry_timeout(config: TransportConfig) -> Int {
   config.retry_timeout
 }
 
 /// Get the configured HTTP/2 keepalive ping interval in milliseconds
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_keepalive(config: TransportConfig) -> Int {
   config.keepalive
 }
 
 /// Get the configured HTTP/2 keepalive tolerance
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_keepalive_tolerance(config: TransportConfig) -> Int {
   config.keepalive_tolerance
 }
 
 /// Get the configured maximum concurrent HTTP/2 streams per connection
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_max_concurrent_streams(config: TransportConfig) -> Int {
   config.max_concurrent_streams
 }
 
 /// Get the configured HTTP/2 connection-level flow control window size
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_initial_connection_window_size(config: TransportConfig) -> Int {
   config.initial_connection_window_size
 }
 
 /// Get the configured HTTP/2 per-stream flow control window size
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_initial_stream_window_size(config: TransportConfig) -> Int {
   config.initial_stream_window_size
 }
 
 /// Get the configured graceful shutdown timeout in milliseconds
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_closing_timeout(config: TransportConfig) -> Int {
   config.closing_timeout
 }
@@ -1271,6 +2172,32 @@ pub fn get_closing_timeout(config: TransportConfig) -> Int {
 /// certificate authorities. With this setting, every request trusts the
 /// certificate authorities in the PEM file at `path` in their place, unless
 /// the request sets its own with `certificate_authority_file()`.
+///
+/// ## Example
+///
+/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn tuned_transport() -> client.TransportConfig {
+///   client.transport_config()
+///   |> client.max_connections(100)
+///   |> client.idle_timeout(30_000)
+///   |> client.default_connect_timeout(5000)
+///   |> client.domain_lookup_timeout(2000)
+///   |> client.tls_handshake_timeout(5000)
+///   |> client.retry(1)
+///   |> client.retry_timeout(500)
+///   |> client.keepalive(10_000)
+///   |> client.keepalive_tolerance(3)
+///   |> client.max_concurrent_streams(200)
+///   |> client.initial_connection_window_size(1_048_576)
+///   |> client.initial_stream_window_size(262_144)
+///   |> client.closing_timeout(5000)
+///   |> client.default_certificate_authority_file("certs/ca.pem")
+/// }
+/// ```
 pub fn default_certificate_authority_file(
   config: TransportConfig,
   path: String,
@@ -1284,6 +2211,37 @@ pub fn default_certificate_authority_file(
 /// Get the client-wide certificate authority file, if one is set
 ///
 /// Returns `None` when requests trust the system certificate authorities.
+///
+/// ## Example
+///
+/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
+///   [
+///     client.get_max_connections(config),
+///     client.get_idle_timeout(config),
+///     client.get_default_connect_timeout(config),
+///     client.get_domain_lookup_timeout(config),
+///     client.get_tls_handshake_timeout(config),
+///     client.get_retry(config),
+///     client.get_retry_timeout(config),
+///     client.get_keepalive(config),
+///     client.get_keepalive_tolerance(config),
+///     client.get_max_concurrent_streams(config),
+///     client.get_initial_connection_window_size(config),
+///     client.get_initial_stream_window_size(config),
+///     client.get_closing_timeout(config),
+///   ]
+/// }
+///
+/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
+///   client.get_default_certificate_authority_file(config)
+/// }
+/// ```
 pub fn get_default_certificate_authority_file(
   config: TransportConfig,
 ) -> Option(String) {
@@ -1297,10 +2255,15 @@ pub fn get_default_certificate_authority_file(
 ///
 /// ## Example
 ///
+/// ### Read the log level <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_log_level.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let config = client.transport_config()
-/// client.get_log_level(config)
-/// // -> LogInfo
+/// import dream_http_client/client
+///
+/// pub fn default_log_level() -> client.LogLevel {
+///   client.transport_config()
+///   |> client.get_log_level()
+/// }
 /// ```
 pub fn get_log_level(config: TransportConfig) -> LogLevel {
   config.log_level
@@ -1314,10 +2277,16 @@ pub fn get_log_level(config: TransportConfig) -> LogLevel {
 ///
 /// ## Example
 ///
+/// ### Allow more connections <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_max_connections.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// client.transport_config()
-/// |> client.max_connections(200)
-/// |> client.configure_transport()
+/// import dream_http_client/client
+///
+/// pub fn allow_more_connections() -> Nil {
+///   client.transport_config()
+///   |> client.max_connections(200)
+///   |> client.configure_transport()
+/// }
 /// ```
 pub fn configure_transport(config: TransportConfig) -> Nil {
   configure_transport_ffi(config)
@@ -1338,13 +2307,27 @@ fn configure_transport_ffi(config: TransportConfig) -> Nil
 ///
 /// ## Example
 ///
+/// ### Count the response headers <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_on_stream_start.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// client.new()
-/// |> client.host("api.example.com")
-/// |> client.on_stream_start(fn(headers) {
-///   io.println("Stream started with " <> int.to_string(list.length(headers)) <> " headers")
-/// })
-/// |> client.start_stream()
+/// import dream_http_client/client
+/// import gleam/erlang/process.{type Subject}
+/// import gleam/http
+/// import gleam/list
+///
+/// pub fn report_header_count(
+///   reply_to: Subject(Int),
+/// ) -> Result(client.StreamHandle, String) {
+///   client.new()
+///   |> client.scheme(http.Http)
+///   |> client.host("localhost")
+///   |> client.port(9876)
+///   |> client.path("/stream/fast")
+///   |> client.on_stream_start(fn(headers) {
+///     process.send(reply_to, list.length(headers))
+///   })
+///   |> client.start_stream()
+/// }
 /// ```
 pub fn on_stream_start(
   client_request: ClientRequest,
@@ -1365,14 +2348,29 @@ pub fn on_stream_start(
 ///
 /// ## Example
 ///
+/// ### Forward each chunk <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_on_stream_chunk.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// client.new()
-/// |> client.host("api.openai.com")
-/// |> client.on_stream_chunk(fn(data) {
-///   let text = bytes_tree.from_bit_array(data) |> bytes_tree.to_string
-///   io.print(text)
-/// })
-/// |> client.start_stream()
+/// import dream_http_client/client
+/// import gleam/bit_array
+/// import gleam/erlang/process.{type Subject}
+/// import gleam/http
+/// import gleam/result
+///
+/// pub fn forward_chunks(
+///   reply_to: Subject(String),
+/// ) -> Result(client.StreamHandle, String) {
+///   client.new()
+///   |> client.scheme(http.Http)
+///   |> client.host("localhost")
+///   |> client.port(9876)
+///   |> client.path("/stream/fast")
+///   |> client.on_stream_chunk(fn(data) {
+///     let text = bit_array.to_string(data) |> result.unwrap("<binary>")
+///     process.send(reply_to, text)
+///   })
+///   |> client.start_stream()
+/// }
 /// ```
 pub fn on_stream_chunk(
   client_request: ClientRequest,
@@ -1393,13 +2391,26 @@ pub fn on_stream_chunk(
 ///
 /// ## Example
 ///
+/// ### Report the end of a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_on_stream_end.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// client.new()
-/// |> client.host("api.example.com")
-/// |> client.on_stream_end(fn(_headers) {
-///   io.println("Stream completed")
-/// })
-/// |> client.start_stream()
+/// import dream_http_client/client
+/// import gleam/erlang/process.{type Subject}
+/// import gleam/http
+///
+/// pub fn report_end(
+///   reply_to: Subject(String),
+/// ) -> Result(client.StreamHandle, String) {
+///   client.new()
+///   |> client.scheme(http.Http)
+///   |> client.host("localhost")
+///   |> client.port(9876)
+///   |> client.path("/stream/fast")
+///   |> client.on_stream_end(fn(_headers) {
+///     process.send(reply_to, "Stream completed")
+///   })
+///   |> client.start_stream()
+/// }
 /// ```
 pub fn on_stream_end(
   client_request: ClientRequest,
@@ -1421,18 +2432,35 @@ pub fn on_stream_end(
 ///
 /// ## Example
 ///
+/// ### Report a stream failure <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_on_stream_error.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// client.new()
-/// |> client.host("api.example.com")
-/// |> client.on_stream_error(fn(failure) {
-///   case failure {
-///     client.HttpFailure(response: resp) ->
-///       io.println_error("HTTP " <> int.to_string(resp.status))
-///     client.TransportFailure(error: err) ->
-///       io.println_error("Transport: " <> client.transport_error_to_string(err))
-///   }
-/// })
-/// |> client.start_stream()
+/// import dream_http_client/client
+/// import gleam/erlang/process.{type Subject}
+/// import gleam/http
+/// import gleam/int
+///
+/// pub fn report_failure(
+///   reply_to: Subject(String),
+/// ) -> Result(client.StreamHandle, String) {
+///   client.new()
+///   |> client.scheme(http.Http)
+///   |> client.host("localhost")
+///   |> client.port(9876)
+///   |> client.path("/status/500")
+///   |> client.on_stream_error(fn(failure) {
+///     case failure {
+///       client.HttpFailure(response: response) ->
+///         process.send(reply_to, "HTTP " <> int.to_string(response.status))
+///       client.TransportFailure(error: error) ->
+///         process.send(
+///           reply_to,
+///           "Transport: " <> client.transport_error_to_string(error),
+///         )
+///     }
+///   })
+///   |> client.start_stream()
+/// }
 /// ```
 pub fn on_stream_error(
   client_request: ClientRequest,
@@ -1459,12 +2487,16 @@ pub fn on_stream_error(
 ///
 /// ## Example
 ///
+/// ### Add headers one at a time <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_add_header.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 ///
-/// client.new()
-/// |> client.add_header("Authorization", "Bearer " <> token)
-/// |> client.add_header("Content-Type", "application/json")
+/// pub fn json_api_request(token: String) -> client.ClientRequest {
+///   client.new()
+///   |> client.add_header("Authorization", "Bearer " <> token)
+///   |> client.add_header("Content-Type", "application/json")
+/// }
 /// ```
 pub fn add_header(
   client_request: ClientRequest,
@@ -1487,13 +2519,16 @@ pub fn add_header(
 ///
 /// ## Example
 ///
+/// ### Read the method <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_method.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 /// import gleam/http.{Post}
 ///
-/// let req = client.new() |> client.method(Post)
-/// let method = client.get_method(req)
-/// // method == Post
+/// pub fn request_method() -> http.Method {
+///   let request = client.new() |> client.method(Post)
+///   client.get_method(request)
+/// }
 /// ```
 pub fn get_method(client_request: ClientRequest) -> http.Method {
   client_request.method
@@ -1505,13 +2540,16 @@ pub fn get_method(client_request: ClientRequest) -> http.Method {
 ///
 /// ## Example
 ///
+/// ### Read the scheme <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_scheme.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 /// import gleam/http.{Http}
 ///
-/// let req = client.new() |> client.scheme(Http)
-/// let scheme = client.get_scheme(req)
-/// // scheme == Http
+/// pub fn request_scheme() -> http.Scheme {
+///   let request = client.new() |> client.scheme(Http)
+///   client.get_scheme(request)
+/// }
 /// ```
 pub fn get_scheme(client_request: ClientRequest) -> http.Scheme {
   client_request.scheme
@@ -1523,12 +2561,15 @@ pub fn get_scheme(client_request: ClientRequest) -> http.Scheme {
 ///
 /// ## Example
 ///
+/// ### Read the host <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_host.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 ///
-/// let req = client.new() |> client.host("api.example.com")
-/// let host = client.get_host(req)
-/// // host == "api.example.com"
+/// pub fn request_host() -> String {
+///   let request = client.new() |> client.host("api.example.com")
+///   client.get_host(request)
+/// }
 /// ```
 pub fn get_host(client_request: ClientRequest) -> String {
   client_request.host
@@ -1541,12 +2582,16 @@ pub fn get_host(client_request: ClientRequest) -> String {
 ///
 /// ## Example
 ///
+/// ### Read the port <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_port.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
+/// import gleam/option.{type Option}
 ///
-/// let req = client.new() |> client.port(8080)
-/// let port = client.get_port(req)
-/// // port == Some(8080)
+/// pub fn request_port() -> Option(Int) {
+///   let request = client.new() |> client.port(8080)
+///   client.get_port(request)
+/// }
 /// ```
 pub fn get_port(client_request: ClientRequest) -> Option(Int) {
   client_request.port
@@ -1558,12 +2603,15 @@ pub fn get_port(client_request: ClientRequest) -> Option(Int) {
 ///
 /// ## Example
 ///
+/// ### Read the path <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_path.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 ///
-/// let req = client.new() |> client.path("/api/users")
-/// let path = client.get_path(req)
-/// // path == "/api/users"
+/// pub fn request_path() -> String {
+///   let request = client.new() |> client.path("/api/users")
+///   client.get_path(request)
+/// }
 /// ```
 pub fn get_path(client_request: ClientRequest) -> String {
   client_request.path
@@ -1575,12 +2623,16 @@ pub fn get_path(client_request: ClientRequest) -> String {
 ///
 /// ## Example
 ///
+/// ### Read the query string <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_query.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
+/// import gleam/option.{type Option}
 ///
-/// let req = client.new() |> client.query("page=1&limit=10")
-/// let query = client.get_query(req)
-/// // query == Some("page=1&limit=10")
+/// pub fn request_query() -> Option(String) {
+///   let request = client.new() |> client.query("page=1&limit=10")
+///   client.get_query(request)
+/// }
 /// ```
 pub fn get_query(client_request: ClientRequest) -> Option(String) {
   client_request.query
@@ -1592,14 +2644,18 @@ pub fn get_query(client_request: ClientRequest) -> Option(String) {
 ///
 /// ## Example
 ///
+/// ### Read the headers <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_headers.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 ///
-/// let req = client.new()
-///   |> client.add_header("Authorization", "Bearer token")
-///   |> client.add_header("Content-Type", "application/json")
-/// let headers = client.get_headers(req)
-/// // headers == [Header("Content-Type", "application/json"), Header("Authorization", "Bearer token")]
+/// pub fn request_headers() -> List(client.Header) {
+///   let request =
+///     client.new()
+///     |> client.add_header("Authorization", "Bearer token")
+///     |> client.add_header("Content-Type", "application/json")
+///   client.get_headers(request)
+/// }
 /// ```
 pub fn get_headers(client_request: ClientRequest) -> List(Header) {
   client_request.headers
@@ -1611,12 +2667,15 @@ pub fn get_headers(client_request: ClientRequest) -> List(Header) {
 ///
 /// ## Example
 ///
+/// ### Read the body <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_body.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 ///
-/// let req = client.new() |> client.body("{\"name\": \"Alice\"}")
-/// let body = client.get_body(req)
-/// // body == "{\"name\": \"Alice\"}"
+/// pub fn request_body() -> String {
+///   let request = client.new() |> client.body("{\"name\": \"Alice\"}")
+///   client.get_body(request)
+/// }
 /// ```
 pub fn get_body(client_request: ClientRequest) -> String {
   client_request.body
@@ -1629,12 +2688,16 @@ pub fn get_body(client_request: ClientRequest) -> String {
 ///
 /// ## Example
 ///
+/// ### Read the timeout <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_timeout.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
+/// import gleam/option.{type Option}
 ///
-/// let req = client.new() |> client.timeout(5000)
-/// let timeout = client.get_timeout(req)
-/// // timeout == Some(5000)
+/// pub fn request_timeout() -> Option(Int) {
+///   let request = client.new() |> client.timeout(5000)
+///   client.get_timeout(request)
+/// }
 /// ```
 pub fn get_timeout(client_request: ClientRequest) -> Option(Int) {
   client_request.timeout
@@ -1643,6 +2706,33 @@ pub fn get_timeout(client_request: ClientRequest) -> Option(Int) {
 /// Get the configured TCP connection timeout
 ///
 /// Returns `None` if the default (15000ms) will be used.
+///
+/// ## Example
+///
+/// ### Read the request settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_request_settings.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn internal_request() -> client.ClientRequest {
+///   client.new()
+///   |> client.host("internal.example.com")
+///   |> client.certificate_authority_file("certs/internal-ca.pem")
+///   |> client.connect_timeout(2000)
+///   |> client.auto_redirect(False)
+/// }
+///
+/// pub fn request_settings(
+///   request: client.ClientRequest,
+/// ) -> #(Option(String), Option(Int), Option(Bool)) {
+///   #(
+///     client.get_certificate_authority_file(request),
+///     client.get_connect_timeout(request),
+///     client.get_auto_redirect(request),
+///   )
+/// }
+/// ```
 pub fn get_connect_timeout(client_request: ClientRequest) -> Option(Int) {
   client_request.connect_timeout
 }
@@ -1650,6 +2740,33 @@ pub fn get_connect_timeout(client_request: ClientRequest) -> Option(Int) {
 /// Get the configured auto-redirect setting
 ///
 /// Returns `None` if the default (True) will be used.
+///
+/// ## Example
+///
+/// ### Read the request settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_request_settings.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn internal_request() -> client.ClientRequest {
+///   client.new()
+///   |> client.host("internal.example.com")
+///   |> client.certificate_authority_file("certs/internal-ca.pem")
+///   |> client.connect_timeout(2000)
+///   |> client.auto_redirect(False)
+/// }
+///
+/// pub fn request_settings(
+///   request: client.ClientRequest,
+/// ) -> #(Option(String), Option(Int), Option(Bool)) {
+///   #(
+///     client.get_certificate_authority_file(request),
+///     client.get_connect_timeout(request),
+///     client.get_auto_redirect(request),
+///   )
+/// }
+/// ```
 pub fn get_auto_redirect(client_request: ClientRequest) -> Option(Bool) {
   client_request.auto_redirect
 }
@@ -1659,10 +2776,16 @@ pub fn get_auto_redirect(client_request: ClientRequest) -> Option(Bool) {
 /// Returns `None` if no explicit protocol preference has been set,
 /// meaning transport-specific defaults will apply.
 ///
+/// ### Read the protocols <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_protocols.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let req = client.new() |> client.protocols(Http2Only)
-/// client.get_protocols(req)
-/// // -> Some(Http2Only)
+/// import dream_http_client/client.{Http2Only}
+/// import gleam/option.{type Option}
+///
+/// pub fn request_protocols() -> Option(client.Protocols) {
+///   let request = client.new() |> client.protocols(Http2Only)
+///   client.get_protocols(request)
+/// }
 /// ```
 pub fn get_protocols(client_request: ClientRequest) -> Option(Protocols) {
   client_request.protocols
@@ -1671,6 +2794,33 @@ pub fn get_protocols(client_request: ClientRequest) -> Option(Protocols) {
 /// Get the certificate authority file for this request, if one is set
 ///
 /// Returns `None` when the request uses the client-wide default.
+///
+/// ## Example
+///
+/// ### Read the request settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_request_settings.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn internal_request() -> client.ClientRequest {
+///   client.new()
+///   |> client.host("internal.example.com")
+///   |> client.certificate_authority_file("certs/internal-ca.pem")
+///   |> client.connect_timeout(2000)
+///   |> client.auto_redirect(False)
+/// }
+///
+/// pub fn request_settings(
+///   request: client.ClientRequest,
+/// ) -> #(Option(String), Option(Int), Option(Bool)) {
+///   #(
+///     client.get_certificate_authority_file(request),
+///     client.get_connect_timeout(request),
+///     client.get_auto_redirect(request),
+///   )
+/// }
+/// ```
 pub fn get_certificate_authority_file(
   client_request: ClientRequest,
 ) -> Option(String) {
@@ -1683,18 +2833,24 @@ pub fn get_certificate_authority_file(
 ///
 /// ## Example
 ///
+/// ### Check for a recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_get_recorder.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client
 /// import dream_http_client/recorder.{directory, mode, start}
+/// import gleam/option
+/// import gleam/result
 ///
-/// let assert Ok(rec) =
-///   recorder.new()
-///   |> directory("mocks")
-///   |> mode("record")
-///   |> start()
-/// let req = client.new() |> client.recorder(rec)
-/// let recorder_opt = client.get_recorder(req)
-/// // recorder_opt == Some(rec)
+/// pub fn has_recorder(mocks_directory: String) -> Result(Bool, String) {
+///   use rec <- result.map(
+///     recorder.new()
+///     |> directory(mocks_directory)
+///     |> mode("record")
+///     |> start(),
+///   )
+///   let request = client.new() |> client.recorder(rec)
+///   option.is_some(client.get_recorder(request))
+/// }
 /// ```
 pub fn get_recorder(
   client_request: ClientRequest,
@@ -1717,13 +2873,6 @@ pub fn get_recorder(
 /// Most users never need to construct or store `RequestId`. Prefer controlling
 /// streams via `StreamHandle` (`cancel_stream_handle`, `is_stream_active`,
 /// `await_stream`).
-///
-/// ## Examples
-///
-/// ```gleam
-/// // RequestIds are returned by internal streaming machinery.
-/// // Prefer StreamHandle for user code.
-/// ```
 ///
 /// ## Notes
 ///
@@ -1756,7 +2905,7 @@ pub opaque type RequestId {
 /// - A bug in this library's FFI code
 ///
 /// **What to do:** If you see a `DecodeError`, please report it as a bug at
-/// https://github.com/TrustBound/dream/issues with the full error message.
+/// https://github.com/TrustBound/dream_http_client/issues with the full error message.
 /// The error message includes debug information to help diagnose the issue.
 ///
 /// Unlike `StreamError` which has a `RequestId`, `DecodeError` does not because
@@ -1795,21 +2944,26 @@ pub type StreamMessage {
 ///
 /// ## Example
 ///
+/// ### Wait for a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_stream_handle.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// // Start stream
-/// let assert Ok(stream) = client.start_stream(request)
+/// import dream_http_client/client
+/// import gleam/http
+/// import gleam/result
 ///
-/// // Check status
-/// case client.is_stream_active(stream) {
-///   True -> io.println("Still streaming...")
-///   False -> io.println("Completed")
+/// pub fn run_to_end() -> Result(Bool, String) {
+///   let request =
+///     client.new()
+///     |> client.scheme(http.Http)
+///     |> client.host("localhost")
+///     |> client.port(9876)
+///     |> client.path("/stream/fast")
+///   use stream <- result.map(client.start_stream(request))
+///   // Wait for completion
+///   client.await_stream(stream)
+///   // False: the stream is done
+///   client.is_stream_active(stream)
 /// }
-///
-/// // Wait for completion
-/// client.await_stream(stream)
-///
-/// // Or cancel early
-/// client.cancel_stream_handle(stream)
 /// ```
 pub opaque type StreamHandle {
   StreamHandle(pid: process.Pid)
@@ -1850,34 +3004,29 @@ pub opaque type StreamHandle {
 ///
 /// ## Example
 ///
+/// ### Send and handle errors <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/blocking_send.gleam#L5-L25"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
 /// import dream_http_client/client.{
-///   HttpResponse, RequestError, ResponseError, ConnectFailed, TimedOut,
-///   host, path, add_header, send, transport_error_to_string,
+///   HttpResponse, RequestError, ResponseError, host, path, port, scheme, send,
+///   transport_error_to_string,
 /// }
+/// import gleam/http
 ///
-/// let result = client.new()
-///   |> host("api.example.com")
-///   |> path("/users/123")
-///   |> add_header("Authorization", "Bearer " <> token)
-///   |> send()
+/// pub fn fetch_text() -> Result(String, String) {
+///   let result =
+///     client.new()
+///     |> scheme(http.Http)
+///     |> host("localhost")
+///     |> port(9876)
+///     |> path("/text")
+///     |> send()
 ///
-/// case result {
-///   Ok(HttpResponse(body: body, ..)) -> {
-///     case json.decode(body, user_decoder) {
-///       Ok(user) -> Ok(user)
-///       Error(json_error) ->
-///         Error("Invalid JSON: " <> string.inspect(json_error))
-///     }
+///   case result {
+///     Ok(HttpResponse(body: body, ..)) -> Ok(body)
+///     Error(ResponseError(response: response)) -> Error(response.body)
+///     Error(RequestError(error: error)) -> Error(transport_error_to_string(error))
 ///   }
-///   Error(ResponseError(response)) ->
-///     Error("HTTP " <> int.to_string(response.status) <> ": " <> response.body)
-///   Error(RequestError(error: ConnectFailed(reason))) ->
-///     Error("Connection failed: " <> reason)
-///   Error(RequestError(error: TimedOut(timeout_ms))) ->
-///     Error("Timed out after " <> int.to_string(timeout_ms) <> "ms")
-///   Error(RequestError(error: transport_error)) ->
-///     Error("Request failed: " <> transport_error_to_string(transport_error))
 /// }
 /// ```
 pub fn send(client_request: ClientRequest) -> Result(HttpResponse, SendError) {
@@ -1953,8 +3102,7 @@ fn send_and_maybe_record(
 
       response_result(status, headers, body)
     }
-    Error(error_dyn) ->
-      Error(RequestError(error: decode_transport_error(error_dyn)))
+    Error(error) -> Error(RequestError(error: error))
   }
 }
 
@@ -1978,14 +3126,13 @@ fn send_client_request_via_gun(
 ) -> Result(HttpResponse, SendError) {
   case send_client_request_via_gun_with_meta(client_request) {
     Ok(#(status, headers, body)) -> response_result(status, headers, body)
-    Error(error_dyn) ->
-      Error(RequestError(error: decode_transport_error(error_dyn)))
+    Error(error) -> Error(RequestError(error: error))
   }
 }
 
 fn send_client_request_via_gun_with_meta(
   client_request: ClientRequest,
-) -> Result(#(Int, List(#(String, String)), String), d.Dynamic) {
+) -> Result(#(Int, List(#(String, String)), String), TransportError) {
   let http_request = to_http_request(client_request)
   let url = build_url(http_request)
   let method_atom = internal.atomize_method(http_request.method)
@@ -1996,26 +3143,24 @@ fn send_client_request_via_gun_with_meta(
   let auto_redirect_value = resolve_auto_redirect(client_request)
   let connection_settings = resolve_connection_settings(client_request)
 
-  case
-    send_sync(
-      method_dynamic,
-      url,
-      http_request.headers,
-      body,
-      timeout_value,
-      connect_timeout_value,
-      auto_redirect_value,
-      connection_settings,
-    )
-  {
-    Ok(#(status, headers, response_body)) ->
-      // Response bodies are opaque bytes, not text: S3 objects, PDFs,
-      // images. On the BEAM a String IS a binary, so reinterpret the
-      // bytes without UTF-8 validation — rejecting non-UTF8 here made
-      // every binary download fail with a transport error.
-      Ok(#(status, headers, unchecked_bits_to_string(response_body)))
-    Error(error_dyn) -> Error(error_dyn)
-  }
+  send_sync(
+    method_dynamic,
+    url,
+    http_request.headers,
+    body,
+    timeout_value,
+    connect_timeout_value,
+    auto_redirect_value,
+    connection_settings,
+  )
+  // Response bodies are opaque bytes, not text: S3 objects, PDFs, images. On
+  // the BEAM a String IS a binary, so reinterpret the bytes without UTF-8
+  // validation — rejecting non-UTF8 here made every binary download fail
+  // with a transport error.
+  |> result.map(fn(response) {
+    let #(status, headers, response_body) = response
+    #(status, headers, unchecked_bits_to_string(response_body))
+  })
 }
 
 @external(erlang, "gleam_stdlib", "identity")
@@ -2082,7 +3227,7 @@ fn send_sync(
   connect_timeout_ms: Int,
   autoredirect: Bool,
   connection_settings: internal.ConnectionSettings,
-) -> Result(#(Int, List(#(String, String)), BitArray), d.Dynamic)
+) -> Result(#(Int, List(#(String, String)), BitArray), TransportError)
 
 /// Stream HTTP response chunks using a yielder
 ///
@@ -2140,56 +3285,70 @@ fn send_sync(
 ///
 /// **Streaming and processing chunks as they arrive:**
 ///
-/// ```gleam
-/// import dream_http_client/client.{host, path, stream_yielder}
-/// import gleam/yielder.{each}
-/// import gleam/bytes_tree.{to_string}
-/// import gleam/io.{print, println_error}
+/// ### Count the bytes of a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/stream_yielder_basic.gleam#L5-L29"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// client.new()
-///   |> host("api.openai.com")
-///   |> path("/v1/chat/completions")
+/// ```gleam
+/// import dream_http_client/client.{
+///   type StreamFailure, host, path, port, scheme, stream_yielder,
+/// }
+/// import gleam/bytes_tree.{type BytesTree}
+/// import gleam/http
+/// import gleam/result
+/// import gleam/yielder
+///
+/// pub fn count_stream_bytes() -> Result(Int, StreamFailure) {
+///   client.new()
+///   |> scheme(http.Http)
+///   |> host("localhost")
+///   |> port(9876)
+///   |> path("/stream/fast")
 ///   |> stream_yielder()
-///   |> each(fn(result) {
-///     case result {
-///       Ok(chunk) -> print(to_string(chunk))
-///       Error(failure) -> {
-///         println_error("Stream error: " <> client.stream_failure_to_string(failure))
-///         // Stream is now done, no more chunks will arrive
-///       }
-///     }
-///   })
+///   |> yielder.try_fold(0, add_chunk_size)
+/// }
+///
+/// fn add_chunk_size(
+///   total: Int,
+///   chunk_result: Result(BytesTree, StreamFailure),
+/// ) -> Result(Int, StreamFailure) {
+///   use chunk <- result.map(chunk_result)
+///   total + bytes_tree.byte_size(chunk)
+/// }
 /// ```
 ///
 /// **Collecting all chunks into a list:**
 ///
+/// ### Collect a stream into a string <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_stream_to_string.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// import dream_http_client/client.{host, path, stream_yielder}
-/// import gleam/yielder
-/// import gleam/list
+/// import dream_http_client/client.{host, path, port, scheme, stream_yielder}
+/// import gleam/bit_array
 /// import gleam/bytes_tree
+/// import gleam/http
+/// import gleam/list
+/// import gleam/result
 /// import gleam/string
+/// import gleam/yielder
 ///
-/// // The stream automatically completes when done - no need to use take()!
-/// let chunks = 
-///   client.new()
-///   |> host("example.com")
-///   |> path("/data")
-///   |> stream_yielder()
-///   |> yielder.to_list()
+/// pub fn stream_to_string() -> Result(String, String) {
+///   // The stream ends by itself: no need for take()
+///   let chunks =
+///     client.new()
+///     |> scheme(http.Http)
+///     |> host("localhost")
+///     |> port(9876)
+///     |> path("/stream/fast")
+///     |> stream_yielder()
+///     |> yielder.to_list()
 ///
-/// // Handle results
-/// case list.try_map(chunks, fn(result) { result }) {
-///   Ok(chunk_list) -> {
-///     // Concatenate all chunks
-///     let body = 
+///   case list.try_map(chunks, fn(chunk) { chunk }) {
+///     Ok(chunk_list) ->
 ///       chunk_list
-///       |> list.map(bytes_tree.to_string)
-///       |> list.map(fn(chunk_result) { result.unwrap(chunk_result, "") })
+///       |> list.map(bytes_tree.to_bit_array)
+///       |> list.map(fn(data) { bit_array.to_string(data) |> result.unwrap("") })
 ///       |> string.join("")
-///     Ok(body)
+///       |> Ok
+///     Error(failure) -> Error(client.stream_failure_to_string(failure))
 ///   }
-///   Error(failure) -> Error(client.stream_failure_to_string(failure))
 /// }
 /// ```
 pub fn stream_yielder(
@@ -2286,7 +3445,7 @@ fn stream_yielder_with_record_mode(
           recorded_request: recorded_request,
           start_headers: [],
           chunks: [],
-          last_chunk_time: None,
+          last_chunk_time: 0,
         )
       yielder.unfold(initial_state, handle_recording_yielder_unfold)
     }
@@ -2338,7 +3497,7 @@ fn convert_chunk_to_result(
 
 type YielderState {
   YielderState(
-    owner: Option(d.Dynamic),
+    owner: Option(process.Pid),
     http_req: request.Request(String),
     timeout_ms: Int,
     connect_timeout_ms: Int,
@@ -2349,7 +3508,7 @@ type YielderState {
 
 type RecordingYielderState {
   RecordingYielderState(
-    owner: Option(d.Dynamic),
+    owner: Option(process.Pid),
     http_req: request.Request(String),
     timeout_ms: Int,
     connect_timeout_ms: Int,
@@ -2359,7 +3518,7 @@ type RecordingYielderState {
     recorded_request: recording.RecordedRequest,
     start_headers: List(#(String, String)),
     chunks: List(recording.Chunk),
-    last_chunk_time: Option(Int),
+    last_chunk_time: Int,
   )
 }
 
@@ -2413,7 +3572,7 @@ fn response_result(
 fn handle_yielder_start_with_state(
   state: YielderState,
 ) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
-  let request_result =
+  let owner =
     internal.start_gun_stream(
       state.http_req,
       state.timeout_ms,
@@ -2421,29 +3580,26 @@ fn handle_yielder_start_with_state(
       state.auto_redirect,
       state.connection_settings,
     )
-  let owner = internal.extract_owner_pid(request_result)
-  case internal.receive_next(owner, state.timeout_ms) {
-    Ok(option.Some(bin)) ->
+  case internal.fetch_next(owner) {
+    internal.Chunk(bin) ->
       yielder.Next(
         Ok(bytes_tree.from_bit_array(bin)),
         YielderState(..state, owner: Some(owner)),
       )
-    Ok(option.None) -> yielder.Done
-    Error(error_dyn) ->
-      yielder.Next(Error(decode_stream_failure(error_dyn)), state)
+    internal.Done(_) -> yielder.Done
+    internal.Failed(failure) -> yielder.Next(Error(failure), state)
   }
 }
 
 fn handle_yielder_next_with_state(
-  owner: d.Dynamic,
+  owner: process.Pid,
   state: YielderState,
 ) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
-  case internal.receive_next(owner, state.timeout_ms) {
-    Ok(option.Some(bin)) ->
+  case internal.fetch_next(owner) {
+    internal.Chunk(bin) ->
       yielder.Next(Ok(bytes_tree.from_bit_array(bin)), state)
-    Ok(option.None) -> yielder.Done
-    Error(error_dyn) ->
-      yielder.Next(Error(decode_stream_failure(error_dyn)), state)
+    internal.Done(_) -> yielder.Done
+    internal.Failed(failure) -> yielder.Next(Error(failure), state)
   }
 }
 
@@ -2479,7 +3635,7 @@ fn handle_recording_yielder_start(
   Result(bytes_tree.BytesTree, StreamFailure),
   RecordingYielderState,
 ) {
-  let request_result =
+  let owner =
     internal.start_gun_stream(
       state.http_req,
       state.timeout_ms,
@@ -2487,22 +3643,20 @@ fn handle_recording_yielder_start(
       state.auto_redirect,
       state.connection_settings,
     )
-  let owner = internal.extract_owner_pid(request_result)
-  let start_headers = case
-    internal.get_stream_start_headers(owner, state.timeout_ms)
-  {
+  let start_headers = case internal.fetch_start_headers(owner) {
     Ok(headers) -> headers
-    Error(reason) -> {
+    Error(failure) -> {
       io.println_error(
-        "Failed to fetch stream_start headers for recording: " <> reason,
+        "Failed to fetch stream_start headers for recording: "
+        <> stream_failure_to_string(failure),
       )
       []
     }
   }
   let now = get_time_ms()
 
-  case internal.receive_next(owner, state.timeout_ms) {
-    Ok(option.Some(bin)) -> {
+  case internal.fetch_next(owner) {
+    internal.Chunk(bin) -> {
       // First chunk - record it
       let chunk = recording.Chunk(data: bin, delay_ms: 0)
       let new_state =
@@ -2511,11 +3665,11 @@ fn handle_recording_yielder_start(
           owner: Some(owner),
           start_headers: start_headers,
           chunks: [chunk],
-          last_chunk_time: Some(now),
+          last_chunk_time: now,
         )
       yielder.Next(Ok(bytes_tree.from_bit_array(bin)), new_state)
     }
-    Ok(option.None) -> {
+    internal.Done(_) -> {
       // Empty stream - save recording with no chunks
       save_streaming_recording(
         RecordingYielderState(..state, start_headers: start_headers),
@@ -2523,14 +3677,12 @@ fn handle_recording_yielder_start(
       )
       yielder.Done
     }
-    Error(error_dyn) -> {
-      yielder.Next(Error(decode_stream_failure(error_dyn)), state)
-    }
+    internal.Failed(failure) -> yielder.Next(Error(failure), state)
   }
 }
 
 fn handle_recording_yielder_next(
-  owner: d.Dynamic,
+  owner: process.Pid,
   state: RecordingYielderState,
 ) -> yielder.Step(
   Result(bytes_tree.BytesTree, StreamFailure),
@@ -2538,29 +3690,25 @@ fn handle_recording_yielder_next(
 ) {
   let now = get_time_ms()
 
-  case internal.receive_next(owner, state.timeout_ms) {
-    Ok(option.Some(bin)) -> {
-      let delay = case state.last_chunk_time {
-        Some(last_time) -> now - last_time
-        None -> 0
-      }
-
-      let chunk = recording.Chunk(data: bin, delay_ms: delay)
+  case internal.fetch_next(owner) {
+    internal.Chunk(bin) -> {
+      let chunk =
+        recording.Chunk(data: bin, delay_ms: now - state.last_chunk_time)
       let new_state =
         RecordingYielderState(
           ..state,
           chunks: [chunk, ..state.chunks],
-          last_chunk_time: Some(now),
+          last_chunk_time: now,
         )
       yielder.Next(Ok(bytes_tree.from_bit_array(bin)), new_state)
     }
-    Ok(option.None) -> {
+    internal.Done(_) -> {
       save_streaming_recording(state, state.chunks)
       yielder.Done
     }
-    Error(error_dyn) -> {
+    internal.Failed(failure) -> {
       save_streaming_recording(state, state.chunks)
-      yielder.Next(Error(decode_stream_failure(error_dyn)), state)
+      yielder.Next(Error(failure), state)
     }
   }
 }
@@ -2597,108 +3745,36 @@ fn save_streaming_recording(
 }
 
 // Internal: Start a message-based streaming HTTP request
-// Used by start_stream() to initiate the low-level HTTP stream via gun.
-// Note: start_stream() already handles playback via maybe_replay_from_recording()
-// before reaching this function. This path is for live HTTP requests only.
-fn stream_messages(
-  client_request: ClientRequest,
-) -> Result(RequestId, StreamFailure) {
-  case client_request.recorder {
-    option.Some(recorder_instance) ->
-      stream_messages_with_recorder(client_request, recorder_instance)
-    option.None -> stream_messages_without_recorder(client_request)
-  }
-}
-
-fn stream_messages_with_recorder(
-  client_request: ClientRequest,
-  recorder_instance: recorder.Recorder,
-) -> Result(RequestId, StreamFailure) {
-  let recorded_request = client_request_to_recorded_request(client_request)
-
-  case recorder.find_recording(recorder_instance, recorded_request) {
-    Ok(option.Some(_recording)) ->
-      Error(
-        TransportFailure(error: Unexpected(
-          raw: "Unexpected: recording found in stream_messages path. This should have been handled by start_stream() playback.",
-        )),
-      )
-    Ok(option.None) ->
-      send_stream_messages_via_gun(
-        client_request,
-        option.Some(recorder_instance),
-        recorded_request,
-      )
-    Error(reason) -> Error(TransportFailure(error: Unexpected(raw: reason)))
-  }
-}
-
-fn stream_messages_without_recorder(
-  client_request: ClientRequest,
-) -> Result(RequestId, StreamFailure) {
-  let recorded_request = client_request_to_recorded_request(client_request)
-  send_stream_messages_via_gun(client_request, option.None, recorded_request)
-}
-
-fn send_stream_messages_via_gun(
-  client_request: ClientRequest,
-  recorder_option: Option(recorder.Recorder),
-  recorded_request: recording.RecordedRequest,
-) -> Result(RequestId, StreamFailure) {
+// Used by start_stream() to start the low-level HTTP stream via gun, after
+// it found no recording to play back.
+fn start_stream_messages(client_request: ClientRequest) -> RequestId {
   let http_request = to_http_request(client_request)
-  let url = build_url(http_request)
-  let method_atom = internal.atomize_method(http_request.method)
-  let body = <<http_request.body:utf8>>
-  let caller_process = process.self()
-  let timeout_value = resolve_timeout(client_request)
-  let connect_timeout_value = resolve_connect_timeout(client_request)
-  let auto_redirect_value = resolve_auto_redirect(client_request)
-  let connection_settings = resolve_connection_settings(client_request)
-
-  let start_result =
-    internal.start_stream_messages(
-      method_atom,
-      url,
-      http_request.headers,
-      body,
-      caller_process,
-      timeout_value,
-      connect_timeout_value,
-      auto_redirect_value,
-      connection_settings,
-    )
-
-  case parse_stream_start_result(start_result) {
-    Ok(request_id) -> {
-      record_message_stream_if_needed(
-        request_id,
-        recorder_option,
-        recorded_request,
-      )
-      Ok(request_id)
-    }
-    Error(error_reason) -> Error(error_reason)
-  }
+  internal.start_stream_messages(
+    internal.atomize_method(http_request.method),
+    build_url(http_request),
+    http_request.headers,
+    <<http_request.body:utf8>>,
+    resolve_timeout(client_request),
+    resolve_connect_timeout(client_request),
+    resolve_auto_redirect(client_request),
+    resolve_connection_settings(client_request),
+  )
+  |> RequestId
 }
 
 fn record_message_stream_if_needed(
   request_id: RequestId,
-  recorder_option: Option(recorder.Recorder),
+  recorder_instance: recorder.Recorder,
   recorded_request: recording.RecordedRequest,
 ) -> Nil {
-  case recorder_option {
-    option.Some(recorder_instance) -> {
-      case recorder.is_record_mode(recorder_instance) {
-        True ->
-          store_message_stream_recorder(
-            request_id,
-            recorder_instance,
-            recorded_request,
-          )
-        False -> Nil
-      }
-    }
-    option.None -> Nil
+  case recorder.is_record_mode(recorder_instance) {
+    True ->
+      store_message_stream_recorder(
+        request_id,
+        recorder_instance,
+        recorded_request,
+      )
+    False -> Nil
   }
 }
 
@@ -2717,55 +3793,6 @@ fn build_url(request: request.Request(String)) -> String {
   <> port_string
   <> request.path
   <> query_string
-}
-
-fn parse_stream_start_result(
-  result: d.Dynamic,
-) -> Result(RequestId, StreamFailure) {
-  let tag_result = d.run(result, d.at([0], d.dynamic))
-  case tag_result {
-    Ok(tag_dyn) -> parse_stream_start_tag(tag_dyn, result)
-    Error(decode_errors) ->
-      Error(
-        TransportFailure(error: Unexpected(
-          raw: "Failed to parse gun response: " <> string.inspect(decode_errors),
-        )),
-      )
-  }
-}
-
-fn parse_stream_start_tag(
-  tag_dyn: d.Dynamic,
-  result: d.Dynamic,
-) -> Result(RequestId, StreamFailure) {
-  let tag = atom.cast_from_dynamic(tag_dyn) |> atom.to_string
-  case tag {
-    "ok" -> extract_request_id(result)
-    "error" -> Error(extract_error_reason(result))
-    _ ->
-      Error(
-        TransportFailure(error: Unexpected(raw: "Unknown response from gun")),
-      )
-  }
-}
-
-fn extract_request_id(result: d.Dynamic) -> Result(RequestId, StreamFailure) {
-  let id_result = d.run(result, d.at([1], d.string))
-  case id_result {
-    Ok(id_string) -> Ok(RequestId(id: id_string))
-    Error(decode_errors) ->
-      Error(
-        TransportFailure(error: Unexpected(
-          raw: "Failed to extract request ID: " <> string.inspect(decode_errors),
-        )),
-      )
-  }
-}
-
-fn extract_error_reason(result: d.Dynamic) -> StreamFailure {
-  let error_dyn =
-    d.run(result, d.at([1], d.dynamic)) |> result.unwrap(dynamic.nil())
-  decode_stream_failure(error_dyn)
 }
 
 // Internal: Add stream message handling to a selector
@@ -2795,10 +3822,8 @@ fn apply_mapper_to_dynamic(
   dyn: d.Dynamic,
   mapper: fn(StreamMessage) -> msg,
 ) -> msg {
-  // Erlang does the heavy lifting: converts raw gun messages to clean format
-  // We just decode the simple {Tag, RequestId, Data} tuple
-  let simplified = internal.decode_stream_message_for_selector(dyn)
-  let stream_msg = decode_simplified_message(simplified)
+  // The Erlang shim builds the StreamMessage value itself.
+  let stream_msg = stream_message_from_selector(dyn)
 
   // Record the message if this stream has a recorder
   record_stream_message(stream_msg)
@@ -2806,286 +3831,8 @@ fn apply_mapper_to_dynamic(
   mapper(stream_msg)
 }
 
-fn decode_simplified_message(dyn: d.Dynamic) -> StreamMessage {
-  // Decode the clean {Tag, StringId, Data} tuple from Erlang
-  let tag_result = d.run(dyn, d.at([0], d.dynamic))
-  let req_id_result = d.run(dyn, d.at([1], d.string))
-  let data_result = d.run(dyn, d.at([2], d.dynamic))
-
-  case tag_result {
-    Ok(tag_dyn) -> decode_with_tag(tag_dyn, req_id_result, data_result)
-    Error(decode_error) -> handle_tag_decode_error(decode_error, req_id_result)
-  }
-}
-
-fn handle_tag_decode_error(
-  decode_error: List(d.DecodeError),
-  req_id_result: Result(String, List(d.DecodeError)),
-) -> StreamMessage {
-  let error_msg =
-    "Internal error: Failed to decode stream message tag: "
-    <> string.inspect(decode_error)
-  case req_id_result {
-    Ok(req_id_string) -> {
-      let req_id = RequestId(id: req_id_string)
-      StreamError(req_id, TransportFailure(error: Unexpected(raw: error_msg)))
-    }
-    Error(req_id_error) -> {
-      let full_error_msg =
-        error_msg
-        <> " (also failed to decode request ID: "
-        <> string.inspect(req_id_error)
-        <> ")"
-      DecodeError(full_error_msg)
-    }
-  }
-}
-
-fn decode_with_tag(
-  tag_dyn: d.Dynamic,
-  req_id_result: Result(String, List(d.DecodeError)),
-  data_result: Result(d.Dynamic, List(d.DecodeError)),
-) -> StreamMessage {
-  let tag = atom.cast_from_dynamic(tag_dyn) |> atom.to_string
-  case req_id_result {
-    Ok(req_id_string) -> {
-      let req_id = RequestId(id: req_id_string)
-      decode_by_tag(tag, req_id, data_result)
-    }
-    Error(decode_error) -> {
-      // Can't decode request ID - return DecodeError
-      let error_msg =
-        "Internal error: Failed to decode request ID from stream message: "
-        <> string.inspect(decode_error)
-      DecodeError(error_msg)
-    }
-  }
-}
-
-fn decode_by_tag(
-  tag: String,
-  req_id: RequestId,
-  data_result: Result(d.Dynamic, List(d.DecodeError)),
-) -> StreamMessage {
-  case tag {
-    "stream_start" -> decode_stream_start(req_id, data_result)
-    "chunk" -> decode_chunk(req_id, data_result)
-    "stream_end" -> decode_stream_end(req_id, data_result)
-    "stream_error" -> decode_stream_error(req_id, data_result)
-    _ ->
-      StreamError(
-        req_id,
-        TransportFailure(error: Unexpected(
-          raw: "Internal error: Unknown stream message tag: " <> tag,
-        )),
-      )
-  }
-}
-
-fn decode_stream_start(
-  req_id: RequestId,
-  data_result: Result(d.Dynamic, List(d.DecodeError)),
-) -> StreamMessage {
-  case data_result {
-    Ok(headers_dyn) -> decode_stream_start_headers(req_id, headers_dyn)
-    Error(decode_error) ->
-      StreamError(
-        req_id,
-        TransportFailure(error: Unexpected(
-          raw: "Failed to get headers data in StreamStart: "
-          <> string.inspect(decode_error),
-        )),
-      )
-  }
-}
-
-fn decode_stream_start_headers(
-  req_id: RequestId,
-  headers_dyn: d.Dynamic,
-) -> StreamMessage {
-  case decode_headers(headers_dyn) {
-    Ok(headers) -> StreamStart(req_id, tuples_to_headers(headers))
-    Error(header_decode_error) ->
-      StreamError(
-        req_id,
-        TransportFailure(error: Unexpected(
-          raw: "Failed to decode headers in StreamStart: "
-          <> string.inspect(header_decode_error),
-        )),
-      )
-  }
-}
-
-fn decode_chunk(
-  req_id: RequestId,
-  data_result: Result(d.Dynamic, List(d.DecodeError)),
-) -> StreamMessage {
-  case data_result {
-    Ok(data_dyn) -> decode_chunk_data(req_id, data_dyn)
-    Error(decode_error) ->
-      StreamError(
-        req_id,
-        TransportFailure(error: Unexpected(
-          raw: "Internal error: Failed to get chunk data: "
-          <> string.inspect(decode_error),
-        )),
-      )
-  }
-}
-
-fn decode_chunk_data(req_id: RequestId, data_dyn: d.Dynamic) -> StreamMessage {
-  case d.run(data_dyn, d.bit_array) {
-    Ok(data) -> Chunk(req_id, data)
-    Error(decode_error) ->
-      StreamError(
-        req_id,
-        TransportFailure(error: Unexpected(
-          raw: "Internal error: Failed to decode chunk data: "
-          <> string.inspect(decode_error),
-        )),
-      )
-  }
-}
-
-fn decode_stream_end(
-  req_id: RequestId,
-  data_result: Result(d.Dynamic, List(d.DecodeError)),
-) -> StreamMessage {
-  case data_result {
-    Ok(headers_dyn) -> decode_stream_end_headers(req_id, headers_dyn)
-    Error(decode_error) ->
-      StreamError(
-        req_id,
-        TransportFailure(error: Unexpected(
-          raw: "Failed to get trailing headers data in StreamEnd: "
-          <> string.inspect(decode_error),
-        )),
-      )
-  }
-}
-
-fn decode_stream_end_headers(
-  req_id: RequestId,
-  headers_dyn: d.Dynamic,
-) -> StreamMessage {
-  case decode_headers(headers_dyn) {
-    Ok(headers) -> StreamEnd(req_id, tuples_to_headers(headers))
-    Error(header_decode_error) ->
-      StreamError(
-        req_id,
-        TransportFailure(error: Unexpected(
-          raw: "Failed to decode trailing headers in StreamEnd: "
-          <> string.inspect(header_decode_error),
-        )),
-      )
-  }
-}
-
-fn decode_transport_error(dyn: d.Dynamic) -> TransportError {
-  let tag =
-    d.run(dyn, d.at([0], d.dynamic))
-    |> result.map(fn(t) { atom.to_string(atom.cast_from_dynamic(t)) })
-    |> result.unwrap("")
-  case tag {
-    "stream_reset" -> {
-      let code = d.run(dyn, d.at([1], d.string)) |> result.unwrap("unknown")
-      let description = d.run(dyn, d.at([2], d.string)) |> result.unwrap("")
-      StreamReset(code: code, description: description)
-    }
-    "goaway" -> {
-      let code = d.run(dyn, d.at([1], d.string)) |> result.unwrap("unknown")
-      let last_stream_id = d.run(dyn, d.at([2], d.int)) |> result.unwrap(0)
-      let debug_data = d.run(dyn, d.at([3], d.string)) |> result.unwrap("")
-      Goaway(code: code, last_stream_id: last_stream_id, debug_data: debug_data)
-    }
-    "connection_error" -> {
-      let code = d.run(dyn, d.at([1], d.string)) |> result.unwrap("unknown")
-      let description = d.run(dyn, d.at([2], d.string)) |> result.unwrap("")
-      ConnectionError(code: code, description: description)
-    }
-    "remote_closed" -> RemoteClosed
-    "timed_out" -> {
-      let timeout_ms = d.run(dyn, d.at([1], d.int)) |> result.unwrap(0)
-      TimedOut(timeout_ms: timeout_ms)
-    }
-    "process_down" -> {
-      let reason = d.run(dyn, d.at([1], d.string)) |> result.unwrap("unknown")
-      ProcessDown(reason: reason)
-    }
-    "connect_failed" -> {
-      let reason = d.run(dyn, d.at([1], d.string)) |> result.unwrap("unknown")
-      ConnectFailed(reason: reason)
-    }
-    "unexpected" -> {
-      let raw =
-        d.run(dyn, d.at([1], d.string)) |> result.unwrap(string.inspect(dyn))
-      Unexpected(raw: raw)
-    }
-    _ -> Unexpected(raw: "Unknown error tag: " <> tag)
-  }
-}
-
-fn decode_stream_failure(dyn: d.Dynamic) -> StreamFailure {
-  let tag =
-    d.run(dyn, d.at([0], d.dynamic))
-    |> result.map(fn(t) { atom.to_string(atom.cast_from_dynamic(t)) })
-    |> result.unwrap("")
-  case tag {
-    "http_failure" -> {
-      let status = d.run(dyn, d.at([1], d.int)) |> result.unwrap(0)
-      let headers =
-        d.run(dyn, d.at([2], d.list(d.dynamic)))
-        |> result.unwrap([])
-        |> list.filter_map(fn(h) {
-          case d.run(h, d.at([0], d.string)), d.run(h, d.at([1], d.string)) {
-            Ok(name), Ok(value) -> Ok(Header(name: name, value: value))
-            _, _ -> Error(Nil)
-          }
-        })
-      let body = d.run(dyn, d.at([3], d.string)) |> result.unwrap("")
-      HttpFailure(response: HttpResponse(
-        status: status,
-        headers: headers,
-        body: body,
-      ))
-    }
-    _ -> TransportFailure(error: decode_transport_error(dyn))
-  }
-}
-
-fn decode_stream_error(
-  req_id: RequestId,
-  data_result: Result(d.Dynamic, List(d.DecodeError)),
-) -> StreamMessage {
-  case data_result {
-    Ok(error_dyn) -> StreamError(req_id, decode_stream_failure(error_dyn))
-    Error(decode_error) ->
-      StreamError(
-        req_id,
-        TransportFailure(error: Unexpected(raw: string.inspect(decode_error))),
-      )
-  }
-}
-
-fn decode_headers(
-  dyn: d.Dynamic,
-) -> Result(List(#(String, String)), List(d.DecodeError)) {
-  // Headers are normalized to string tuples by the Erlang shim
-  let header_decoder =
-    d.at([0], d.string)
-    |> d.then(decode_header_value)
-
-  d.run(dyn, d.list(header_decoder))
-}
-
-fn decode_header_value(name: String) -> d.Decoder(#(String, String)) {
-  d.at([1], d.string)
-  |> d.map(pair_with_name(_, name))
-}
-
-fn pair_with_name(value: String, name: String) -> #(String, String) {
-  #(name, value)
-}
+@external(erlang, "dream_http_shim", "decode_stream_message_for_selector")
+fn stream_message_from_selector(message: d.Dynamic) -> StreamMessage
 
 /// Start an HTTP stream with callback handlers
 ///
@@ -3121,23 +3868,59 @@ fn pair_with_name(value: String, name: String) -> #(String, String) {
 ///
 /// ## Example
 ///
-/// ```gleam
-/// let assert Ok(stream) = client.new()
-///   |> client.host("api.openai.com")
-///   |> client.path("/v1/chat/completions")
-///   |> client.on_stream_chunk(fn(data) {
-///     case bit_array.to_string(data) {
-///       Ok(text) -> io.print(text)
-///       Error(_) -> Nil
-///     }
-///   })
-///   |> client.on_stream_error(fn(failure) {
-///     io.println_error("Error: " <> client.stream_failure_to_string(failure))
-///   })
-///   |> client.start_stream()
+/// ### Stream with callbacks <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/stream_messages_basic.gleam#L5-L54"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// // Later: cancel if needed
-/// client.cancel_stream_handle(stream)
+/// ```gleam
+/// import dream_http_client/client.{
+///   type Header, type StreamFailure, await_stream, host, on_stream_chunk,
+///   on_stream_end, on_stream_error, on_stream_start, path, port, scheme,
+///   start_stream, stream_failure_to_string,
+/// }
+/// import gleam/bit_array
+/// import gleam/http
+/// import gleam/io
+///
+/// pub fn stream_and_print() -> Result(Nil, String) {
+///   let stream_result =
+///     client.new()
+///     |> scheme(http.Http)
+///     |> host("localhost")
+///     |> port(9876)
+///     |> path("/stream/fast")
+///     |> on_stream_start(print_stream_start)
+///     |> on_stream_chunk(print_chunk)
+///     |> on_stream_end(print_stream_end)
+///     |> on_stream_error(print_stream_error)
+///     |> start_stream()
+///
+///   case stream_result {
+///     Error(reason) -> Error(reason)
+///     Ok(stream_handle) -> {
+///       // Wait for the stream to complete
+///       await_stream(stream_handle)
+///       Ok(Nil)
+///     }
+///   }
+/// }
+///
+/// fn print_stream_start(_headers: List(Header)) -> Nil {
+///   io.println("Stream started")
+/// }
+///
+/// fn print_chunk(data: BitArray) -> Nil {
+///   case bit_array.to_string(data) {
+///     Ok(text) -> io.print(text)
+///     Error(Nil) -> io.print("<binary>")
+///   }
+/// }
+///
+/// fn print_stream_end(_headers: List(Header)) -> Nil {
+///   io.println("\nStream completed")
+/// }
+///
+/// fn print_stream_error(failure: StreamFailure) -> Nil {
+///   io.println_error("Stream error: " <> stream_failure_to_string(failure))
+/// }
 /// ```
 pub fn start_stream(request: ClientRequest) -> Result(StreamHandle, String) {
   let stream_pid = process.spawn_unlinked(fn() { run_stream_process(request) })
@@ -3146,50 +3929,44 @@ pub fn start_stream(request: ClientRequest) -> Result(StreamHandle, String) {
 }
 
 fn run_stream_process(request: ClientRequest) -> Nil {
-  // Try playback from recording first
-  case maybe_replay_from_recording(request) {
-    True -> Nil
-    False -> {
-      // Build selector for HTTP messages
-      let selector =
-        process.new_selector()
-        |> select_stream_messages(fn(msg) { msg })
-
-      let timeout_ms = resolve_timeout(request)
-
-      // Start the stream using internal API
-      case stream_messages(request) {
-        Error(failure) -> {
-          case request.on_stream_error {
-            Some(on_error) -> on_error(failure)
-            None -> Nil
-          }
+  case request.recorder {
+    None -> stream_live(request)
+    Some(rec) -> {
+      let recorded_request = client_request_to_recorded_request(request)
+      case recorder.find_recording(rec, recorded_request) {
+        Ok(Some(recording.Recording(_, response))) ->
+          replay_recorded_stream(request, response)
+        Ok(None) -> {
+          let selector = stream_message_selector()
+          let request_id = start_stream_messages(request)
+          record_message_stream_if_needed(request_id, rec, recorded_request)
+          process_stream_loop(selector, request)
         }
-        Ok(req_id) -> {
-          // Process messages until stream completes
-          process_stream_loop(selector, req_id, request, timeout_ms)
-        }
+        Error(reason) ->
+          report_stream_error(
+            request,
+            TransportFailure(error: Unexpected(raw: reason)),
+          )
       }
     }
   }
 }
 
-/// Check if a matching recording exists and replay it via callbacks.
-/// Returns True if playback was handled, False if the caller should
-/// proceed with a real HTTP stream.
-fn maybe_replay_from_recording(request: ClientRequest) -> Bool {
-  case request.recorder {
-    Some(rec) -> {
-      let recorded_request = client_request_to_recorded_request(request)
-      case recorder.find_recording(rec, recorded_request) {
-        Ok(Some(recording.Recording(_, response))) -> {
-          replay_recorded_stream(request, response)
-          True
-        }
-        _ -> False
-      }
-    }
-    None -> False
+fn stream_live(request: ClientRequest) -> Nil {
+  let selector = stream_message_selector()
+  start_stream_messages(request)
+  process_stream_loop(selector, request)
+}
+
+fn stream_message_selector() -> process.Selector(StreamMessage) {
+  process.new_selector()
+  |> select_stream_messages(fn(msg) { msg })
+}
+
+fn report_stream_error(request: ClientRequest, failure: StreamFailure) -> Nil {
+  case request.on_stream_error {
+    Some(on_error) -> on_error(failure)
+    None -> Nil
   }
 }
 
@@ -3234,96 +4011,40 @@ fn replay_recorded_stream(
   }
 }
 
+// The stream process has one stream, and the Erlang shim always ends it
+// with a StreamEnd or a StreamError message: after the timeout of the
+// request, the stream ends with a TimedOut failure.
 fn process_stream_loop(
   selector: process.Selector(StreamMessage),
-  req_id: RequestId,
   request: ClientRequest,
-  timeout_ms: Int,
 ) -> Nil {
-  case process.selector_receive(selector, timeout_ms) {
-    Ok(message) -> {
-      handle_stream_message(message, req_id, request, selector, timeout_ms)
+  case process.selector_receive_forever(selector) {
+    StreamStart(_, headers) -> {
+      case request.on_stream_start {
+        Some(on_start) -> on_start(headers)
+        None -> Nil
+      }
+      process_stream_loop(selector, request)
     }
-    Error(Nil) -> {
-      case request.on_stream_error {
-        Some(on_error) ->
-          on_error(TransportFailure(error: TimedOut(timeout_ms: timeout_ms)))
+    Chunk(_, data) -> {
+      case request.on_stream_chunk {
+        Some(on_chunk) -> on_chunk(data)
+        None -> Nil
+      }
+      process_stream_loop(selector, request)
+    }
+    StreamEnd(_, headers) -> {
+      case request.on_stream_end {
+        Some(on_end) -> on_end(headers)
         None -> Nil
       }
     }
-  }
-}
-
-fn handle_stream_message(
-  message: StreamMessage,
-  req_id: RequestId,
-  request: ClientRequest,
-  selector: process.Selector(StreamMessage),
-  timeout_ms: Int,
-) -> Nil {
-  case message {
-    StreamStart(stream_req_id, headers) -> {
-      case stream_req_id == req_id {
-        True -> {
-          case request.on_stream_start {
-            Some(on_start) -> on_start(headers)
-            None -> Nil
-          }
-          process_stream_loop(selector, req_id, request, timeout_ms)
-        }
-        False -> process_stream_loop(selector, req_id, request, timeout_ms)
-      }
-    }
-
-    Chunk(stream_req_id, data) -> {
-      case stream_req_id == req_id {
-        True -> {
-          case request.on_stream_chunk {
-            Some(on_chunk) -> on_chunk(data)
-            None -> Nil
-          }
-          process_stream_loop(selector, req_id, request, timeout_ms)
-        }
-        False -> process_stream_loop(selector, req_id, request, timeout_ms)
-      }
-    }
-
-    StreamEnd(stream_req_id, headers) -> {
-      case stream_req_id == req_id {
-        True -> {
-          case request.on_stream_end {
-            Some(on_end) -> on_end(headers)
-            None -> Nil
-          }
-          Nil
-        }
-        False -> process_stream_loop(selector, req_id, request, timeout_ms)
-      }
-    }
-
-    StreamError(stream_req_id, failure) -> {
-      case stream_req_id == req_id {
-        True -> {
-          case request.on_stream_error {
-            Some(on_error) -> on_error(failure)
-            None -> Nil
-          }
-          Nil
-        }
-        False -> process_stream_loop(selector, req_id, request, timeout_ms)
-      }
-    }
-
-    DecodeError(reason) -> {
-      case request.on_stream_error {
-        Some(on_error) ->
-          on_error(
-            TransportFailure(error: Unexpected(raw: "DecodeError: " <> reason)),
-          )
-        None -> Nil
-      }
-      Nil
-    }
+    StreamError(_, failure) -> report_stream_error(request, failure)
+    DecodeError(reason) ->
+      report_stream_error(
+        request,
+        TransportFailure(error: Unexpected(raw: "DecodeError: " <> reason)),
+      )
   }
 }
 
@@ -3334,10 +4055,24 @@ fn handle_stream_message(
 ///
 /// ## Example
 ///
+/// ### Cancel a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_cancel_stream_handle.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let assert Ok(stream) = client.start_stream(request)
-/// // Later:
-/// client.cancel_stream_handle(stream)
+/// import dream_http_client/client
+/// import gleam/http
+/// import gleam/result
+///
+/// pub fn start_then_cancel() -> Result(Nil, String) {
+///   let request =
+///     client.new()
+///     |> client.scheme(http.Http)
+///     |> client.host("localhost")
+///     |> client.port(9876)
+///     |> client.path("/stream/slow")
+///   use stream <- result.map(client.start_stream(request))
+///   // Later:
+///   client.cancel_stream_handle(stream)
+/// }
 /// ```
 pub fn cancel_stream_handle(handle: StreamHandle) -> Nil {
   let StreamHandle(pid) = handle
@@ -3350,11 +4085,24 @@ pub fn cancel_stream_handle(handle: StreamHandle) -> Nil {
 ///
 /// ## Example
 ///
+/// ### Check a running stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_is_stream_active.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let assert Ok(stream) = client.start_stream(request)
-/// case client.is_stream_active(stream) {
-///   True -> io.println("Stream still running")
-///   False -> io.println("Stream completed")
+/// import dream_http_client/client
+/// import gleam/http
+/// import gleam/result
+///
+/// pub fn running_after_start() -> Result(Bool, String) {
+///   let request =
+///     client.new()
+///     |> client.scheme(http.Http)
+///     |> client.host("localhost")
+///     |> client.port(9876)
+///     |> client.path("/stream/slow")
+///   use stream <- result.map(client.start_stream(request))
+///   let active = client.is_stream_active(stream)
+///   client.cancel_stream_handle(stream)
+///   active
 /// }
 /// ```
 pub fn is_stream_active(handle: StreamHandle) -> Bool {
@@ -3374,10 +4122,26 @@ pub fn is_stream_active(handle: StreamHandle) -> Bool {
 ///
 /// ## Example
 ///
+/// ### Wait for a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_stream_handle.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let assert Ok(stream) = client.start_stream(request)
-/// client.await_stream(stream)
-/// io.println("Stream finished")
+/// import dream_http_client/client
+/// import gleam/http
+/// import gleam/result
+///
+/// pub fn run_to_end() -> Result(Bool, String) {
+///   let request =
+///     client.new()
+///     |> client.scheme(http.Http)
+///     |> client.host("localhost")
+///     |> client.port(9876)
+///     |> client.path("/stream/fast")
+///   use stream <- result.map(client.start_stream(request))
+///   // Wait for completion
+///   client.await_stream(stream)
+///   // False: the stream is done
+///   client.is_stream_active(stream)
+/// }
 /// ```
 pub fn await_stream(handle: StreamHandle) -> Nil {
   let StreamHandle(pid) = handle

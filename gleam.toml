@@ -2,10 +2,10 @@ name = "dream_http_client"
 version = "6.0.0"
 description = "Type-safe HTTP client for Gleam with streaming support"
 licences = ["MIT"]
-repository = { type = "github", user = "TrustBound", repo = "dream" }
+repository = { type = "github", user = "TrustBound", repo = "dream_http_client" }
 links = [
     { title = "Documentation", href = "https://hexdocs.pm/dream_http_client" },
-    { title = "GitHub", href = "https://github.com/TrustBound/dream" },
+    { title = "GitHub", href = "https://github.com/TrustBound/dream_http_client" },
 ]
 
 [dependencies]
@@ -23,6 +23,9 @@ gun = ">= 2.2.0 and < 3.0.0"
 application_start_module = "dream_http_client_app"
 
 [dev-dependencies]
-dream = { path = "../.." }
-dream_mock_server = { path = "../mock_server" }
-gleeunit = ">= 1.0.0 and < 2.0.0"
+# Switched to a Hex version range once it is published.
+dream = { git = "https://github.com/TrustBound/dream.git", ref = "c916b5a9652d2d0188e69c5236cda7f7c449ab0d" }
+# Switched to a Hex version range once it is published.
+dream_mock_server = { path = "../dream_mock_server" }
+# Switched to a Hex version range once it is published.
+dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "c583145874e63118cc5e680a293dd52cd4c35517" }
