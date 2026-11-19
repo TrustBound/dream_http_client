@@ -10,7 +10,7 @@ packages = [
   { name = "cowlib", version = "2.16.0", build_tools = ["make", "rebar3"], requirements = [], otp_app = "cowlib", source = "hex", outer_checksum = "7F478D80D66B747344F0EA7708C187645CFCC08B11AA424632F78E25BF05DB51" },
   { name = "dream", version = "3.0.0", build_tools = ["gleam"], requirements = ["dream_http_server", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "gleam_time", "gleam_yielder", "marceau", "simplifile"], source = "git", repo = "https://github.com/TrustBound/dream.git", commit = "c916b5a9652d2d0188e69c5236cda7f7c449ab0d" },
   { name = "dream_http_server", version = "1.2.0", build_tools = ["gleam"], requirements = ["dream_socket_server", "exception", "gleam_erlang", "gleam_http", "gleam_otp", "gleam_stdlib", "gramps", "hpack_erl", "logging"], otp_app = "dream_http_server", source = "hex", outer_checksum = "0E5BD2B13F4C92ACEE2ECFD84A40AAB7EFAA9B597AC56E87FBB96A5960080EEF" },
-  { name = "dream_mock_server", version = "1.1.1", build_tools = ["gleam"], requirements = ["dream", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "gleam_yielder"], source = "local", path = "../dream_mock_server" },
+  { name = "dream_mock_server", version = "1.1.1", build_tools = ["gleam"], requirements = ["dream", "gleam_erlang", "gleam_http", "gleam_json", "gleam_otp", "gleam_stdlib", "gleam_yielder"], source = "git", repo = "https://github.com/TrustBound/dream_mock_server.git", commit = "33f4fae570b792a8a6819177072613c11d72930b" },
   { name = "dream_socket_server", version = "1.0.0", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_otp", "gleam_stdlib", "logging"], otp_app = "dream_socket_server", source = "hex", outer_checksum = "1D54F39888984D947E9AC93229A5142B8BB672A7E13128128D6064FA8B8E8A36" },
   { name = "dream_test", version = "3.0.0", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_json", "gleam_otp", "gleam_regexp", "gleam_stdlib"], source = "git", repo = "https://github.com/TrustBound/dream_test.git", commit = "c583145874e63118cc5e680a293dd52cd4c35517" },
   { name = "exception", version = "2.1.1", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "exception", source = "hex", outer_checksum = "6BDEA95248093599391C3B5DF1835C5C6A86C353C2F99CE539B450E3432FE117" },
@@ -34,7 +34,7 @@ packages = [
 
 [requirements]
 dream = { git = "https://github.com/TrustBound/dream.git", ref = "c916b5a9652d2d0188e69c5236cda7f7c449ab0d" }
-dream_mock_server = { path = "../dream_mock_server" }
+dream_mock_server = { git = "https://github.com/TrustBound/dream_mock_server.git", ref = "33f4fae570b792a8a6819177072613c11d72930b" }
 dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "c583145874e63118cc5e680a293dd52cd4c35517" }
 gleam_crypto = { version = ">= 1.3.0 and < 2.0.0" }
 gleam_erlang = { version = ">= 1.1.0 and < 2.0.0" }

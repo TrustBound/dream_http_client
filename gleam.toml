@@ -26,6 +26,6 @@ application_start_module = "dream_http_client_app"
 # Switched to a Hex version range once it is published.
 dream = { git = "https://github.com/TrustBound/dream.git", ref = "c916b5a9652d2d0188e69c5236cda7f7c449ab0d" }
 # Switched to a Hex version range once it is published.
-dream_mock_server = { path = "../dream_mock_server" }
+dream_mock_server = { git = "https://github.com/TrustBound/dream_mock_server.git", ref = "33f4fae570b792a8a6819177072613c11d72930b" }
 # Switched to a Hex version range once it is published.
 dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "c583145874e63118cc5e680a293dd52cd4c35517" }
