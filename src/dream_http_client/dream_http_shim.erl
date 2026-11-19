@@ -1,429 +1,320 @@
 -module(dream_http_shim).
 
--export([request_stream/9, fetch_next/2, fetch_start_headers/2, request_stream_messages/9,
-         cancel_stream/1, cancel_stream_by_string/1, receive_stream_message/1,
-         decode_stream_message_for_selector/1, normalize_headers/1, request_sync/8,
-         configure_transport/1,
-         ets_table_exists/1, ets_new/2, ets_insert/7, ets_lookup/2, ets_delete/2]).
+%% The values this module returns to Gleam are Gleam values:
+%%
+%% - a transport error is a `client.TransportError`, for example
+%%   `{timed_out, TimeoutMs}` or `remote_closed`;
+%% - a stream failure is a `client.StreamFailure`:
+%%   `{transport_failure, TransportError}` or
+%%   `{http_failure, {http_response, Status, [{header, Name, Value}], Body}}`;
+%% - a pull stream event is an `internal.StreamEvent`:
+%%   `{chunk, Data}`, `{done, Trailers}` or `{failed, StreamFailure}`;
+%% - a message stream message is a `client.StreamMessage` with a
+%%   `{request_id, Id}` request ID.
+
+-export([request_sync/8, request_stream/8, fetch_next/1, fetch_start_headers/1,
+         request_stream_messages/8, cancel_stream_by_string/1,
+         decode_stream_message_for_selector/1, configure_transport/1,
+         ets_insert/7, ets_lookup/2, ets_delete/2]).
 
 -define(REF_MAPPING_TABLE, dream_http_client_ref_mapping).
 -define(MAX_REDIRECTS, 5).
+
+%% The state of the process that owns a pull-based stream.
+%% `events` holds the stream events that no caller has fetched yet, and
+%% `waiter` is the caller that waits for the next event. `requester` is the
+%% process that started the stream: the owner stops when it stops.
+-record(owner, {requester, conn, ref, headers, zlib, timeout, events = [], waiter = none}).
+
+%% ============================================================================
+%% Requests and redirects
+%% ============================================================================
+
+request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings) ->
+    #{method => Method, url => Url, headers => maybe_add_accept_encoding(Headers),
+      body => Body, timeout => TimeoutMs, connect_timeout => ConnectTimeoutMs,
+      auto_redirect => AutoRedirect, settings => Settings}.
+
+%% Sends the request and follows redirects. Returns the response head of the
+%% last response, or {error, TransportError}.
+open_response(_Request, Redirects) when Redirects >= ?MAX_REDIRECTS ->
+    {error, {unexpected, <<"Too many redirects (max 5)">>}};
+open_response(Request, Redirects) ->
+    #{method := Method, url := Url, body := Body, timeout := TimeoutMs,
+      auto_redirect := AutoRedirect} = Request,
+    case open_stream(Request, 1) of
+        {ok, ConnPid, StreamRef, IsFin, Status, RespHeaders} = Response ->
+            case AutoRedirect andalso redirect_location(Status, RespHeaders) of
+                {ok, Location} ->
+                    _ = await_body(ConnPid, StreamRef, IsFin, TimeoutMs),
+                    Next = Request#{url := uri_string:resolve(Location, Url),
+                                    method := redirect_method(Status, Method),
+                                    body := redirect_body(Status, Body)},
+                    open_response(Next, Redirects + 1);
+                _ ->
+                    Response
+            end;
+        Error ->
+            Error
+    end.
+
+%% Sends one request. A request on a connection that the server closed
+%% while it was idle is sent once more on a new connection.
+open_stream(Request, RetriesLeft) ->
+    #{method := Method, url := Url, headers := Headers, body := Body,
+      timeout := TimeoutMs, connect_timeout := ConnectTimeoutMs,
+      settings := Settings} = Request,
+    case parse_url(Url) of
+        {ok, Scheme, Host, Port, PathQs} ->
+            GunOpts = build_gun_opts(ConnectTimeoutMs, Settings),
+            case get_or_open_connection(Scheme, Host, Port, GunOpts) of
+                {ok, ConnPid, _Protocol} ->
+                    StreamRef = gun:request(ConnPid, method_binary(Method), PathQs, Headers, Body),
+                    case gun:await(ConnPid, StreamRef, TimeoutMs) of
+                        {response, IsFin, Status, RespHeaders} ->
+                            {ok, ConnPid, StreamRef, IsFin, Status, RespHeaders};
+                        {error, Reason} ->
+                            case RetriesLeft > 0 andalso is_stale_connection_error(Reason) of
+                                true ->
+                                    gun:close(ConnPid),
+                                    open_stream(Request, RetriesLeft - 1);
+                                false ->
+                                    {error, transport_error(Reason, TimeoutMs)}
+                            end
+                    end;
+                {error, Reason} ->
+                    {error, connect_error(Reason)}
+            end;
+        {error, Reason} ->
+            {error, transport_error(Reason, TimeoutMs)}
+    end.
+
+%% Reads the whole body of a response.
+await_body(_ConnPid, _StreamRef, fin, _TimeoutMs) ->
+    {ok, <<>>};
+await_body(ConnPid, StreamRef, nofin, TimeoutMs) ->
+    case gun:await_body(ConnPid, StreamRef, TimeoutMs) of
+        {ok, Body, _Trailers} -> {ok, Body};
+        Result -> Result
+    end.
+
+redirect_location(Status, Headers)
+        when Status =:= 301; Status =:= 302; Status =:= 303; Status =:= 307; Status =:= 308 ->
+    case lists:keyfind(<<"location">>, 1, Headers) of
+        {_, Location} -> {ok, Location};
+        false -> none
+    end;
+redirect_location(_Status, _Headers) ->
+    none.
+
+redirect_method(Status, _Method) when Status =:= 301; Status =:= 302; Status =:= 303 -> get;
+redirect_method(_Status, Method) -> Method.
+
+redirect_body(Status, _Body) when Status =:= 301; Status =:= 302; Status =:= 303 -> <<>>;
+redirect_body(_Status, Body) -> Body.
 
 %% ============================================================================
 %% Synchronous (blocking) request
 %% ============================================================================
 
-request_sync(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Protocols) ->
-    NHeaders = maybe_add_accept_encoding(to_gun_headers(Headers)),
-    request_sync_impl(Method, Url, NHeaders, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, 0, 1, Protocols).
-
-request_sync_impl(_Method, _Url, _Headers, _Body, _TimeoutMs, _ConnectTimeoutMs, _AutoRedirect, Redirects, _RetriesLeft, _Protocols) when Redirects >= ?MAX_REDIRECTS ->
-    {error, {unexpected, <<"Too many redirects (max 5)">>}};
-request_sync_impl(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Redirects, RetriesLeft, Protocols) ->
-    case parse_url(Url) of
-        {ok, Scheme, Host, Port, PathQs} ->
-            GunOpts = build_gun_opts(ConnectTimeoutMs, Protocols),
-            case get_or_open_connection(Scheme, Host, Port, GunOpts) of
-                {ok, ConnPid, _Protocol} ->
-                    MethodAtom = to_method_atom(Method),
-                    StreamRef = send_request(ConnPid, MethodAtom, PathQs, Headers, Body),
-                    case gun:await(ConnPid, StreamRef, TimeoutMs) of
-                        {response, fin, Status, RespHeaders} ->
-                            NormHeaders = normalize_headers(RespHeaders),
-                            handle_sync_response(Status, NormHeaders, <<>>, AutoRedirect, Redirects,
-                                                 Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, RespHeaders, Protocols);
-                        {response, nofin, Status, RespHeaders} ->
-                            case gun:await_body(ConnPid, StreamRef, TimeoutMs) of
-                                {ok, RespBody} ->
-                                    {DecompBody, CleanHeaders} = maybe_decompress_response(RespBody, RespHeaders),
-                                    NormHeaders = normalize_headers(CleanHeaders),
-                                    handle_sync_response(Status, NormHeaders, DecompBody, AutoRedirect, Redirects,
-                                                         Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, RespHeaders, Protocols);
-                                {ok, RespBody, _Trailers} ->
-                                    {DecompBody, CleanHeaders} = maybe_decompress_response(RespBody, RespHeaders),
-                                    NormHeaders = normalize_headers(CleanHeaders),
-                                    handle_sync_response(Status, NormHeaders, DecompBody, AutoRedirect, Redirects,
-                                                         Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, RespHeaders, Protocols);
-                                {error, timeout} ->
-                                    {error, {timed_out, TimeoutMs}};
-                                {error, Reason} ->
-                                    {error, classify_error(Reason, TimeoutMs)}
-                            end;
-                        {error, timeout} ->
-                            {error, {timed_out, TimeoutMs}};
-                        {error, {stream_error, Reason, HumanReadable}} ->
-                            case RetriesLeft > 0 andalso is_stale_connection_error({stream_error, Reason}) of
-                                true ->
-                                    gun:close(ConnPid),
-                                    request_sync_impl(Method, Url, Headers, Body, TimeoutMs,
-                                                      ConnectTimeoutMs, AutoRedirect, Redirects, RetriesLeft - 1, Protocols);
-                                false ->
-                                    {error, classify_error({stream_error, Reason, HumanReadable}, TimeoutMs)}
-                            end;
-                        {error, Reason} ->
-                            case RetriesLeft > 0 andalso is_stale_connection_error(Reason) of
-                                true ->
-                                    gun:close(ConnPid),
-                                    request_sync_impl(Method, Url, Headers, Body, TimeoutMs,
-                                                      ConnectTimeoutMs, AutoRedirect, Redirects, RetriesLeft - 1, Protocols);
-                                false ->
-                                    {error, classify_error(Reason, TimeoutMs)}
-                            end
-                    end;
+request_sync(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings) ->
+    Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings),
+    case open_response(Request, 0) of
+        {ok, ConnPid, StreamRef, IsFin, Status, RespHeaders} ->
+            case await_body(ConnPid, StreamRef, IsFin, TimeoutMs) of
+                {ok, RespBody} ->
+                    {DecompBody, CleanHeaders} = maybe_decompress_response(RespBody, RespHeaders),
+                    {ok, {Status, CleanHeaders, DecompBody}};
                 {error, Reason} ->
-                    {error, classify_connect_error(Reason)}
+                    {error, transport_error(Reason, TimeoutMs)}
             end;
-        {error, Reason} ->
-            {error, classify_error(Reason, TimeoutMs)}
+        Error ->
+            Error
     end.
 
-handle_sync_response(Status, NormHeaders, DecompBody, AutoRedirect, Redirects,
-                     Method, Url, OrigHeaders, OrigBody, TimeoutMs, ConnectTimeoutMs, RawRespHeaders, Protocols) ->
-    case AutoRedirect andalso is_redirect(Status) of
-        true ->
-            case get_location(RawRespHeaders) of
-                {ok, Location} ->
-                    ResolvedUrl = resolve_redirect_url(Location, Url),
-                    RedirectMethod = redirect_method(Status, Method),
-                    RedirectBody = redirect_body(Status, OrigBody),
-                    request_sync_impl(RedirectMethod, ResolvedUrl, OrigHeaders, RedirectBody,
-                                      TimeoutMs, ConnectTimeoutMs, AutoRedirect, Redirects + 1, 1, Protocols);
-                error ->
-                    {ok, {Status, NormHeaders, DecompBody}}
-            end;
-        false ->
-            {ok, {Status, NormHeaders, DecompBody}}
+%% ============================================================================
+%% Streaming responses (shared by the pull and the message streams)
+%% ============================================================================
+
+%% Returns the head of a 2xx response, or {error, StreamFailure}.
+open_streaming_response(Request = #{timeout := TimeoutMs}) ->
+    case open_response(Request, 0) of
+        {ok, ConnPid, StreamRef, IsFin, Status, RespHeaders} when Status >= 200, Status < 300 ->
+            {ok, ConnPid, StreamRef, IsFin, RespHeaders};
+        {ok, ConnPid, StreamRef, IsFin, Status, RespHeaders} ->
+            Body = case await_body(ConnPid, StreamRef, IsFin, TimeoutMs) of
+                {ok, FullBody} -> body_text(FullBody);
+                {error, _Reason} -> <<>>
+            end,
+            {error, {http_failure, {http_response, Status, gleam_headers(RespHeaders), Body}}};
+        {error, Error} ->
+            {error, {transport_failure, Error}}
     end.
+
+%% Turns one gun message of a stream into stream events.
+%% Returns {Events, ZlibCtx}. The last event of a stream is `done` or `failed`.
+stream_events({gun_data, _ConnPid, _StreamRef, nofin, Data}, ZlibCtx) ->
+    {[{chunk, inflate(ZlibCtx, Data)}], ZlibCtx};
+stream_events({gun_data, _ConnPid, _StreamRef, fin, Data}, ZlibCtx) ->
+    Chunk = inflate(ZlibCtx, Data),
+    close_zlib(ZlibCtx),
+    {[{chunk, Chunk} || Chunk =/= <<>>] ++ [{done, []}], undefined};
+stream_events({gun_trailers, _ConnPid, _StreamRef, Trailers}, ZlibCtx) ->
+    close_zlib(ZlibCtx),
+    {[{done, Trailers}], undefined};
+stream_events({gun_error, ConnPid, _StreamRef, Reason}, ZlibCtx) ->
+    stream_events({gun_error, ConnPid, Reason}, ZlibCtx);
+stream_events({gun_error, _ConnPid, Reason}, ZlibCtx) ->
+    close_zlib(ZlibCtx),
+    {[{failed, {transport_failure, transport_error(Reason, 0)}}], undefined}.
 
 %% ============================================================================
 %% Pull-based streaming
 %% ============================================================================
 
-request_stream(Method, Url, Headers, Body, _Receiver, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Protocols) ->
-    NHeaders = maybe_add_accept_encoding(to_gun_headers(Headers)),
-    Owner = spawn(fun() ->
-        stream_owner_init(Method, Url, NHeaders, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Protocols)
-    end),
-    {ok, Owner}.
+request_stream(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings) ->
+    Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings),
+    Requester = self(),
+    spawn(fun() -> stream_owner_init(Request, Requester) end).
 
-stream_owner_init(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Protocols) ->
-    case start_gun_stream(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, 0, Protocols) of
-        {ok, ConnPid, StreamRef, _Status, RespHeaders} ->
-            ZlibCtx = maybe_init_stream_zlib(RespHeaders),
-            NormHeaders = normalize_headers(RespHeaders),
-            stream_owner_wait(ConnPid, StreamRef, [], NormHeaders, [], ZlibCtx, TimeoutMs);
-        {error, Reason} ->
-            exit({stream_start_failed, Reason})
+stream_owner_init(Request = #{timeout := TimeoutMs}, Requester) ->
+    erlang:monitor(process, Requester),
+    case open_streaming_response(Request) of
+        {ok, ConnPid, StreamRef, IsFin, RespHeaders} ->
+            Owner = #owner{requester = Requester, conn = ConnPid, ref = StreamRef,
+                           headers = RespHeaders, zlib = stream_zlib(RespHeaders),
+                           timeout = TimeoutMs},
+            stream_owner_loop(Owner#owner{events = [{done, []} || IsFin =:= fin]});
+        {error, Failure} ->
+            exit({stream_start_failed, Failure})
     end.
 
-%% Follows redirects, then returns {ok, ConnPid, StreamRef, Status, Headers} for a
-%% streaming response (status 2xx), or {error, Reason} for non-2xx / failure.
-start_gun_stream(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, _AutoRedirect, Redirects, Protocols) when Redirects >= ?MAX_REDIRECTS ->
-    start_gun_stream_final(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, Protocols);
-start_gun_stream(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Redirects, Protocols) ->
-    case start_gun_stream_final(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, Protocols) of
-        {ok, ConnPid, StreamRef, Status, RespHeaders} ->
-            case AutoRedirect andalso is_redirect(Status) of
-                true ->
-                    %% Drain the body so the stream is clean
-                    drain_stream(ConnPid, StreamRef),
-                    case get_location(RespHeaders) of
-                        {ok, Location} ->
-                            ResolvedUrl = resolve_redirect_url(Location, Url),
-                            RedirectMethod = redirect_method(Status, Method),
-                            RedirectBody = redirect_body(Status, Body),
-                            start_gun_stream(RedirectMethod, ResolvedUrl, Headers, RedirectBody,
-                                             TimeoutMs, ConnectTimeoutMs, AutoRedirect, Redirects + 1, Protocols);
-                        error ->
-                            {ok, ConnPid, StreamRef, Status, RespHeaders}
-                    end;
-                false ->
-                    case Status >= 200 andalso Status < 300 of
-                        true ->
-                            {ok, ConnPid, StreamRef, Status, RespHeaders};
-                        false ->
-                            FullBody = collect_body(ConnPid, StreamRef, TimeoutMs),
-                            {error, {http_failure, Status, normalize_headers(RespHeaders), ensure_utf8_binary(FullBody)}}
-                    end
-            end;
-        {error, Reason} ->
-            {error, Reason}
-    end.
-
-start_gun_stream_final(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, Protocols) ->
-    start_gun_stream_final(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, 1, Protocols).
-
-start_gun_stream_final(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, RetriesLeft, Protocols) ->
-    case parse_url(Url) of
-        {ok, Scheme, Host, Port, PathQs} ->
-            GunOpts = build_gun_opts(ConnectTimeoutMs, Protocols),
-            case get_or_open_connection(Scheme, Host, Port, GunOpts) of
-                {ok, ConnPid, _Protocol} ->
-                    MethodAtom = to_method_atom(Method),
-                    StreamRef = send_request(ConnPid, MethodAtom, PathQs, Headers, Body),
-                    case gun:await(ConnPid, StreamRef, TimeoutMs) of
-                        {response, fin, Status, RespHeaders} ->
-                            {ok, ConnPid, StreamRef, Status, RespHeaders};
-                        {response, nofin, Status, RespHeaders} ->
-                            {ok, ConnPid, StreamRef, Status, RespHeaders};
-                        {error, timeout} ->
-                            {error, {timed_out, TimeoutMs}};
-                        {error, Reason} ->
-                            case RetriesLeft > 0 andalso is_stale_connection_error(Reason) of
-                                true ->
-                                    gun:close(ConnPid),
-                                    start_gun_stream_final(Method, Url, Headers, Body,
-                                                           TimeoutMs, ConnectTimeoutMs, RetriesLeft - 1, Protocols);
-                                false ->
-                                    {error, classify_error(Reason, TimeoutMs)}
-                            end
-                    end;
-                {error, Reason} ->
-                    {error, classify_connect_error(Reason)}
-            end;
-        {error, Reason} ->
-            {error, classify_error(Reason, TimeoutMs)}
-    end.
-
-drain_stream(ConnPid, StreamRef) ->
-    case gun:await_body(ConnPid, StreamRef, 5000) of
-        {ok, _Body} -> ok;
-        {ok, _Body, _Trailers} -> ok;
+%% Gives each fetched event to its caller, and collects the gun messages of
+%% the stream until a caller fetches them. The owner stops after it gives
+%% the last event of the stream.
+stream_owner_loop(Owner = #owner{waiter = Waiter, events = [Event | Events]}) when Waiter =/= none ->
+    Waiter ! {stream_event, self(), Event},
+    case Event of
+        {chunk, _Data} -> stream_owner_loop(Owner#owner{waiter = none, events = Events});
         _ -> ok
-    end.
-
-collect_body(ConnPid, StreamRef, Timeout) ->
-    case gun:await_body(ConnPid, StreamRef, Timeout) of
-        {ok, Body} -> Body;
-        {ok, Body, _Trailers} -> Body;
-        _ -> <<>>
-    end.
-
-%% Stream owner loop: services fetch_next requests using gun messages
-stream_owner_wait(ConnPid, StreamRef, Buffer, StartHeaders, StartWaiters, ZlibCtx, TimeoutMs) ->
-    receive
-        {fetch_next, From} ->
-            handle_fetch_next(From, ConnPid, StreamRef, Buffer, StartHeaders, StartWaiters, ZlibCtx, TimeoutMs);
-        {fetch_start_headers, From} ->
-            case StartHeaders of
-                undefined ->
-                    stream_owner_wait(ConnPid, StreamRef, Buffer, StartHeaders, [From | StartWaiters], ZlibCtx, TimeoutMs);
-                _ ->
-                    From ! {stream_start_headers, normalize_headers_default(StartHeaders)},
-                    stream_owner_wait(ConnPid, StreamRef, Buffer, StartHeaders, StartWaiters, ZlibCtx, TimeoutMs)
-            end;
-        {gun_data, ConnPid, StreamRef, nofin, Data} ->
-            DecompData = case ZlibCtx of
-                undefined -> Data;
-                _ -> decompress_chunk(ZlibCtx, Data)
-            end,
-            stream_owner_wait(ConnPid, StreamRef, Buffer ++ [{chunk, DecompData}], StartHeaders, StartWaiters, ZlibCtx, TimeoutMs);
-        {gun_data, ConnPid, StreamRef, fin, Data} ->
-            DecompData = case ZlibCtx of
-                undefined -> Data;
-                _ -> decompress_chunk(ZlibCtx, Data)
-            end,
-            cleanup_zlib(ZlibCtx),
-            FinalBuffer = case byte_size(DecompData) > 0 of
-                true -> Buffer ++ [{chunk, DecompData}, {finished, []}];
-                false -> Buffer ++ [{finished, []}]
-            end,
-            stream_owner_wait(ConnPid, StreamRef, FinalBuffer, StartHeaders, StartWaiters, undefined, TimeoutMs);
-        {gun_trailers, ConnPid, StreamRef, Trailers} ->
-            cleanup_zlib(ZlibCtx),
-            stream_owner_wait(ConnPid, StreamRef, Buffer ++ [{finished, normalize_headers(Trailers)}],
-                              StartHeaders, StartWaiters, undefined, TimeoutMs);
-        {gun_error, ConnPid, StreamRef, Reason} ->
-            cleanup_zlib(ZlibCtx),
-            stream_owner_wait(ConnPid, StreamRef, Buffer ++ [{error, classify_error(Reason, TimeoutMs)}],
-                              StartHeaders, StartWaiters, undefined, TimeoutMs);
-        {gun_error, ConnPid, Reason} ->
-            cleanup_zlib(ZlibCtx),
-            stream_owner_wait(ConnPid, StreamRef, Buffer ++ [{error, classify_error(Reason, TimeoutMs)}],
-                              StartHeaders, StartWaiters, undefined, TimeoutMs);
-        _Other ->
-            stream_owner_wait(ConnPid, StreamRef, Buffer, StartHeaders, StartWaiters, ZlibCtx, TimeoutMs)
-    end.
-
-handle_fetch_next(From, ConnPid, StreamRef, [], StartHeaders, StartWaiters, ZlibCtx, TimeoutMs) ->
-    %% Buffer empty — wait for next gun message
-    receive
-        {gun_data, ConnPid, StreamRef, nofin, Data} ->
-            DecompData = case ZlibCtx of
-                undefined -> Data;
-                _ -> decompress_chunk(ZlibCtx, Data)
-            end,
-            From ! {stream_chunk, DecompData},
-            stream_owner_wait(ConnPid, StreamRef, [], StartHeaders, StartWaiters, ZlibCtx, TimeoutMs);
-        {gun_data, ConnPid, StreamRef, fin, Data} ->
-            DecompData = case ZlibCtx of
-                undefined -> Data;
-                _ -> decompress_chunk(ZlibCtx, Data)
-            end,
-            cleanup_zlib(ZlibCtx),
-            case byte_size(DecompData) > 0 of
-                true ->
-                    From ! {stream_chunk, DecompData},
-                    stream_owner_wait(ConnPid, StreamRef, [{finished, []}], StartHeaders, StartWaiters, undefined, TimeoutMs);
-                false ->
-                    From ! {stream_end, []},
-                    ok
-            end;
-        {gun_trailers, ConnPid, StreamRef, Trailers} ->
-            cleanup_zlib(ZlibCtx),
-            From ! {stream_end, normalize_headers(Trailers)},
-            ok;
-        {gun_error, ConnPid, StreamRef, Reason} ->
-            cleanup_zlib(ZlibCtx),
-            From ! {stream_error, classify_error(Reason, TimeoutMs)},
-            ok;
-        {gun_error, ConnPid, Reason} ->
-            cleanup_zlib(ZlibCtx),
-            From ! {stream_error, classify_error(Reason, TimeoutMs)},
-            ok
-    after TimeoutMs ->
-        From ! {stream_error, {timed_out, TimeoutMs}},
-        stream_owner_wait(ConnPid, StreamRef, [], StartHeaders, StartWaiters, ZlibCtx, TimeoutMs)
     end;
-handle_fetch_next(From, ConnPid, StreamRef, [Item | Rest], StartHeaders, StartWaiters, ZlibCtx, TimeoutMs) ->
-    deliver_message(From, Item),
-    case Item of
-        {finished, _} -> ok;
-        {error, _} -> ok;
-        _ -> stream_owner_wait(ConnPid, StreamRef, Rest, StartHeaders, StartWaiters, ZlibCtx, TimeoutMs)
+stream_owner_loop(Owner = #owner{requester = Requester, conn = ConnPid, ref = StreamRef,
+                                 waiter = Waiter, timeout = TimeoutMs}) ->
+    receive
+        {'DOWN', _MonitorRef, process, Requester, _Reason} ->
+            ok;
+        {fetch_next, From} ->
+            stream_owner_loop(Owner#owner{waiter = From});
+        {fetch_start_headers, From} ->
+            From ! {stream_start_headers, self(), Owner#owner.headers},
+            stream_owner_loop(Owner);
+        Message = {gun_data, ConnPid, StreamRef, _IsFin, _Data} ->
+            stream_owner_loop(add_events(Owner, Message));
+        Message = {Tag, ConnPid, StreamRef, _Value} when Tag =:= gun_trailers; Tag =:= gun_error ->
+            stream_owner_loop(add_events(Owner, Message));
+        Message = {gun_error, ConnPid, _Reason} ->
+            stream_owner_loop(add_events(Owner, Message))
+    after wait_timeout(Waiter, TimeoutMs) ->
+        Waiter ! {stream_event, self(), {failed, {transport_failure, {timed_out, TimeoutMs}}}},
+        stream_owner_loop(Owner#owner{waiter = none})
     end.
 
-deliver_message(From, {chunk, Bin}) ->
-    From ! {stream_chunk, Bin};
-deliver_message(From, {finished, Headers}) ->
-    From ! {stream_end, Headers};
-deliver_message(From, {error, Reason}) ->
-    From ! {stream_error, Reason}.
+add_events(Owner = #owner{events = Events, zlib = ZlibCtx}, Message) ->
+    {NewEvents, NewZlibCtx} = stream_events(Message, ZlibCtx),
+    Owner#owner{events = Events ++ NewEvents, zlib = NewZlibCtx}.
 
-fetch_next(OwnerPid, TimeoutMs) ->
-    MonitorRef = erlang:monitor(process, OwnerPid),
-    OwnerPid ! {fetch_next, self()},
+wait_timeout(none, _TimeoutMs) -> infinity;
+wait_timeout(_Waiter, TimeoutMs) -> TimeoutMs.
+
+fetch_next(Owner) ->
+    MonitorRef = erlang:monitor(process, Owner),
+    Owner ! {fetch_next, self()},
     receive
-        {stream_chunk, Bin} ->
+        {stream_event, Owner, Event} ->
             erlang:demonitor(MonitorRef, [flush]),
-            {chunk, Bin};
-        {stream_end, Headers} ->
-            erlang:demonitor(MonitorRef, [flush]),
-            {finished, Headers};
-        {stream_error, Reason} ->
-            erlang:demonitor(MonitorRef, [flush]),
-            {error, Reason};
-        {'DOWN', MonitorRef, process, OwnerPid, {stream_start_failed, ErrorInfo}} ->
-            {error, ErrorInfo};
-        {'DOWN', MonitorRef, process, OwnerPid, Reason} ->
-            {error, {process_down, ensure_utf8_binary(io_lib:format("~p", [Reason]))}}
-    after TimeoutMs ->
-        erlang:demonitor(MonitorRef, [flush]),
-        {error, {timed_out, TimeoutMs}}
+            Event;
+        {'DOWN', MonitorRef, process, Owner, Reason} ->
+            {failed, down_failure(Reason)}
     end.
 
-fetch_start_headers(OwnerPid, TimeoutMs) ->
-    MonitorRef = erlang:monitor(process, OwnerPid),
-    OwnerPid ! {fetch_start_headers, self()},
+fetch_start_headers(Owner) ->
+    MonitorRef = erlang:monitor(process, Owner),
+    Owner ! {fetch_start_headers, self()},
     receive
-        {stream_start_headers, Headers} ->
+        {stream_start_headers, Owner, Headers} ->
             erlang:demonitor(MonitorRef, [flush]),
             {ok, Headers};
-        {'DOWN', MonitorRef, process, OwnerPid, {stream_start_failed, ErrorInfo}} ->
-            {error, ErrorInfo};
-        {'DOWN', MonitorRef, process, OwnerPid, Reason} ->
-            {error, {process_down, ensure_utf8_binary(io_lib:format("~p", [Reason]))}}
-    after TimeoutMs ->
-        erlang:demonitor(MonitorRef, [flush]),
-        {error, {timed_out, TimeoutMs}}
+        {'DOWN', MonitorRef, process, Owner, Reason} ->
+            {error, down_failure(Reason)}
     end.
 
-normalize_headers_default(undefined) -> [];
-normalize_headers_default(Headers) -> Headers.
+down_failure({stream_start_failed, Failure}) -> Failure;
+down_failure(Reason) -> {transport_failure, {process_down, inspect(Reason)}}.
 
 %% ============================================================================
 %% Message-based streaming
 %% ============================================================================
 
-request_stream_messages(Method, Url, Headers, Body, _ReceiverPid, TimeoutMs,
-                        ConnectTimeoutMs, AutoRedirect, Protocols) ->
-    NHeaders = maybe_add_accept_encoding(to_gun_headers(Headers)),
+request_stream_messages(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings) ->
+    Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings),
     CallerPid = self(),
-    TranslatorPid = spawn(fun() ->
-        translator_init(Method, Url, NHeaders, Body, CallerPid, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Protocols)
-    end),
-    %% Generate a unique string ID for this stream
-    StringId = translator_ref_to_string(TranslatorPid),
+    %% The link stops the translator when the stream process stops.
+    TranslatorPid = spawn_link(fun() -> translator_init(Request, CallerPid) end),
+    StringId = pid_text(TranslatorPid),
     store_ref_mapping(StringId, TranslatorPid),
-    {ok, StringId}.
+    StringId.
 
-translator_init(Method, Url, Headers, Body, CallerPid, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Protocols) ->
-    case start_gun_stream(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, 0, Protocols) of
-        {ok, ConnPid, StreamRef, _Status, RespHeaders} ->
-            StringId = get_my_string_id(),
-            %% Store ConnPid and StreamRef for cancellation
+translator_init(Request = #{timeout := TimeoutMs}, CallerPid) ->
+    StringId = pid_text(self()),
+    RequestId = {request_id, StringId},
+    case open_streaming_response(Request) of
+        {ok, ConnPid, StreamRef, IsFin, RespHeaders} ->
             store_cancel_info(StringId, ConnPid, StreamRef),
-            NormHeaders = normalize_headers(RespHeaders),
-            CallerPid ! {http, {StringId, stream_start, NormHeaders}},
-            ZlibCtx = maybe_init_stream_zlib(RespHeaders),
-            translator_loop(ConnPid, StreamRef, CallerPid, StringId, ZlibCtx, TimeoutMs);
-        {error, Reason} ->
-            StringId = get_my_string_id(),
-            CallerPid ! {http, {StringId, {error, Reason}}},
-            ok
+            CallerPid ! {http, {stream_start, RequestId, gleam_headers(RespHeaders)}},
+            Translator = {ConnPid, StreamRef, CallerPid, RequestId, TimeoutMs},
+            case IsFin of
+                fin -> send_events(Translator, [{done, []}]);
+                nofin -> translator_loop(Translator, stream_zlib(RespHeaders))
+            end;
+        {error, Failure} ->
+            CallerPid ! {http, {stream_error, RequestId, Failure}}
     end.
 
-translator_loop(ConnPid, StreamRef, CallerPid, StringId, ZlibCtx, TimeoutMs) ->
+translator_loop(Translator = {ConnPid, StreamRef, CallerPid, RequestId, TimeoutMs}, ZlibCtx) ->
     receive
-        {gun_data, ConnPid, StreamRef, nofin, Data} ->
-            DecompData = case ZlibCtx of
-                undefined -> Data;
-                _ -> decompress_chunk(ZlibCtx, Data)
-            end,
-            CallerPid ! {http, {StringId, stream, DecompData}},
-            translator_loop(ConnPid, StreamRef, CallerPid, StringId, ZlibCtx, TimeoutMs);
-        {gun_data, ConnPid, StreamRef, fin, Data} ->
-            case byte_size(Data) > 0 of
-                true ->
-                    DecompData = case ZlibCtx of
-                        undefined -> Data;
-                        _ -> decompress_chunk(ZlibCtx, Data)
-                    end,
-                    CallerPid ! {http, {StringId, stream, DecompData}};
-                false -> ok
-            end,
-            cleanup_zlib(ZlibCtx),
-            CallerPid ! {http, {StringId, stream_end, []}},
-            ok;
-        {gun_trailers, ConnPid, StreamRef, Trailers} ->
-            cleanup_zlib(ZlibCtx),
-            CallerPid ! {http, {StringId, stream_end, normalize_headers(Trailers)}},
-            ok;
-        {gun_error, ConnPid, StreamRef, Reason} ->
-            cleanup_zlib(ZlibCtx),
-            CallerPid ! {http, {StringId, {error, classify_error(Reason, TimeoutMs)}}},
-            ok;
-        {gun_error, ConnPid, Reason} ->
-            cleanup_zlib(ZlibCtx),
-            CallerPid ! {http, {StringId, {error, classify_error(Reason, TimeoutMs)}}},
-            ok;
+        Message = {gun_data, ConnPid, StreamRef, _IsFin, _Data} ->
+            translate(Translator, Message, ZlibCtx);
+        Message = {Tag, ConnPid, StreamRef, _Value} when Tag =:= gun_trailers; Tag =:= gun_error ->
+            translate(Translator, Message, ZlibCtx);
+        Message = {gun_error, ConnPid, _Reason} ->
+            translate(Translator, Message, ZlibCtx);
         cancel ->
-            cleanup_zlib(ZlibCtx),
+            close_zlib(ZlibCtx),
             gun:cancel(ConnPid, StreamRef),
-            ok;
-        _Other ->
-            translator_loop(ConnPid, StreamRef, CallerPid, StringId, ZlibCtx, TimeoutMs)
+            ok
     after TimeoutMs ->
-        cleanup_zlib(ZlibCtx),
-        CallerPid ! {http, {StringId, {error, {timed_out, TimeoutMs}}}},
-        ok
+        close_zlib(ZlibCtx),
+        CallerPid ! {http, {stream_error, RequestId, {transport_failure, {timed_out, TimeoutMs}}}}
     end.
 
-get_my_string_id() ->
-    translator_ref_to_string(self()).
+translate(Translator, Message, ZlibCtx) ->
+    {Events, NewZlibCtx} = stream_events(Message, ZlibCtx),
+    case send_events(Translator, Events) of
+        {chunk, _Data} -> translator_loop(Translator, NewZlibCtx);
+        _ -> ok
+    end.
 
-translator_ref_to_string(Pid) ->
-    ensure_utf8_binary(io_lib:format("~p", [Pid])).
+%% Sends the events to the caller and returns the last one.
+send_events({_ConnPid, _StreamRef, CallerPid, RequestId, _TimeoutMs}, Events) ->
+    lists:foreach(fun(Event) -> CallerPid ! {http, stream_message(RequestId, Event)} end, Events),
+    lists:last(Events).
+
+stream_message(RequestId, {chunk, Data}) -> {chunk, RequestId, Data};
+stream_message(RequestId, {done, Trailers}) -> {stream_end, RequestId, gleam_headers(Trailers)};
+stream_message(RequestId, {failed, Failure}) -> {stream_error, RequestId, Failure}.
+
+pid_text(Pid) ->
+    list_to_binary(pid_to_list(Pid)).
 
 store_cancel_info(StringId, ConnPid, StreamRef) ->
     ets:insert(?REF_MAPPING_TABLE, {{cancel, StringId}, {ConnPid, StreamRef}}).
@@ -431,15 +322,6 @@ store_cancel_info(StringId, ConnPid, StreamRef) ->
 %% ============================================================================
 %% Cancellation
 %% ============================================================================
-
-cancel_stream(RequestId) ->
-    case ets:lookup(?REF_MAPPING_TABLE, {cancel, RequestId}) of
-        [{{cancel, _}, {ConnPid, StreamRef}}] ->
-            gun:cancel(ConnPid, StreamRef),
-            ok;
-        [] ->
-            ok
-    end.
 
 cancel_stream_by_string(StringId) ->
     case lookup_ref_by_string(StringId) of
@@ -464,49 +346,14 @@ cancel_stream_by_string(StringId) ->
 %% Message decoding for selectors
 %% ============================================================================
 
-receive_stream_message(TimeoutMs) ->
-    receive
-        {http, {StringId, stream_start, Headers}} ->
-            {stream_start, StringId, Headers};
-        {http, {StringId, stream, Data}} ->
-            {chunk, StringId, Data};
-        {http, {StringId, stream_end, Headers}} ->
-            {stream_end, StringId, Headers};
-        {http, {StringId, {error, ErrorInfo}}} ->
-            {stream_error, StringId, ErrorInfo}
-    after TimeoutMs ->
-        timeout
-    end.
-
-decode_stream_message_for_selector({http, InnerMessage}) ->
-    case InnerMessage of
-        {StringId, stream_start, Headers} ->
-            {stream_start, StringId, Headers};
-        {StringId, stream, Data} ->
-            {chunk, StringId, Data};
-        {StringId, stream_end, Headers} ->
-            remove_ref_mapping(StringId),
-            {stream_end, StringId, Headers};
-        {StringId, {error, ErrorInfo}} ->
-            remove_ref_mapping(StringId),
-            {stream_error, StringId, ErrorInfo};
-        _ ->
-            error(badarg)
-    end.
-
-%% ============================================================================
-%% Header normalization
-%% ============================================================================
-
-normalize_headers(Headers) when is_list(Headers) ->
-    lists:map(fun normalize_header_tuple/1, Headers);
-normalize_headers(_) ->
-    [].
-
-normalize_header_tuple({Name, Value}) ->
-    {to_binary(Name), to_binary(Value)};
-normalize_header_tuple(_) ->
-    {<<"">>, <<"">>}.
+%% The selector gives the whole `{http, StreamMessage}` tuple. The last
+%% message of a stream also removes the stream from the request ID table.
+decode_stream_message_for_selector({http, Message = {Tag, {request_id, StringId}, _Value}}) ->
+    case Tag =:= stream_end orelse Tag =:= stream_error of
+        true -> remove_ref_mapping(StringId);
+        false -> ok
+    end,
+    Message.
 
 %% ============================================================================
 %% Transport configuration
@@ -591,360 +438,159 @@ build_gun_opts(ConnectTimeoutMs, {connection_settings, Protocols, CertificateAut
         {some, File} -> WithProtocols#{certificate_authority_file => File}
     end.
 
-send_request(ConnPid, Method, PathQs, Headers, Body) ->
-    MethodBin = method_atom_to_binary(Method),
-    ActualBody = case Body of
-        undefined -> <<>>;
-        _ -> Body
-    end,
-    gun:request(ConnPid, MethodBin, PathQs, Headers, ActualBody).
+method_binary(Method) ->
+    string:uppercase(atom_to_binary(Method, utf8)).
 
 %% ============================================================================
 %% URL parsing
 %% ============================================================================
 
-parse_url(Url) when is_binary(Url) ->
-    parse_url(binary_to_list(Url));
-parse_url(Url) when is_list(Url) ->
+%% Url is a binary, or the error that uri_string:resolve/2 returned for a
+%% redirect location.
+parse_url({error, Reason, _Term}) ->
+    {error, Reason};
+parse_url(Url) ->
     case uri_string:parse(Url) of
-        #{scheme := SchemeStr, host := Host} = Parsed ->
-            Scheme = case SchemeStr of
-                "https" -> https;
-                "http" -> http;
-                <<"https">> -> https;
-                <<"http">> -> http;
-                _ -> http
+        #{scheme := Scheme, host := Host, path := Path} = Parsed ->
+            Port = maps:get(port, Parsed, default_port(Scheme)),
+            NonEmptyPath = case Path of
+                <<>> -> <<"/">>;
+                _ -> Path
             end,
-            Port = case maps:get(port, Parsed, undefined) of
-                undefined ->
-                    case Scheme of
-                        https -> 443;
-                        http -> 80
-                    end;
-                P -> P
+            PathQs = case Parsed of
+                #{query := Query} -> <<NonEmptyPath/binary, "?", Query/binary>>;
+                _ -> NonEmptyPath
             end,
-            Path = case maps:get(path, Parsed, "/") of
-                "" -> "/";
-                <<>> -> "/";
-                P2 -> to_list(P2)
-            end,
-            Query = case maps:get(query, Parsed, undefined) of
-                undefined -> "";
-                Q -> to_list(Q)
-            end,
-            PathQs = case Query of
-                "" -> Path;
-                _ -> Path ++ "?" ++ Query
-            end,
-            HostStr = to_list(Host),
-            {ok, Scheme, HostStr, Port, to_binary(PathQs)};
-        {error, Reason, _} ->
-            {error, Reason};
-        _ ->
-            {error, invalid_url}
+            {ok, binary_to_atom(Scheme, utf8), unicode:characters_to_list(Host), Port, PathQs};
+        {error, Reason, _Term} ->
+            {error, Reason}
     end.
 
-%% ============================================================================
-%% Redirect helpers
-%% ============================================================================
-
-is_redirect(301) -> true;
-is_redirect(302) -> true;
-is_redirect(303) -> true;
-is_redirect(307) -> true;
-is_redirect(308) -> true;
-is_redirect(_) -> false.
-
-get_location(Headers) ->
-    case lists:keyfind(<<"location">>, 1, Headers) of
-        {_, Location} -> {ok, Location};
-        false ->
-            %% Try case-insensitive
-            Result = lists:foldl(fun({K, V}, Acc) ->
-                case Acc of
-                    error ->
-                        case string:lowercase(to_list(K)) of
-                            "location" -> {ok, V};
-                            _ -> error
-                        end;
-                    Found -> Found
-                end
-            end, error, Headers),
-            Result
-    end.
-
-redirect_method(303, _) -> <<"GET">>;
-redirect_method(301, _) -> <<"GET">>;
-redirect_method(302, _) -> <<"GET">>;
-redirect_method(_, Method) -> Method.
-
-redirect_body(303, _) -> <<>>;
-redirect_body(301, _) -> <<>>;
-redirect_body(302, _) -> <<>>;
-redirect_body(_, Body) -> Body.
-
-resolve_redirect_url(Location, OriginalUrl) ->
-    LocStr = to_list(Location),
-    case uri_string:parse(LocStr) of
-        #{scheme := _} ->
-            Location;
-        _ ->
-            OrigStr = to_list(OriginalUrl),
-            case uri_string:parse(OrigStr) of
-                #{scheme := S, host := H} = Parsed ->
-                    Port = maps:get(port, Parsed, undefined),
-                    Base = case Port of
-                        undefined -> io_lib:format("~s://~s", [S, H]);
-                        _ -> io_lib:format("~s://~s:~B", [S, H, Port])
-                    end,
-                    iolist_to_binary([Base, LocStr]);
-                _ ->
-                    Location
-            end
-    end.
-
-status_reason(200) -> <<"OK">>;
-status_reason(201) -> <<"Created">>;
-status_reason(204) -> <<"No Content">>;
-status_reason(301) -> <<"Moved Permanently">>;
-status_reason(302) -> <<"Found">>;
-status_reason(303) -> <<"See Other">>;
-status_reason(307) -> <<"Temporary Redirect">>;
-status_reason(308) -> <<"Permanent Redirect">>;
-status_reason(400) -> <<"Bad Request">>;
-status_reason(401) -> <<"Unauthorized">>;
-status_reason(403) -> <<"Forbidden">>;
-status_reason(404) -> <<"Not Found">>;
-status_reason(422) -> <<"Unprocessable Entity">>;
-status_reason(429) -> <<"Too Many Requests">>;
-status_reason(500) -> <<"Internal Server Error">>;
-status_reason(502) -> <<"Bad Gateway">>;
-status_reason(503) -> <<"Service Unavailable">>;
-status_reason(_) -> <<"Unknown">>.
+default_port(<<"https">>) -> 443;
+default_port(<<"http">>) -> 80.
 
 %% ============================================================================
-%% Method conversion
+%% Headers
 %% ============================================================================
 
-to_method_atom(Method) when is_atom(Method) -> Method;
-to_method_atom(Method) when is_binary(Method) ->
-    case string:lowercase(binary_to_list(Method)) of
-        "get" -> get;
-        "post" -> post;
-        "put" -> put;
-        "delete" -> delete;
-        "patch" -> patch;
-        "head" -> head;
-        "options" -> options;
-        Other -> list_to_atom(Other)
-    end.
-
-method_atom_to_binary(get) -> <<"GET">>;
-method_atom_to_binary(post) -> <<"POST">>;
-method_atom_to_binary(put) -> <<"PUT">>;
-method_atom_to_binary(delete) -> <<"DELETE">>;
-method_atom_to_binary(patch) -> <<"PATCH">>;
-method_atom_to_binary(head) -> <<"HEAD">>;
-method_atom_to_binary(options) -> <<"OPTIONS">>;
-method_atom_to_binary(Other) ->
-    list_to_binary(string:to_upper(atom_to_list(Other))).
-
-%% ============================================================================
-%% Header conversion
-%% ============================================================================
-
-to_gun_headers(Hs) when is_list(Hs) ->
-    lists:map(fun({K, V}) -> {to_binary(K), to_binary(V)} end, Hs);
-to_gun_headers(Other) ->
-    Other.
+gleam_headers(Headers) ->
+    [{header, Name, Value} || {Name, Value} <- Headers].
 
 maybe_add_accept_encoding(Headers) ->
     HasAcceptEncoding = lists:any(
-        fun({K, _V}) ->
-            string:lowercase(binary_to_list(K)) =:= "accept-encoding"
-        end, Headers),
+        fun({K, _V}) -> string:lowercase(K) =:= <<"accept-encoding">> end,
+        Headers),
     case HasAcceptEncoding of
         true -> Headers;
         false -> Headers ++ [{<<"accept-encoding">>, <<"gzip, deflate">>}]
+    end.
+
+%% gun gives response header names in lower case.
+get_content_encoding(Headers) ->
+    case lists:keyfind(<<"content-encoding">>, 1, Headers) of
+        {_, Value} -> string:lowercase(string:trim(Value));
+        false -> <<>>
     end.
 
 %% ============================================================================
 %% Decompression
 %% ============================================================================
 
-get_content_encoding(Headers) ->
-    Val = lists:foldl(
-        fun({K, V}, Acc) ->
-            case string:lowercase(to_list(K)) of
-                "content-encoding" -> string:trim(string:lowercase(to_list(V)));
-                _ -> Acc
-            end
-        end, "", Headers),
-    Val.
-
-remove_header(Name, Headers) ->
-    NormName = string:lowercase(to_list(Name)),
-    lists:filter(
-        fun({K, _V}) -> string:lowercase(to_list(K)) =/= NormName end,
-        Headers).
-
+maybe_decompress_response(<<>>, Headers) ->
+    {<<>>, Headers};
 maybe_decompress_response(Body, Headers) ->
-    Encoding = get_content_encoding(Headers),
-    case Encoding of
-        "gzip" ->
-            try_decompress(fun() -> zlib:gunzip(iolist_to_binary(Body)) end,
-                           Body, Headers);
-        "deflate" ->
-            try_decompress(fun() -> zlib:uncompress(iolist_to_binary(Body)) end,
-                           Body, Headers);
-        "identity" -> {Body, Headers};
-        "" -> {Body, Headers};
+    case get_content_encoding(Headers) of
+        <<"gzip">> ->
+            try_decompress(fun zlib:gunzip/1, Body, Headers);
+        <<"deflate">> ->
+            try_decompress(fun zlib:uncompress/1, Body, Headers);
+        <<"identity">> -> {Body, Headers};
+        <<>> -> {Body, Headers};
         Other ->
-            logger:warning("unrecognized Content-Encoding, passing through raw bytes: ~s",
-                           [to_binary(Other)]),
+            logger:warning("unrecognized Content-Encoding, passing through raw bytes: ~s", [Other]),
             {Body, Headers}
     end.
 
-try_decompress(DecompressFn, OrigBody, Headers) ->
+try_decompress(DecompressFn, Body, Headers) ->
     try
-        Decompressed = DecompressFn(),
-        {Decompressed, remove_header("content-encoding", Headers)}
+        Decompressed = DecompressFn(Body),
+        {Decompressed, [Header || Header = {Name, _} <- Headers, Name =/= <<"content-encoding">>]}
     catch
         _:_ ->
             logger:warning("decompression failed, passing through raw bytes", []),
-            {OrigBody, Headers}
+            {Body, Headers}
     end.
 
-detect_stream_encoding(Headers) ->
-    Encoding = get_content_encoding(Headers),
-    case Encoding of
-        "gzip" -> {gzip, 31};
-        "deflate" -> {deflate, 15};
-        "" -> none;
-        "identity" -> none;
+stream_zlib(Headers) ->
+    case get_content_encoding(Headers) of
+        <<"gzip">> -> open_zlib(31);
+        <<"deflate">> -> open_zlib(15);
+        <<>> -> undefined;
+        <<"identity">> -> undefined;
         Other ->
             logger:warning("unrecognized Content-Encoding for stream, passing through raw bytes: ~s",
-                           [to_binary(Other)]),
-            none
+                           [Other]),
+            undefined
     end.
 
-init_zlib_context(WindowBits) ->
+open_zlib(WindowBits) ->
     Z = zlib:open(),
     ok = zlib:inflateInit(Z, WindowBits),
     Z.
 
-maybe_init_stream_zlib(Headers) ->
-    case detect_stream_encoding(Headers) of
-        {_Enc, WindowBits} -> init_zlib_context(WindowBits);
-        none -> undefined
-    end.
+inflate(undefined, Data) -> Data;
+inflate(ZlibCtx, Data) -> iolist_to_binary(zlib:inflate(ZlibCtx, Data)).
 
-decompress_chunk(ZlibCtx, Chunk) ->
-    iolist_to_binary(zlib:inflate(ZlibCtx, Chunk)).
-
-cleanup_zlib(undefined) -> ok;
-cleanup_zlib(ZlibCtx) ->
-    try zlib:inflateEnd(ZlibCtx) catch _:_ -> ok end,
-    try zlib:close(ZlibCtx) catch _:_ -> ok end,
-    ok.
+close_zlib(undefined) -> ok;
+close_zlib(ZlibCtx) -> zlib:close(ZlibCtx).
 
 %% ============================================================================
-%% Stale connection detection
+%% Errors
 %% ============================================================================
 
+%% gun:await/3 and gun:await_body/3 return an error that the server closed
+%% the connection when a request reuses a connection that the server closed
+%% while it was idle. A GOAWAY frame refuses a stream that the server did not
+%% start to process. In both cases a new connection can send the request.
 is_stale_connection_error({stream_error, closed}) -> true;
-is_stale_connection_error({stream_error, {goaway, _, _, _}}) -> true;
-is_stale_connection_error({closed, _}) -> true;
-is_stale_connection_error(closed) -> true;
-is_stale_connection_error(_) -> false.
+is_stale_connection_error({stream_error, {goaway, _Code, _HumanReadable}}) -> true;
+is_stale_connection_error(_Reason) -> false.
 
-%% ============================================================================
-%% Error classification (returns tagged tuples for Gleam decoders)
-%% ============================================================================
+%% Turns a gun error into a `client.TransportError`. gun:await/3 and
+%% gun:await_body/3 wrap the reason of the gun_error message in
+%% {stream_error, Reason} or {connection_error, Reason}.
+transport_error({stream_error, Reason}, TimeoutMs) -> transport_error(Reason, TimeoutMs);
+transport_error({connection_error, Reason}, TimeoutMs) -> transport_error(Reason, TimeoutMs);
+transport_error(timeout, TimeoutMs) -> {timed_out, TimeoutMs};
+%% gun gives `closed`, or {closed, SocketError} when the socket failed.
+transport_error(Reason, _TimeoutMs) when Reason =:= closed; element(1, Reason) =:= closed ->
+    remote_closed;
+transport_error({down, Reason}, _TimeoutMs) -> {process_down, inspect(Reason)};
+transport_error({stream_error, Code, HumanReadable}, _TimeoutMs) ->
+    {stream_reset, atom_to_binary(Code, utf8), atom_to_binary(HumanReadable, utf8)};
+transport_error({Code, HumanReadable}, _TimeoutMs) when is_atom(Code), is_atom(HumanReadable) ->
+    {connection_error, atom_to_binary(Code, utf8), atom_to_binary(HumanReadable, utf8)};
+transport_error(Reason, _TimeoutMs) ->
+    {unexpected, inspect(Reason)}.
 
-%% 3-tuple GOAWAY clause MUST come before generic 3-tuple clause.
-%% Gun can return {stream_error, {goaway, ...}, HumanReadable} as a 3-tuple.
-%% Without this clause, the generic {stream_error, Code, HumanReadable} would
-%% match with Code = {goaway, ...} (a tuple), and atom_to_binary would crash.
-classify_error({stream_error, {goaway, LastStreamId, Code, DebugData}, _HumanReadable}, _TimeoutMs) ->
-    {goaway, atom_to_binary(Code, utf8), LastStreamId, ensure_utf8_binary(DebugData)};
-classify_error({stream_error, {goaway, LastStreamId, Code, DebugData}}, _TimeoutMs) ->
-    {goaway, atom_to_binary(Code, utf8), LastStreamId, ensure_utf8_binary(DebugData)};
-classify_error({stream_error, Code, HumanReadable}, _TimeoutMs) when is_atom(Code) ->
-    {stream_reset, atom_to_binary(Code, utf8), ensure_utf8_binary(HumanReadable)};
-classify_error({stream_error, Code}, _TimeoutMs) when is_atom(Code) ->
-    {stream_reset, atom_to_binary(Code, utf8), atom_to_binary(Code, utf8)};
-classify_error({connection_error, Code, HumanReadable}, _TimeoutMs) ->
-    {connection_error, atom_to_binary(Code, utf8), ensure_utf8_binary(HumanReadable)};
-classify_error(closed, _TimeoutMs) ->
-    {remote_closed};
-classify_error({closed, _}, _TimeoutMs) ->
-    {remote_closed};
-classify_error(timeout, TimeoutMs) ->
-    {timed_out, TimeoutMs};
-classify_error(Reason, _TimeoutMs) ->
-    {unexpected, ensure_utf8_binary(io_lib:format("~p", [Reason]))}.
+connect_error(econnrefused) -> {connect_failed, <<"Connection refused">>};
+connect_error(timeout) -> {connect_failed, <<"Connection timed out">>};
+connect_error(nxdomain) -> {connect_failed, <<"DNS resolution failed (NXDOMAIN)">>};
+connect_error(Reason) -> {connect_failed, inspect(Reason)}.
 
-classify_connect_error(econnrefused) ->
-    {connect_failed, <<"Connection refused">>};
-classify_connect_error(connect_timeout) ->
-    {connect_failed, <<"Connection timed out">>};
-classify_connect_error(timeout) ->
-    {connect_failed, <<"Connection timed out">>};
-classify_connect_error(nxdomain) ->
-    {connect_failed, <<"DNS resolution failed (NXDOMAIN)">>};
-classify_connect_error(Reason) ->
-    {connect_failed, ensure_utf8_binary(io_lib:format("~p", [Reason]))}.
+inspect(Term) ->
+    unicode:characters_to_binary(io_lib:format("~p", [Term])).
 
-%% ============================================================================
-%% Binary/string conversion
-%% ============================================================================
-
-to_binary(Bin) when is_binary(Bin) -> Bin;
-to_binary(List) when is_list(List) ->
-    unicode:characters_to_binary(List);
-to_binary(Other) ->
-    ensure_utf8_binary(io_lib:format("~p", [Other])).
-
-to_list(S) when is_binary(S) -> unicode:characters_to_list(S);
-to_list(S) when is_list(S) -> S;
-to_list(Other) -> io_lib:format("~p", [Other]).
-
-ensure_utf8_binary(Bin) when is_binary(Bin) ->
-    case unicode:characters_to_binary(Bin, utf8, utf8) of
-        Result when is_binary(Result) -> Result;
-        _ ->
-            case unicode:characters_to_binary(Bin, latin1, utf8) of
-                Result2 when is_binary(Result2) -> Result2;
-                _ -> iolist_to_binary(io_lib:format("~w", [Bin]))
-            end
-    end;
-ensure_utf8_binary(List) when is_list(List) ->
-    case unicode:characters_to_binary(List) of
-        Result when is_binary(Result) -> Result;
-        _ -> iolist_to_binary(io_lib:format("~w", [List]))
-    end;
-ensure_utf8_binary(Other) ->
-    iolist_to_binary(io_lib:format("~w", [Other])).
+%% A Gleam String must be UTF-8. A body that is not UTF-8 is read as Latin-1.
+body_text(Body) ->
+    case unicode:characters_to_binary(Body) of
+        Text when is_binary(Text) -> Text;
+        _ -> unicode:characters_to_binary(Body, latin1)
+    end.
 
 %% ============================================================================
 %% ETS Functions
 %% ============================================================================
-
-ets_table_exists(Name) ->
-    try
-        NameAtom = binary_to_atom(Name, utf8),
-        case ets:info(NameAtom) of
-            undefined -> false;
-            _ -> true
-        end
-    catch
-        error:badarg -> false
-    end.
-
-ets_new(Name, Options) ->
-    NameAtom = binary_to_atom(Name, utf8),
-    ets:new(NameAtom, Options).
 
 ets_insert(TableName, Key, Recorder, RecordedRequest, Headers, Chunks, LastChunkTime) ->
     TableAtom = binary_to_atom(TableName, utf8),
@@ -953,26 +599,17 @@ ets_insert(TableName, Key, Recorder, RecordedRequest, Headers, Chunks, LastChunk
     nil.
 
 ets_lookup(TableName, Key) ->
-    try
-        TableAtom = binary_to_atom(TableName, utf8),
-        case ets:lookup(TableAtom, Key) of
-            [{Key, {Recorder, RecordedRequest, Headers, Chunks, LastChunkTime}}] ->
-                State = {message_stream_recorder_state,
-                         Recorder, RecordedRequest, Headers, Chunks, LastChunkTime},
-                {some, State};
-            [] -> none
-        end
-    catch
-        error:badarg -> none
+    TableAtom = binary_to_atom(TableName, utf8),
+    case ets:lookup(TableAtom, Key) of
+        [{Key, {Recorder, RecordedRequest, Headers, Chunks, LastChunkTime}}] ->
+            State = {message_stream_recorder_state,
+                     Recorder, RecordedRequest, Headers, Chunks, LastChunkTime},
+            {some, State};
+        [] -> none
     end.
 
 ets_delete(TableName, Key) ->
-    try
-        TableAtom = binary_to_atom(TableName, utf8),
-        ets:delete(TableAtom, Key)
-    catch
-        error:badarg -> false
-    end.
+    ets:delete(binary_to_atom(TableName, utf8), Key).
 
 %% ============================================================================
 %% Request ID Mapping
@@ -999,5 +636,3 @@ remove_ref_mapping(StringId) ->
         none ->
             ok
     end.
-
-

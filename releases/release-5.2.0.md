@@ -285,7 +285,7 @@ Defaults to `LogInfo`. Available levels: `LogDebug`, `LogInfo`, `LogWarning`,
 
 ### Connection lifecycle
 
-```
+```text
 request → get_or_open_connection → ensure_connection (gen_server)
   → if below max_connections: gun:open + gun:await_up → new connection
   → if at max: round-robin from pool
@@ -366,16 +366,16 @@ above to update error handling code.
 ## Documentation
 
 - [dream_http_client hexdocs](https://hexdocs.pm/dream_http_client) -- v5.2.0
-- [README](https://github.com/TrustBound/dream/tree/main/modules/http_client)
-- [CHANGELOG](https://github.com/TrustBound/dream/blob/main/modules/http_client/CHANGELOG.md)
+- [README](https://github.com/TrustBound/dream_http_client/tree/main)
+- [CHANGELOG](https://github.com/TrustBound/dream_http_client/blob/main/CHANGELOG.md)
 
 ## Community
 
-- [Full Documentation](https://github.com/TrustBound/dream/tree/main/modules/http_client)
+- [Full Documentation](https://github.com/TrustBound/dream_http_client/tree/main)
 - [Discussions](https://github.com/TrustBound/dream/discussions)
 - [Report Issues](https://github.com/TrustBound/dream/issues)
 - [Contributing Guide](https://github.com/TrustBound/dream/blob/main/CONTRIBUTING.md)
 
 ---
 
-**Full Changelog:** [CHANGELOG.md](https://github.com/TrustBound/dream/blob/main/modules/http_client/CHANGELOG.md)
+**Full Changelog:** [CHANGELOG.md](https://github.com/TrustBound/dream_http_client/blob/main/CHANGELOG.md)

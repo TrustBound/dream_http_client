@@ -73,7 +73,7 @@ let assert Ok(rec) =
 
 If multiple recordings exist for the same computed key, playback returns an error like:
 
-```
+```text
 Ambiguous recording match for key: ...
 ```
 
@@ -167,7 +167,7 @@ Recording filenames now include both:
 
 Format:
 
-```
+```text
 {method}_{host}_{path}_{key_hash}_{content_hash}.json
 ```
 
