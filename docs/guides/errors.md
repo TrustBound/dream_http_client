@@ -111,13 +111,15 @@ fn classify_transport(error: TransportError) -> Outcome {
 
 Here's what `classify` returns for real failures:
 
+### What classify returns <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_errors_step_1.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 send(api |> path("/text"))                  -> Done(response)  (status 200)
-send(api |> path("/status/404"))            -> GiveUp(reason: "HTTP 404")
-send(api |> path("/status/503"))            -> TryLater(reason: "HTTP 503")
-send(api |> port(1))                        -> TryLater(reason: "Connection failed: Connection refused")
-a server that closes the connection         -> TryLater(reason: "Remote closed connection")
-an HTTP/2 server that resets the stream     -> GiveUp(reason: "Stream reset (internal_error): Stream reset by server.")
+send(api |> path("/status/404"))            -> GiveUp("HTTP 404")
+send(api |> path("/status/503"))            -> TryLater("HTTP 503")
+send(api |> port(1))                        -> TryLater("Connection failed: Connection refused")
+a server that closes the connection         -> TryLater("Remote closed connection")
+an HTTP/2 server that resets the stream     -> GiveUp("Stream reset (internal_error): Stream reset by server.")
 ```
 
 The status list is a choice, not a rule. 429 (too many requests) and 503 (unavailable) say "later" outright, and 408, 500, 502 and 504 often pass too. Any other 4xx is about your request, and it gets the same answer every time you send it. Adjust the list to the API you call: some APIs send 409 when you should retry.
@@ -153,6 +155,8 @@ pub fn fetch_report(
 ```
 
 The mock server answers `/slow` after 5 seconds, so:
+
+### A short and a long timeout <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_errors_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 fetch_report(api, 500)    -> Error(RequestError(TimedOut(500)))
@@ -235,9 +239,11 @@ fn is_safe_to_repeat(method: http.Method) -> Bool {
 
 Against a server that answers 500 every time, with 3 attempts and a first wait of 10 ms:
 
+### Retries against a server that always fails <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_errors_step_4.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
-send_with_retry(GET request, 3, 10)    -> TryLater(reason: "HTTP 500"), and the server got 3 requests
-send_with_retry(POST request, 3, 10)   -> TryLater(reason: "HTTP 500"), and the server got 1 request
+send_with_retry(GET request, 3, 10)    -> TryLater("HTTP 500"), and the server got 3 requests
+send_with_retry(POST request, 3, 10)   -> TryLater("HTTP 500"), and the server got 1 request
 ```
 
 `get_method(request)` reads the method back from the request, so the helper decides from the request alone. If your API supports idempotency keys, a header that lets the server recognize a repeated POST, you can safely retry a POST that carries one. Add `http.Post` to the list only for those requests.

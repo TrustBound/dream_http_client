@@ -114,6 +114,8 @@ fn print_chunk(
 
 When you run `print_chunks()`, it returns `Ok(10)` and prints this, one line every 100 ms:
 
+### What print_chunks prints <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_streaming_print_chunks.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 [8 bytes] Chunk 1
 [8 bytes] Chunk 2
@@ -169,6 +171,8 @@ fn collect_lines(
 ```
 
 It works on bytes, not text, so a character that's split across two chunks doesn't break it. Here's what it returns when a line arrives in two pieces:
+
+### A line in two pieces <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_streaming_complete_lines.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 complete_lines(<<"{\"message\":\"first\"}\n{\"mess">>)
@@ -259,6 +263,8 @@ fn message_decoder() -> decode.Decoder(String) {
 
 `print_mock_events()` returns `Ok(5)` and prints:
 
+### What print_mock_events prints <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_streaming_json_events.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 JSON event 1
 JSON event 2
@@ -336,6 +342,8 @@ fn describe_failure(failure: StreamFailure, received: Int) -> DownloadError {
 The trick is that `try_fold` passes the running total into `add_chunk`. When an `Error` comes, the total is right there to put into the result.
 
 Here's what `count_bytes` returns for each mock endpoint:
+
+### What count_bytes returns for each endpoint <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_streaming_failures.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 /stream/fast                     -> Ok(81)
@@ -536,12 +544,15 @@ Your streaming code depends on two things you can't control in a unit test: what
 - **Against a mock server**, to test the whole path over a real connection, including failures. `dream_mock_server` sends known chunks with known delays, and has endpoints for an error status (`/stream/error`) and a dropped connection (`/stream/drop`).
 - **Against a recording**, to test exact chunk boundaries, the timing between chunks, and an error status, with no network at all. A recording of a stream holds each chunk as it arrived, so you can write one with a line split across two chunks, which no well-behaved test server will do for you.
 
-Add the test dependencies first. `dream_test` and `dream_mock_server` aren't on Hex yet, so add them from GitHub, with the same commits that this package tests with:
+Add the test dependencies first. `dream_test` and `dream_mock_server` aren't on Hex yet, so add them from GitHub under `[dev-dependencies]` in your `gleam.toml`. These are the lines of this package's own `gleam.toml`, with the commits that it tests with:
+
+### The test dependencies <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/gleam.toml#L41-L44"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```toml
-[dev-dependencies]
-dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "1639959578a14ae3577f8e3ae5cac058f933aa53" }
+# Switched to a Hex version range once it is published.
 dream_mock_server = { git = "https://github.com/TrustBound/dream_mock_server.git", ref = "525abd32be8cbc5f8aff33bb37d3f8ba1c7d00d1" }
+# Switched to a Hex version range once it is published.
+dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "1639959578a14ae3577f8e3ae5cac058f933aa53" }
 ```
 
 Here's a test module for `print_events` from Step 2 that does both. It uses [dream_test](https://hexdocs.pm/dream_test):

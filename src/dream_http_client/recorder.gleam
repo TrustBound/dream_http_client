@@ -3,6 +3,7 @@
 //// Manages HTTP request/response recordings using a process to store state.
 //// Supports recording, playback, and passthrough modes.
 
+import dream_http_client/internal
 import dream_http_client/matching
 import dream_http_client/recording
 import dream_http_client/storage
@@ -10,7 +11,6 @@ import gleam/bit_array
 import gleam/dict
 import gleam/erlang/process
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option
 import gleam/otp/actor.{type Next}
@@ -582,7 +582,9 @@ type RecorderMode {
 /// ## Notes
 ///
 /// - In Playback mode, recordings are loaded from disk at startup
-/// - In Record mode, recordings are saved immediately when captured (no need to call `stop()`)
+/// - In Record mode, a recorded call returns only when its recording is on
+///   disk (the end of the stream for a stream), so there is no need to call
+///   `stop()`. A failed write is the error of the call
 /// - Multiple requests can share the same recorder handle safely
 /// - The recorder process runs until `stop()` is called or the VM shuts down
 pub fn start(builder: RecorderBuilder) -> Result(Recorder, String) {
@@ -725,75 +727,13 @@ fn handle_recorder_message(
   message: RecorderMessage,
 ) -> Next(RecorderState, RecorderMessage) {
   case message {
-    AddRecording(rec) -> {
+    AddRecording(rec, reply_to) -> {
       case state.mode {
-        Record -> {
-          let transformed =
-            transform_recording_for_persistence(
-              rec,
-              state.request_transformer,
-              state.response_transformer,
-            )
-          let key = state.key(transformed.request)
-
-          let should_save = case dict.get(state.recordings, key) {
-            Error(_) -> True
-            Ok(existing) -> {
-              let duplicate =
-                existing
-                |> list.any(fn(rec) {
-                  let recording.Recording(_, response) = rec
-                  responses_equal(response, transformed.response)
-                })
-              case duplicate {
-                True -> False
-                False -> True
-              }
-            }
-          }
-
-          let new_recordings = case should_save {
-            True -> {
-              case dict.get(state.recordings, key) {
-                Ok(existing) ->
-                  dict.insert(state.recordings, key, [transformed, ..existing])
-                Error(_) -> dict.insert(state.recordings, key, [transformed])
-              }
-            }
-            False -> state.recordings
-          }
-
-          let new_state =
-            RecorderState(
-              mode: state.mode,
-              directory: state.directory,
-              key: state.key,
-              request_transformer: state.request_transformer,
-              response_transformer: state.response_transformer,
-              recordings: new_recordings,
-            )
-
-          case should_save {
-            False -> actor.continue(new_state)
-            True ->
-              // Save immediately if in Record mode
-              case
-                storage.save_recording_immediately(
-                  state.directory,
-                  transformed,
-                  key,
-                )
-              {
-                Ok(_) -> actor.continue(new_state)
-                Error(save_error) -> {
-                  // Log error but don't crash - keep in-memory recording
-                  io.println_error("Failed to save recording: " <> save_error)
-                  actor.continue(new_state)
-                }
-              }
-          }
+        Record -> record_and_reply(state, rec, reply_to)
+        _ -> {
+          process.send(reply_to, Ok(Nil))
+          actor.continue(state)
         }
-        _ -> actor.continue(state)
       }
     }
     FindRecording(request, reply_to) -> {
@@ -866,8 +806,71 @@ fn handle_recorder_message(
   }
 }
 
+// Keeps a recording in record mode and writes it to disk, then replies.
+// The reply comes after the write, so the caller of add_recording knows
+// that the recording is on disk. A duplicate (the same key and an equal
+// response) is not written again.
+fn record_and_reply(
+  state: RecorderState,
+  rec: recording.Recording,
+  reply_to: process.Subject(Result(Nil, String)),
+) -> Next(RecorderState, RecorderMessage) {
+  let transformed =
+    transform_recording_for_persistence(
+      rec,
+      state.request_transformer,
+      state.response_transformer,
+    )
+  let key = state.key(transformed.request)
+  let existing = result.unwrap(dict.get(state.recordings, key), [])
+  let duplicate =
+    list.any(existing, fn(kept) {
+      responses_equal(kept.response, transformed.response)
+    })
+  case duplicate {
+    True -> {
+      process.send(reply_to, Ok(Nil))
+      actor.continue(state)
+    }
+    False -> save_and_reply(state, transformed, key, existing, reply_to)
+  }
+}
+
+// Writes the recording, and keeps it in memory only when the write
+// succeeded: a recording that is not on disk would hide the next attempt
+// as a duplicate. The caller gets the write error.
+fn save_and_reply(
+  state: RecorderState,
+  transformed: recording.Recording,
+  key: String,
+  existing: List(recording.Recording),
+  reply_to: process.Subject(Result(Nil, String)),
+) -> Next(RecorderState, RecorderMessage) {
+  case storage.save_recording_immediately(state.directory, transformed, key) {
+    Ok(Nil) -> {
+      process.send(reply_to, Ok(Nil))
+      actor.continue(
+        RecorderState(
+          ..state,
+          recordings: dict.insert(state.recordings, key, [
+            transformed,
+            ..existing
+          ]),
+        ),
+      )
+    }
+    Error(save_error) -> {
+      process.send(reply_to, Error("Failed to save recording: " <> save_error))
+      actor.continue(state)
+    }
+  }
+}
+
 type RecorderMessage {
-  AddRecording(recording: recording.Recording)
+  AddRecording(
+    recording: recording.Recording,
+    reply_to: process.Subject(Result(Nil, String)),
+  )
   FindRecording(
     request: recording.RecordedRequest,
     reply_to: process.Subject(
@@ -990,9 +993,18 @@ fn replace_json_string_value(
 ///
 /// ## Behavior by Mode
 ///
-/// - **Record mode**: Adds to in-memory state and saves to disk immediately
-/// - **Playback mode**: No-op (recordings loaded from disk at startup)
-/// - **Passthrough mode**: No-op (no recording functionality)
+/// - **Record mode**: Writes the recording to disk, keeps it in memory, and
+///   returns `Ok(Nil)` when the file is on disk
+/// - **Playback mode**: No-op, returns `Ok(Nil)` (recordings loaded from disk
+///   at startup)
+/// - **Passthrough mode**: No-op, returns `Ok(Nil)` (no recording
+///   functionality)
+///
+/// ## Returns
+///
+/// - `Ok(Nil)`: the recording is on disk (or the mode keeps no recordings)
+/// - `Error(String)`: the write failed (`"Failed to save recording: ..."`), or
+///   the recorder did not answer within 5 seconds
 ///
 /// ## Examples
 ///
@@ -1007,7 +1019,7 @@ fn replace_json_string_value(
 /// import gleam/result
 ///
 /// pub fn add_by_hand(mocks_directory: String) -> Result(Int, String) {
-///   use rec <- result.map(
+///   use rec <- result.try(
 ///     recorder.new()
 ///     |> directory(mocks_directory)
 ///     |> mode("record")
@@ -1031,20 +1043,34 @@ fn replace_json_string_value(
 ///         "[]",
 ///       >>),
 ///     )
-///   recorder.add_recording(rec, manual_recording)
+///   // Returns when the recording is on disk, or with the write error
+///   use Nil <- result.map(recorder.add_recording(rec, manual_recording))
 ///   list.length(recorder.get_recordings(rec))
 /// }
 /// ```
 ///
 /// ## Notes
 ///
-/// - Recordings are saved immediately in Record mode (no need to call `stop()`)
-/// - If save fails, error is logged but recording remains in memory
+/// - The recording is on disk when this function returns `Ok(Nil)`: no need
+///   to call `stop()`, and a playback recorder started next finds it
+/// - If the write fails, the recording is not kept in memory either, so the
+///   same recording can be added again
+/// - An equal recording (the same key and an equal response) is not written
+///   twice
 /// - If multiple recordings share the same match key, they are all stored
 ///   (playback lookup will error if that makes the key ambiguous)
-pub fn add_recording(recorder: Recorder, rec: recording.Recording) -> Nil {
+pub fn add_recording(
+  recorder: Recorder,
+  rec: recording.Recording,
+) -> Result(Nil, String) {
   let Recorder(subject) = recorder
-  process.send(subject, AddRecording(rec))
+  let reply_subject = process.new_subject()
+  process.send(subject, AddRecording(rec, reply_subject))
+
+  case process.receive(reply_subject, 5000) {
+    Ok(saved) -> saved
+    Error(Nil) -> Error("Recorder did not save the recording within 5 seconds")
+  }
 }
 
 /// Check if recorder is in Record mode
@@ -1108,7 +1134,7 @@ fn current_mode(recorder: Recorder) -> Result(RecorderMode, Nil) {
     Error(timeout_error) -> {
       // Process timeout (1 second) - recorder is not responding. Log the
       // timeout, and the caller treats the recorder as in no mode.
-      io.println_error(
+      internal.log_warning(
         "Recorder did not respond to CheckMode within 1 second: "
         <> string.inspect(timeout_error),
       )
@@ -1166,7 +1192,7 @@ pub fn transform_response(
   case process.receive(reply_subject, 1000) {
     Ok(transformed) -> transformed
     Error(timeout_error) -> {
-      io.println_error(
+      internal.log_warning(
         "Recorder did not respond to TransformResponse within 1 second: "
         <> string.inspect(timeout_error),
       )
@@ -1254,7 +1280,7 @@ pub fn find_recording(
     Error(timeout_error) -> {
       // Process timeout (1 second) - recorder is not responding. Log the
       // timeout and return None as a safe default.
-      io.println_error(
+      internal.log_warning(
         "Recorder did not respond to FindRecording within 1 second: "
         <> string.inspect(timeout_error),
       )
@@ -1317,7 +1343,7 @@ pub fn find_recording(
 /// ## Notes
 ///
 /// - Returns empty list if recorder doesn't respond (safe default)
-/// - In Record mode, includes recordings that may not yet be saved to disk
+/// - In Record mode, every recording in the list is on disk
 /// - Timeout is 1 second - recorder should respond quickly
 pub fn get_recordings(recorder: Recorder) -> List(recording.Recording) {
   let Recorder(subject) = recorder
@@ -1329,7 +1355,7 @@ pub fn get_recordings(recorder: Recorder) -> List(recording.Recording) {
     Error(timeout_error) -> {
       // Process timeout (1 second) - recorder is not responding. Log the
       // timeout and return an empty list as a safe default.
-      io.println_error(
+      internal.log_warning(
         "Recorder did not respond to GetRecordings within 1 second: "
         <> string.inspect(timeout_error),
       )
@@ -1380,7 +1406,7 @@ pub fn get_recordings(recorder: Recorder) -> List(recording.Recording) {
 ///
 /// ## Notes
 ///
-/// - Recordings are saved immediately when captured - `stop()` is not required for persistence
+/// - A recorded call returns only when its recording is on disk - `stop()` is not required for persistence
 /// - This function is optional but recommended for proper resource cleanup
 /// - Timeout is 5 seconds - recorder should stop quickly
 /// - After calling `stop()`, the recorder handle is no longer valid

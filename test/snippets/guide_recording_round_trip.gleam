@@ -13,7 +13,7 @@ pub fn record_text(
 ) -> Result(String, String) {
   use recording <- result.try(start_recorder("record", recordings))
   let text = fetch_text(api |> with_recorder(recording))
-  // Returns when the recordings that this process handed over are on disk
+  // Ends the recorder process: the recording is already on disk
   use Nil <- result.try(recorder.stop(recording))
   text
 }

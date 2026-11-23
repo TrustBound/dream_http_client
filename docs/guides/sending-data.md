@@ -38,10 +38,19 @@ gleam add dream_http_client gleam_json
 
 The examples run against [dream_mock_server](https://github.com/TrustBound/dream_mock_server) on `localhost:9876`. Its `/post`, `/put`, `/patch` and `/delete` endpoints answer with JSON that echoes the method, the path and the body they received, and `/get` echoes the query string. That makes them handy for seeing your request the way the server saw it. The [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#test-your-code) guide shows how to add and start the mock server.
 
-Every function in this guide takes the API's base request as its first argument, the way [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#step-2-wrap-the-api-in-a-module-of-your-own) builds it. For the mock server, that's:
+Every function in this guide takes the API's base request as its first argument, the way [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#step-2-wrap-the-api-in-a-module-of-your-own) builds it. For the mock server, that's the `local_api` of Getting started:
 
-```text
-client.new() |> scheme(http.Http) |> host("localhost") |> port(9876)
+### The base request of the mock server <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_getting_started_api_client.gleam#L30-L37"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```gleam
+/// The base request of the API: its scheme, host and port. Every endpoint
+/// function starts from it, so one place says where the API lives.
+pub fn local_api() -> ClientRequest {
+  client.new()
+  |> client.scheme(http.Http)
+  |> client.host("localhost")
+  |> client.port(9876)
+}
 ```
 
 ## What to set for what you send
@@ -85,6 +94,8 @@ pub fn create_todo(
 ```
 
 `create_todo(api, "Buy milk")` returns a response with status 201 and this body, which is the mock server telling you what it got:
+
+### The echo of the new todo <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_sending_data_create.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 {"method":"POST","url":"/post","data":"{\"title\":\"Buy milk\",\"done\":false}"}
@@ -152,6 +163,8 @@ fn send_json(
 
 Here's what the mock server answers to each:
 
+### The answers to the update, the patch and the delete <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_sending_data_update.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 replace_todo(api, "Buy oat milk") -> 200 {"method":"PUT","url":"/put","data":"{\"title\":\"Buy oat milk\",\"done\":false}"}
 mark_done(api)                    -> 200 {"method":"PATCH","url":"/patch","data":"{\"done\":true}"}
@@ -192,6 +205,8 @@ pub fn search_todos(
 
 `search_todos(api, "milk & eggs", 2)` sends `/get?q=milk%20%26%20eggs&page=2`, and the mock server echoes:
 
+### The echo of the search <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_sending_data_search.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 {"method":"GET","url":"/get","query":"q=milk%20%26%20eggs&page=2","headers":[]}
 ```
@@ -215,6 +230,8 @@ pub fn authorized(api: ClientRequest, token: String) -> ClientRequest {
 ```
 
 Here's the request head that a server receives for `api |> path("/items") |> authorized("test-token-123") |> send()`, apart from the `host` line:
+
+### The request head that the server receives <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_sending_data_headers.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 GET /items HTTP/1.1
@@ -297,6 +314,8 @@ pub fn explain(result: Result(HttpResponse, SendError)) -> String {
 ```
 
 What they return:
+
+### What the response helpers return <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_sending_data_responses.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 header_value(response, "x-request-id")          -> Ok("req-42")      (the server sent X-Request-Id: req-42)

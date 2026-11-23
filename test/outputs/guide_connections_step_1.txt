@@ -1,0 +1,3 @@
+send() four times, one after another, to /stream/fast   -> 1 connection
+send_all of four requests to /stream/fast                -> [Ok(200), Ok(200), Ok(200), Ok(200)], 4 connections
+send_all of the same four requests again                 -> 4 connections

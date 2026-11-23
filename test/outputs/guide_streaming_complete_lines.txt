@@ -1,0 +1,5 @@
+complete_lines(<<"{\"message\":\"first\"}\n{\"mess">>)
+  -> #([<<"{\"message\":\"first\"}">>], <<"{\"mess">>)
+
+complete_lines(<<"{\"mess", "age\":\"second\"}\n">>)
+  -> #([<<"{\"message\":\"second\"}">>], <<>>)

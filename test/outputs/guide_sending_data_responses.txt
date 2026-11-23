@@ -1,0 +1,4 @@
+header_value(response, "x-request-id")          -> Ok("req-42")      (the server sent X-Request-Id: req-42)
+explain(send(api |> path("/status/422")))       -> "Refused with 422: {\"status\":422}"
+explain(send(api |> port(1)))                   -> "No answer: Connection failed: Connection refused"
+explain(send(api |> path("/text")))             -> "Done: 200"

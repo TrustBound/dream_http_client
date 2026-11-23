@@ -10,9 +10,10 @@ pub fn restart_application() -> Nil
 @external(erlang, "application_ffi", "restart_connection_manager")
 pub fn restart_connection_manager() -> Nil
 
-/// The log level of the HTTP shim module, for example `"info"`.
-@external(erlang, "application_ffi", "shim_log_level")
-pub fn shim_log_level() -> String
+/// The log level of `dream_http_client_log`, the module that writes every
+/// log line of the client, for example `"info"`.
+@external(erlang, "application_ffi", "client_log_level")
+pub fn client_log_level() -> String
 
 /// Send a cast and a plain message that the connection manager does not
 /// know.

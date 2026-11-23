@@ -1,6 +1,8 @@
 //// Tests for the snippets of the errors guide (docs/guides/errors.md).
 //// Each test sends a snippet's request to the local mock server or to an
-//// edge server, and asserts the exact value that the guide shows.
+//// edge server, and asserts the exact value that the guide shows. The
+//// output that the guide shows in a `text` block is a file in
+//// `test/outputs/`, and the tests compare it with the real output.
 
 import dream_http_client/client.{RequestError, TimedOut, Unexpected}
 import dream_test/matchers.{be_equal, or_fail_with, should}
@@ -8,9 +10,12 @@ import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/edge_server
 import fixtures/mock_server
+import fixtures/output_file
+import fixtures/shown
 import gleam/http
 import gleam/int
 import gleam/result
+import gleam/string
 import snippets/guide_errors_classify.{
   type Outcome, Done, GiveUp, TryLater, classify,
 }
@@ -21,104 +26,52 @@ import snippets/guide_errors_timeouts.{fetch_report}
 pub fn tests() -> TestSuite {
   describe("errors guide", [
     group("step 1: classify", [
-      it("gives Done for a 200", fn() {
-        // Act
-        let outcome = summary(classify(client.send(mock_server.get("/text"))))
-
-        // Assert
-        outcome
-        |> should
-        |> be_equal("Done 200")
-        |> or_fail_with("A 200 is done")
-      }),
-      it("gives up on a 404", fn() {
-        // Act
-        let outcome =
-          summary(classify(client.send(mock_server.get("/status/404"))))
-
-        // Assert
-        outcome
-        |> should
-        |> be_equal("GiveUp HTTP 404")
-        |> or_fail_with("A 404 is final")
-      }),
-      it("tries a 503 later", fn() {
-        // Act
-        let outcome =
-          summary(classify(client.send(mock_server.get("/status/503"))))
-
-        // Assert
-        outcome
-        |> should
-        |> be_equal("TryLater HTTP 503")
-        |> or_fail_with("A 503 can pass")
-      }),
-      it("tries a refused connection later", fn() {
-        // Act
-        let outcome =
-          summary(classify(client.send(mock_server.closed_port("/"))))
-
-        // Assert
-        outcome
-        |> should
-        |> be_equal("TryLater Connection failed: Connection refused")
-        |> or_fail_with("A refused connection can pass")
-      }),
-      it("tries a closed connection later", fn() {
+      it("classify gives the outcome of each failure the guide shows", fn() {
         // Arrange
-        use port <- edge_server.with("close")
+        use closing_port <- edge_server.with("close")
+        use resetting_port <- edge_server.with("h2_rst")
+        let resetting =
+          edge_server.request(resetting_port)
+          |> client.protocols(client.Http2Only)
 
         // Act
-        let outcome = summary(classify(client.send(edge_server.request(port))))
+        let lines = [
+          "send(api |> path(\"/text\"))                  -> "
+            <> shown(classify(client.send(mock_server.get("/text")))),
+          "send(api |> path(\"/status/404\"))            -> "
+            <> shown(classify(client.send(mock_server.get("/status/404")))),
+          "send(api |> path(\"/status/503\"))            -> "
+            <> shown(classify(client.send(mock_server.get("/status/503")))),
+          "send(api |> port(1))                        -> "
+            <> shown(classify(client.send(mock_server.closed_port("/")))),
+          "a server that closes the connection         -> "
+            <> shown(classify(client.send(edge_server.request(closing_port)))),
+          "an HTTP/2 server that resets the stream     -> "
+            <> shown(classify(client.send(resetting))),
+        ]
 
         // Assert
-        outcome
+        output_file.lines(lines)
         |> should
-        |> be_equal("TryLater Remote closed connection")
-        |> or_fail_with("A closed connection can pass")
-      }),
-      it("gives up on an HTTP/2 stream reset with internal_error", fn() {
-        // Arrange
-        use port <- edge_server.with("h2_rst")
-        let request =
-          edge_server.request(port) |> client.protocols(client.Http2Only)
-
-        // Act
-        let outcome = summary(classify(client.send(request)))
-
-        // Assert
-        outcome
-        |> should
-        |> be_equal(
-          "GiveUp Stream reset (internal_error): Stream reset by server.",
-        )
-        |> or_fail_with("An internal error of the server is final")
+        |> be_equal(output_file.read("guide_errors_step_1"))
+        |> or_fail_with("classify gives the outcomes that the guide shows")
       }),
     ]),
     group("step 2: timeouts", [
-      it("fetch_report times out after 500 ms", fn() {
+      it("fetch_report times out after 500 ms, and not after 7 s", fn() {
         // Act
-        let result =
-          fetch_report(api(), 500)
-          |> result.map(fn(response) { response.status })
+        let lines = [
+          "fetch_report(api, 500)    -> "
+            <> shown.sent(fetch_report(api(), 500)),
+          "fetch_report(api, 7000)   -> "
+            <> shown.sent(fetch_report(api(), 7000)),
+        ]
 
         // Assert
-        result
+        output_file.lines(lines)
         |> should
-        |> be_equal(Error(RequestError(TimedOut(500))))
+        |> be_equal(output_file.read("guide_errors_step_2"))
         |> or_fail_with("The slow endpoint needs 5 seconds")
-      }),
-      it("fetch_report gets the answer with 7 seconds", fn() {
-        // Act
-        let result =
-          fetch_report(api(), 7000)
-          |> result.map(fn(response) { #(response.status, response.body) })
-
-        // Assert
-        result
-        |> should
-        |> be_equal(Ok(#(200, <<"Slow response">>)))
-        |> or_fail_with("7 seconds is enough for the slow endpoint")
       }),
       it("the default connect timeout is 15 seconds", fn() {
         // Act
@@ -174,32 +127,31 @@ pub fn tests() -> TestSuite {
       }),
     ]),
     group("step 4: retries", [
-      it("send_with_retry sends a GET three times", fn() {
+      it("send_with_retry sends a GET three times and a POST once", fn() {
         // Arrange
-        use port <- edge_server.with("server_error")
+        use get_port <- edge_server.with("server_error")
+        use post_port <- edge_server.with("server_error")
+        let post = edge_server.request(post_port) |> client.method(http.Post)
 
         // Act
-        let outcome = send_with_retry(edge_server.request(port), 3, 10)
+        let get_outcome = send_with_retry(edge_server.request(get_port), 3, 10)
+        let post_outcome = send_with_retry(post, 3, 10)
+        let lines = [
+          "send_with_retry(GET request, 3, 10)    -> "
+            <> shown(get_outcome)
+            <> ", and the server got "
+            <> requests(edge_server.requests_received(get_port)),
+          "send_with_retry(POST request, 3, 10)   -> "
+            <> shown(post_outcome)
+            <> ", and the server got "
+            <> requests(edge_server.requests_received(post_port)),
+        ]
 
         // Assert
-        #(summary(outcome), edge_server.requests_received(port))
+        output_file.lines(lines)
         |> should
-        |> be_equal(#("TryLater HTTP 500", 3))
-        |> or_fail_with("A GET should be tried three times")
-      }),
-      it("send_with_retry sends a POST once", fn() {
-        // Arrange
-        use port <- edge_server.with("server_error")
-        let request = edge_server.request(port) |> client.method(http.Post)
-
-        // Act
-        let outcome = send_with_retry(request, 3, 10)
-
-        // Assert
-        #(summary(outcome), edge_server.requests_received(port))
-        |> should
-        |> be_equal(#("TryLater HTTP 500", 1))
-        |> or_fail_with("A POST should be sent once")
+        |> be_equal(output_file.read("guide_errors_step_4"))
+        |> or_fail_with("A GET is tried three times, a POST once")
       }),
       it("the client sends a GET again after a closed connection", fn() {
         // Arrange
@@ -272,5 +224,22 @@ fn summary(outcome: Outcome) -> String {
     Done(response: response) -> "Done " <> int.to_string(response.status)
     TryLater(reason: reason) -> "TryLater " <> reason
     GiveUp(reason: reason) -> "GiveUp " <> reason
+  }
+}
+
+/// The outcome as the guide shows it: a `Done` with its status, because the
+/// date header of a response changes, and the other outcomes as they are.
+fn shown(outcome: Outcome) -> String {
+  case outcome {
+    Done(response: response) ->
+      "Done(response)  (status " <> int.to_string(response.status) <> ")"
+    _ -> string.inspect(outcome)
+  }
+}
+
+fn requests(count: Int) -> String {
+  case count {
+    1 -> "1 request"
+    _ -> int.to_string(count) <> " requests"
   }
 }

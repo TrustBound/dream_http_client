@@ -1,0 +1,3 @@
+replace_todo(api, "Buy oat milk") -> 200 {"method":"PUT","url":"/put","data":"{\"title\":\"Buy oat milk\",\"done\":false}"}
+mark_done(api)                    -> 200 {"method":"PATCH","url":"/patch","data":"{\"done\":true}"}
+delete_todo(api)                  -> 200 {"method":"DELETE","url":"/delete"}

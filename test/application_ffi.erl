@@ -4,7 +4,7 @@
 %% the connection manager while coverage runs, and read state that the
 %% public API does not show.
 
--export([connection_protocols/1, restart_application/0, restart_connection_manager/0, shim_log_level/0,
+-export([connection_protocols/1, restart_application/0, restart_connection_manager/0, client_log_level/0,
          send_unknown_messages/0, connection_count/0, lease_count/0,
          kill_stream_owner/0]).
 
@@ -29,8 +29,10 @@ await_new_manager(Old) ->
             await_new_manager(Old)
     end.
 
-shim_log_level() ->
-    [{dream_http_shim, Level}] = logger:get_module_level(dream_http_shim),
+%% The logger module level of dream_http_client_log, the module that
+%% writes every log line of the client.
+client_log_level() ->
+    [{dream_http_client_log, Level}] = logger:get_module_level(dream_http_client_log),
     atom_to_binary(Level, utf8).
 
 %% Sends a cast and a plain message that the connection manager does not

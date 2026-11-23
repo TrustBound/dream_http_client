@@ -1,6 +1,8 @@
 //// Tests for the snippets of the streaming guide
 //// (docs/guides/streaming.md). Each test runs a snippet against the local
 //// mock server and asserts the exact value or output that the guide shows.
+//// The output that the guide shows in a `text` block is a file in
+//// `test/outputs/`, and the tests compare it with the real output.
 
 import dream_http_client/client
 import dream_test/matchers.{be_equal, or_fail_with, should}
@@ -8,12 +10,18 @@ import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
 import fixtures/mock_server
 import fixtures/output
+import fixtures/output_file
+import fixtures/shown
 import fixtures/temp_directory
+import gleam/int
 import gleam/result
+import gleam/string
 import simplifile
 import snippets/guide_streaming_callbacks
 import snippets/guide_streaming_cancel
-import snippets/guide_streaming_failures.{Broken, Refused, Stalled, Unreachable}
+import snippets/guide_streaming_failures.{
+  type DownloadError, Broken, Refused, Stalled, Unreachable,
+}
 import snippets/guide_streaming_json_lines
 import snippets/guide_streaming_long_timeout
 import snippets/guide_streaming_print_chunks
@@ -32,40 +40,36 @@ pub fn tests() -> TestSuite {
       // Assert
       printed
       |> should
-      |> be_equal(#(
-        Ok(10),
-        "[8 bytes] Chunk 1\n[8 bytes] Chunk 2\n[8 bytes] Chunk 3\n"
-          <> "[8 bytes] Chunk 4\n[8 bytes] Chunk 5\n[8 bytes] Chunk 6\n"
-          <> "[8 bytes] Chunk 7\n[8 bytes] Chunk 8\n[8 bytes] Chunk 9\n"
-          <> "[9 bytes] Chunk 10\n",
-      ))
+      |> be_equal(#(Ok(10), output_file.read("guide_streaming_print_chunks")))
       |> or_fail_with("print_chunks should print each chunk of /stream/fast")
     }),
-    it("step 2: complete_lines keeps the start of a split line", fn() {
+    it("step 2: complete_lines keeps a split line for the next chunk", fn() {
       // Act
-      let split =
-        guide_streaming_json_lines.complete_lines(<<
-          "{\"message\":\"first\"}\n{\"mess",
-        >>)
+      let lines = [
+        "complete_lines(<<\"{\\\"message\\\":\\\"first\\\"}\\n{\\\"mess\">>)",
+        "  -> "
+          <> shown_split(
+          guide_streaming_json_lines.complete_lines(<<
+            "{\"message\":\"first\"}\n{\"mess",
+          >>),
+        ),
+        "",
+        "complete_lines(<<\"{\\\"mess\", \"age\\\":\\\"second\\\"}\\n\">>)",
+        "  -> "
+          <> shown_split(
+          guide_streaming_json_lines.complete_lines(<<
+            "{\"mess", "age\":\"second\"}\n",
+          >>),
+        ),
+      ]
 
       // Assert
-      split
+      output_file.lines(lines)
       |> should
-      |> be_equal(#([<<"{\"message\":\"first\"}">>], <<"{\"mess">>))
-      |> or_fail_with("The bytes after the last newline should wait")
-    }),
-    it("step 2: complete_lines finishes the line with the next chunk", fn() {
-      // Act
-      let split =
-        guide_streaming_json_lines.complete_lines(<<
-          "{\"mess", "age\":\"second\"}\n",
-        >>)
-
-      // Assert
-      split
-      |> should
-      |> be_equal(#([<<"{\"message\":\"second\"}">>], <<>>))
-      |> or_fail_with("The joined bytes should make one complete line")
+      |> be_equal(output_file.read("guide_streaming_complete_lines"))
+      |> or_fail_with(
+        "The bytes after the last newline wait for the next chunk",
+      )
     }),
     it("step 2: print_mock_events prints the five messages", fn() {
       // Act
@@ -74,82 +78,36 @@ pub fn tests() -> TestSuite {
       // Assert
       printed
       |> should
-      |> be_equal(#(
-        Ok(5),
-        "JSON event 1\nJSON event 2\nJSON event 3\nJSON event 4\nJSON event 5\n",
-      ))
+      |> be_equal(#(Ok(5), output_file.read("guide_streaming_json_events")))
       |> or_fail_with("print_mock_events should print each message")
     }),
-    it("step 3: count_bytes counts a whole stream", fn() {
-      // Act
-      let counted =
-        guide_streaming_failures.count_bytes(mock_server.get("/stream/fast"))
-
-      // Assert
-      counted
-      |> should
-      |> be_equal(Ok(81))
-      |> or_fail_with("/stream/fast has 81 bytes")
-    }),
-    it("step 3: count_bytes reports an error status as Refused", fn() {
-      // Act
-      let counted =
-        guide_streaming_failures.count_bytes(mock_server.get("/stream/error"))
-
-      // Assert
-      counted
-      |> should
-      |> be_equal(
-        Error(
-          Refused(status: 500, body: <<
-            "Error test chunk 1\nError test chunk 2\nError test chunk 3\n",
-          >>),
-        ),
-      )
-      |> or_fail_with("/stream/error answers 500 with a body")
-    }),
-    it("step 3: count_bytes reports a dropped connection as Broken", fn() {
-      // Act
-      let counted =
-        guide_streaming_failures.count_bytes(mock_server.get("/stream/drop"))
-
-      // Assert
-      counted
-      |> should
-      |> be_equal(
-        Error(Broken(received: 26, reason: "Remote closed connection")),
-      )
-      |> or_fail_with("/stream/drop closes the connection after 26 bytes")
-    }),
-    it("step 3: count_bytes reports a silent server as Stalled", fn() {
+    it("step 3: count_bytes for each mock endpoint", fn() {
       // Arrange
-      let request =
-        mock_server.get("/stream/slow")
-        |> client.timeout(500)
+      let count = guide_streaming_failures.count_bytes
 
       // Act
-      let counted = guide_streaming_failures.count_bytes(request)
+      let lines = [
+        "/stream/fast                     -> "
+          <> shown_count(count(mock_server.get("/stream/fast"))),
+        "/stream/error                    -> "
+          <> shown_count(count(mock_server.get("/stream/error"))),
+        "/stream/drop                     -> "
+          <> shown_count(count(mock_server.get("/stream/drop"))),
+        "/stream/slow with timeout(500)   -> "
+          <> shown_count(count(
+          mock_server.get("/stream/slow") |> client.timeout(500),
+        )),
+        "port 1, where nothing listens    -> "
+          <> shown_count(count(
+          mock_server.get("/stream/fast") |> client.port(1),
+        )),
+      ]
 
       // Assert
-      counted
+      output_file.lines(lines)
       |> should
-      |> be_equal(Error(Stalled(received: 0, waited_ms: 500)))
-      |> or_fail_with("/stream/slow waits 2 seconds before its first chunk")
-    }),
-    it("step 3: count_bytes reports a refused connection as Unreachable", fn() {
-      // Arrange
-      let request =
-        mock_server.get("/stream/fast")
-        |> client.port(1)
-
-      // Act
-      let counted = guide_streaming_failures.count_bytes(request)
-
-      // Assert
-      counted
-      |> should
-      |> be_equal(Error(Unreachable(reason: "Connection refused")))
-      |> or_fail_with("Nothing listens on port 1")
+      |> be_equal(output_file.read("guide_streaming_failures"))
+      |> or_fail_with("Each failure is its own case of DownloadError")
     }),
     it("step 4: download_to_file writes the whole stream to the file", fn() {
       // Arrange
@@ -192,4 +150,44 @@ pub fn tests() -> TestSuite {
       |> or_fail_with("All five chunks of /stream/slow should arrive")
     }),
   ])
+}
+
+/// The result of `complete_lines`, with its bit arrays as Gleam code
+/// writes them.
+fn shown_split(split: #(List(BitArray), BitArray)) -> String {
+  "#(" <> shown.bits_list(split.0) <> ", " <> shown.bits(split.1) <> ")"
+}
+
+/// The result of `count_bytes` with the names of the fields, as the guide
+/// shows it.
+fn shown_count(counted: Result(Int, DownloadError)) -> String {
+  case counted {
+    Ok(bytes) -> "Ok(" <> int.to_string(bytes) <> ")"
+    Error(error) -> "Error(" <> shown_count_error(error) <> ")"
+  }
+}
+
+fn shown_count_error(error: DownloadError) -> String {
+  case error {
+    Refused(status:, body:) ->
+      "Refused(status: "
+      <> int.to_string(status)
+      <> ", body: "
+      <> shown.bits(body)
+      <> ")"
+    Broken(received:, reason:) ->
+      "Broken(received: "
+      <> int.to_string(received)
+      <> ", reason: "
+      <> string.inspect(reason)
+      <> ")"
+    Stalled(received:, waited_ms:) ->
+      "Stalled(received: "
+      <> int.to_string(received)
+      <> ", waited_ms: "
+      <> int.to_string(waited_ms)
+      <> ")"
+    Unreachable(reason:) ->
+      "Unreachable(reason: " <> string.inspect(reason) <> ")"
+  }
 }

@@ -50,6 +50,8 @@ This guide builds on [Testing with recorded responses](https://github.com/TrustB
 
 The recorder files and finds each recording under a key: a string made from the parts of the request you choose. `matching.request_key` builds the function that makes it. For a POST to `http://localhost:9876/search` with the body `milk` and an `Authorization` header:
 
+### Two keys of one request <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_matching_keys.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 request_key(method: True, url: True, headers: False, body: False)   -> "POSThttp://localhost:9876/search"
 request_key(method: True, url: True, headers: False, body: True)    -> "POSThttp://localhost:9876/searchmilk"
@@ -85,6 +87,8 @@ pub fn start_search_recorder(
 ```
 
 Record a search for `milk` and one for `eggs` through it, stop it, and start it again in playback mode on the same directory. Each body gets its own answer back:
+
+### Two searches played back with a body key <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_matching_body_key.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 search "milk" -> {"method":"POST","url":"/post","data":"milk"}
@@ -166,6 +170,8 @@ fn without_cookies(
 
 Record a request with `Authorization: Bearer test-token-123` through it, then play back with `Bearer other-token`:
 
+### A request with its token removed <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_matching_request_scrub.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 the saved file contains "test-token-123"         -> no
 playback with Authorization: Bearer other-token  -> Ok(response)  (status 200, body "ok")
@@ -176,6 +182,8 @@ The comparison in `drop_authorization` uses `string.lowercase`, because the head
 ## Step 4: Remove cookies from responses
 
 A response transformer gets the request and the response, and returns the response to save. `drop_cookies` above removes every `set-cookie` header, from blocking and streaming responses alike. It runs only in record mode, and only on what's saved:
+
+### A response with its cookie removed <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_matching_response_scrub.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 the response your code gets while recording   -> headers set-cookie: session=abc123, content-length: 2
@@ -188,6 +196,8 @@ Because it runs only when recording, a response transformer doesn't change a fil
 ## When two recordings match
 
 When the key of a request matches more than one recording, playback compares their responses. If they're all equal, it uses one of them. If they differ, the request fails:
+
+### Two different responses for one key <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_matching_ambiguous.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 Error(RequestError(Unexpected("Ambiguous recording match for key: POSThttp://localhost:9876/post (2 recordings)")))

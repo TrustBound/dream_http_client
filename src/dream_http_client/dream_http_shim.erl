@@ -435,8 +435,8 @@ translator_message({failed, Failure}) -> {translator_error, Failure}.
 configure_transport(Config) ->
     %% Config is a Gleam opaque type = Erlang tuple {transport_config, F1, F2, ...}
     ets:insert(dream_http_client_transport_config, {config, Config}),
-    LogLevel = map_log_level(element(13, Config)),
-    logger:set_module_level([dream_http_conn_manager, dream_http_shim], LogLevel),
+    dream_http_client_log:set_level(map_log_level(element(13, Config))),
+    dream_http_conn_manager:idle_timeout_changed(),
     nil.
 
 map_log_level(log_debug) -> debug;
@@ -585,7 +585,8 @@ maybe_decompress_response(Body, Headers) ->
         <<"identity">> -> {Body, Headers};
         <<>> -> {Body, Headers};
         Other ->
-            logger:warning("unrecognized Content-Encoding, passing through raw bytes: ~s", [Other]),
+            dream_http_client_log:warning(
+              "unrecognized Content-Encoding, passing through raw bytes: ~s", [Other]),
             {Body, Headers}
     end.
 
@@ -595,7 +596,7 @@ try_decompress(DecompressFn, Body, Headers) ->
         {Decompressed, [Header || Header = {Name, _} <- Headers, Name =/= <<"content-encoding">>]}
     catch
         _:_ ->
-            logger:warning("decompression failed, passing through raw bytes", []),
+            dream_http_client_log:warning("decompression failed, passing through raw bytes", []),
             {Body, Headers}
     end.
 
@@ -606,8 +607,8 @@ stream_zlib(Headers) ->
         <<>> -> undefined;
         <<"identity">> -> undefined;
         Other ->
-            logger:warning("unrecognized Content-Encoding for stream, passing through raw bytes: ~s",
-                           [Other]),
+            dream_http_client_log:warning(
+              "unrecognized Content-Encoding for stream, passing through raw bytes: ~s", [Other]),
             undefined
     end.
 

@@ -1,0 +1,4 @@
+the API answers its greeting       -> Ok(Greeting("Hello, World!", True))
+nothing listens on the port        -> Error(Unreachable(ConnectFailed("Connection refused")))
+the API answers 503                -> Error(BadStatus(503))
+the API answers <html></html>      -> Error(BadBody(UnexpectedByte("0x3C")))

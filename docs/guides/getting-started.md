@@ -27,11 +27,9 @@ In this guide you'll:
 
 ## Before you start
 
-Make a project and add the client. The examples decode JSON with `gleam_json`, so add that too:
+Make a project with `gleam new greeter` and go into its folder. Then add the client. The examples decode JSON with `gleam_json`, so add that too:
 
 ```sh
-gleam new greeter
-cd greeter
 gleam add dream_http_client gleam_json
 ```
 
@@ -89,6 +87,8 @@ fn print_response(response: HttpResponse) -> Nil {
 ```
 
 Run it with `gleam run`, and it prints:
+
+### What main prints <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_getting_started_step_1.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 Status: 200
@@ -172,8 +172,10 @@ fn greeting_decoder() -> decode.Decoder(Greeting) {
 
 `fetch_greeting(local_api())` returns:
 
+### The greeting <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_getting_started_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
-Ok(Greeting(message: "Hello, World!", success: True))
+Ok(Greeting("Hello, World!", True))
 ```
 
 A few choices in this module are worth copying:
@@ -186,11 +188,13 @@ A few choices in this module are worth copying:
 
 Each case of `ApiError` asks for a different reaction from your program, so it pays to keep them apart. Here's what `fetch_greeting` returns in each situation:
 
+### What fetch_greeting returns in each case <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_getting_started_step_3.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
-the API answers its greeting       -> Ok(Greeting(message: "Hello, World!", success: True))
-nothing listens on the port        -> Error(Unreachable(error: ConnectFailed(reason: "Connection refused")))
-the API answers 503                -> Error(BadStatus(status: 503))
-the API answers <html></html>      -> Error(BadBody(error: UnexpectedByte("0x3C")))
+the API answers its greeting       -> Ok(Greeting("Hello, World!", True))
+nothing listens on the port        -> Error(Unreachable(ConnectFailed("Connection refused")))
+the API answers 503                -> Error(BadStatus(503))
+the API answers <html></html>      -> Error(BadBody(UnexpectedByte("0x3C")))
 ```
 
 - `Unreachable` means the request got no answer. The `TransportError` inside says why: `ConnectFailed` when the client couldn't connect, `TimedOut` when the server went quiet, `RemoteClosed` when it closed the connection. This is often temporary, so it's the case where a later retry makes sense.
@@ -249,12 +253,15 @@ Because `fetch_greeting` takes the base request as a parameter, you can point it
 - `server.start(port)` starts a server with built-in endpoints, such as `/json`.
 - `server.start_with_config(port, routes)` starts a server that answers only the routes you give it, each with its own status and body. That's how you make an API that is down, or one that sends HTML.
 
-Add the test dependencies first. `dream_test` and `dream_mock_server` aren't on Hex yet, so add them from GitHub, with the same commits that this package tests with:
+Add the test dependencies first. `dream_test` and `dream_mock_server` aren't on Hex yet, so add them from GitHub under `[dev-dependencies]` in your `gleam.toml`. These are the lines of this package's own `gleam.toml`, with the commits that it tests with:
+
+### The test dependencies <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/gleam.toml#L41-L44"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```toml
-[dev-dependencies]
-dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "1639959578a14ae3577f8e3ae5cac058f933aa53" }
+# Switched to a Hex version range once it is published.
 dream_mock_server = { git = "https://github.com/TrustBound/dream_mock_server.git", ref = "525abd32be8cbc5f8aff33bb37d3f8ba1c7d00d1" }
+# Switched to a Hex version range once it is published.
+dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "1639959578a14ae3577f8e3ae5cac058f933aa53" }
 ```
 
 Here's a test module for `fetch_greeting` with one test for the greeting and one for each failure that a server can cause. It uses [dream_test](https://hexdocs.pm/dream_test):

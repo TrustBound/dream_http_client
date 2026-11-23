@@ -30,7 +30,7 @@ pub fn tests() -> TestSuite {
         |> start()
 
       // Act
-      recorder.add_recording(rec, entry)
+      let assert Ok(Nil) = recorder.add_recording(rec, entry)
       let assert Ok(Nil) = recorder.stop(rec)
       let loaded = storage.load_recordings(path)
 

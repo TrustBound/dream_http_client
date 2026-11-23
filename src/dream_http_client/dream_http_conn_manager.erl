@@ -15,7 +15,7 @@
 %%   no new request. The pool closes it when its last lease ends.
 
 -export([start_link/0, ensure_connection/4, release/1, release_paused/1, abandon/1, refuse/1,
-         retire/1]).
+         retire/1, idle_timeout_changed/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(TABLE, dream_http_client_connections).
@@ -67,6 +67,12 @@ refuse(Lease) ->
 retire(Lease) ->
     gen_server:cast(?MODULE, {retire, Lease}).
 
+%% The idle timeout in the transport configuration changed. The pool
+%% cancels the idle check that it scheduled with the old value and
+%% schedules one with the new value, so the new value applies at once.
+idle_timeout_changed() ->
+    gen_server:cast(?MODULE, idle_timeout_changed).
+
 %% Records that a request used the connection now. The time is in the state
 %% of the manager, so the table entry of a connection never changes while
 %% the connection lives: a reader of the table always sees the connection.
@@ -87,13 +93,16 @@ touch(ConnPid, State = #{last_used := LastUsed}) ->
 %% - `waiting` is the list of requests that wait for room, oldest first.
 %% - `last_used` maps each connection to the time of its last use. The
 %%   idle check reads it.
+%% - `idle_timer` is the timer of the next idle check. Only the message of
+%%   this timer runs the check: a timer that was cancelled after it fired
+%%   sends a message that the pool ignores.
 init([]) ->
     %% After a restart, the table can still hold the connections of the old
     %% manager. gun closes a connection when its owner stops, so none of them
     %% can be used again.
     ets:delete_all_objects(?TABLE),
-    schedule_idle_check(),
-    {ok, #{leases => #{}, limits => #{}, waiting => [], last_used => #{}}}.
+    {ok, #{leases => #{}, limits => #{}, waiting => [], last_used => #{},
+           idle_timer => schedule_idle_check()}}.
 
 %% The caller of ensure_connection/4 holds the lease.
 handle_call({ensure_connection, Scheme, Host, Port, GunOpts}, From, State) ->
@@ -133,6 +142,9 @@ handle_cast({retire, Lease}, State = #{leases := Leases, limits := Limits}) ->
     Retired = maps:from_list([{ConnPid, retired}
                               || {ConnPid, _Protocol} <- maps:values(maps:with([Lease], Leases))]),
     {noreply, serve_waiting(end_lease(Lease, State#{limits := maps:merge(Limits, Retired)}))};
+handle_cast(idle_timeout_changed, State = #{idle_timer := IdleTimer}) ->
+    erlang:cancel_timer(IdleTimer),
+    {noreply, State#{idle_timer := schedule_idle_check()}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -161,10 +173,9 @@ handle_info({waiter_timeout, Request}, State = #{waiting := Waiting}) ->
      || #{from := From, gun_opts := GunOpts} <- TimedOut],
     {noreply, State#{waiting := Rest}};
 
-handle_info(check_idle, State) ->
+handle_info({timeout, IdleTimer, check_idle}, State = #{idle_timer := IdleTimer}) ->
     reap_idle_connections(State),
-    schedule_idle_check(),
-    {noreply, State};
+    {noreply, State#{idle_timer := schedule_idle_check()}};
 
 %% The connection lost its socket. gun stops by itself (retry is 0), and
 %% the 'DOWN' message removes the connection from the pool.
@@ -361,9 +372,10 @@ await_limit(ConnPid, http2, Deadline) ->
         {error, timeout}
     end.
 
+%% Returns the reference of the timer.
 schedule_idle_check() ->
     IdleTimeout = get_idle_timeout(),
-    erlang:send_after(IdleTimeout, self(), check_idle).
+    erlang:start_timer(IdleTimeout, self(), check_idle).
 
 %% Closes each connection that has no lease and was not used for longer
 %% than the idle timeout. A connection that serves a long response is busy,
@@ -385,11 +397,11 @@ reap_idle_connections(#{leases := Leases, last_used := LastUsed}) ->
 log_gun_down(ConnPid, Protocol, Reason, Killed) ->
     case is_expected_disconnect(Reason, Killed) of
         true ->
-            logger:info(
+            dream_http_client_log:info(
                 "[dream_http] connection closed: pid=~p protocol=~p reason=~p",
                 [ConnPid, Protocol, Reason]);
         false ->
-            logger:warning(
+            dream_http_client_log:warning(
                 "[dream_http] connection down: pid=~p protocol=~p reason=~p killed_streams=~p",
                 [ConnPid, Protocol, Reason, Killed])
     end.

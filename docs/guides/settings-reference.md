@@ -55,7 +55,7 @@ These apply to every request. Build a `TransportConfig` with `transport_config()
 | Setting | Set with | Read with | Default |
 |:---|:---|:---|:---|
 | Connections to each host | `max_connections(config, n)` | `get_max_connections` | 50 |
-| Idle time before the pool closes a connection, in ms | `idle_timeout(config, ms)` | `get_idle_timeout` | 60000 |
+| Idle time before the pool closes a connection, in ms. A new value applies at once | `idle_timeout(config, ms)` | `get_idle_timeout` | 60000 |
 | Connect timeout of a request that sets none, in ms | `default_connect_timeout(config, ms)` | `get_default_connect_timeout` | 15000 |
 | DNS lookup timeout, in ms | `domain_lookup_timeout(config, ms)` | `get_domain_lookup_timeout` | 5000 |
 | TLS handshake timeout, in ms | `tls_handshake_timeout(config, ms)` | `get_tls_handshake_timeout` | 10000 |
@@ -83,7 +83,17 @@ The values of `protocols(request, value)`:
 
 ## Log levels
 
-The values of `log_level(config, value)`: `LogDebug`, `LogInfo`, `LogWarning`, `LogError` and `LogNone`. The client writes its own lines through the OTP logger, and today this setting doesn't change which of them appear. See [Controlling connections](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/connection-pools.md#step-6-watch-connections-in-the-log).
+The values of `log_level(config, value)`. The client writes every line through one module, and the level applies to all of its lines and to no other logging in your program. A new level applies when `configure_transport` returns.
+
+| Value | What the client writes |
+|:---|:---|
+| `LogDebug` | Every line. The client writes no debug lines, so this is the same as `LogInfo` |
+| `LogInfo` (default) | The info line `connection closed`, when a server closes an idle connection, and every warning |
+| `LogWarning` | The warnings: a connection that went down with a request on it, a body the client can't decompress, an unknown content encoding, a recorder that doesn't answer, a recording file it can't read correctly, and a recorded stream that failed |
+| `LogError` | Nothing. The client writes no error lines |
+| `LogNone` | Nothing |
+
+See [Controlling connections](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/connection-pools.md#step-6-watch-connections-in-the-log).
 
 ## Recorder settings
 

@@ -17,6 +17,12 @@ import gleam/int
 import gleam/option
 import gleam/string
 
+/// Writes a warning to the log. Every log line of the client goes through
+/// the Erlang module `dream_http_client_log`, so the `log_level` setting of
+/// the transport configuration applies to it.
+@external(erlang, "dream_http_client_log", "warning")
+pub fn log_warning(message: String) -> Nil
+
 /// The settings that decide which connection a request uses
 ///
 /// `protocols` is the protocol preference (`default`, `http1_only`,

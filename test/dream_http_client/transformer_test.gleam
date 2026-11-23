@@ -31,13 +31,14 @@ pub fn tests() -> TestSuite {
         |> start()
 
       // Act
-      recorder.add_recording(
-        rec,
-        recording.Recording(
-          request: recorded.secret_post_request("secret"),
-          response: recorded.ok_response("OK"),
-        ),
-      )
+      let assert Ok(Nil) =
+        recorder.add_recording(
+          rec,
+          recording.Recording(
+            request: recorded.secret_post_request("secret"),
+            response: recorded.ok_response("OK"),
+          ),
+        )
       let assert Ok(Nil) = recorder.stop(rec)
       let loaded = storage.load_recordings(path)
 
@@ -69,13 +70,14 @@ pub fn tests() -> TestSuite {
         ))
         |> request_transformer(transformers.scrub_auth_and_body)
         |> start()
-      recorder.add_recording(
-        rec,
-        recording.Recording(
-          request: recorded.secret_post_request("secret"),
-          response: recorded.ok_response("OK"),
-        ),
-      )
+      let assert Ok(Nil) =
+        recorder.add_recording(
+          rec,
+          recording.Recording(
+            request: recorded.secret_post_request("secret"),
+            response: recorded.ok_response("OK"),
+          ),
+        )
       let assert Ok(Nil) = recorder.stop(rec)
       let assert Ok(playback) =
         recorder.new()

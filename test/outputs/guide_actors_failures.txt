@@ -1,0 +1,2 @@
+/stream/error  -> Progress(bytes: 0, chunks: 0, finished: True, failure: Some("HTTP 500: Error test chunk 1\nError test chunk 2\nError test chunk 3\n"))
+/stream/drop   -> Progress(bytes: 26, chunks: 2, finished: True, failure: Some("Remote closed connection"))

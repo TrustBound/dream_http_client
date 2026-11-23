@@ -3,9 +3,11 @@
 //// so it starts with no connections, then counts the connections that the
 //// guide's requests open. They change the global transport configuration
 //// and read every log event, so they run with the other lifecycle suites,
-//// one test at a time.
+//// one test at a time. The output that the guide shows in a `text` block
+//// is a file in `test/outputs/`, and the tests compare it with the real
+//// output.
 
-import dream_http_client/client.{type SendError, TimedOut}
+import dream_http_client/client.{type SendError}
 import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
@@ -13,6 +15,7 @@ import fixtures/application.{connection_count, restart_application}
 import fixtures/edge_server
 import fixtures/log_capture
 import fixtures/mock_server
+import fixtures/output_file
 import gleam/http
 import gleam/int
 import gleam/list
@@ -28,49 +31,38 @@ import snippets/guide_connections_tuning.{
 pub fn tests() -> TestSuite {
   describe("connections guide", [
     group("step 1: how connections are reused", [
-      it("four requests one after another use one connection", fn() {
+      it("the connections after each round of requests", fn() {
         // Arrange
-        restart_application()
+        let requests = list.repeat(mock_server.get("/stream/fast"), 4)
 
         // Act
-        list.each([1, 2, 3, 4], fn(_attempt) {
-          let _response = client.send(mock_server.get("/stream/fast"))
+        restart_application()
+        list.each(requests, fn(request) {
+          let _response = client.send(request)
           Nil
         })
-
-        // Assert
-        connection_count()
-        |> should
-        |> be_equal(1)
-        |> or_fail_with("Requests one after another share a connection")
-      }),
-      it("four requests at once use four HTTP/1.1 connections", fn() {
-        // Arrange
+        let one_after_another = connection_count()
         restart_application()
-
-        // Act
-        let statuses = send_all(list.repeat(mock_server.get("/stream/fast"), 4))
+        let at_once = send_all(requests)
+        let at_once_count = connection_count()
+        let _again = send_all(requests)
+        let again_count = connection_count()
+        let lines = [
+          "send() four times, one after another, to /stream/fast   -> "
+            <> connections(one_after_another),
+          "send_all of four requests to /stream/fast                -> "
+            <> string.inspect(at_once)
+            <> ", "
+            <> connections(at_once_count),
+          "send_all of the same four requests again                 -> "
+            <> connections(again_count),
+        ]
 
         // Assert
-        #(statuses, connection_count())
+        output_file.lines(lines)
         |> should
-        |> be_equal(#([Ok(200), Ok(200), Ok(200), Ok(200)], 4))
+        |> be_equal(output_file.read("guide_connections_step_1"))
         |> or_fail_with("Each running HTTP/1.1 request needs a connection")
-      }),
-      it("a second round of four requests reuses the four connections", fn() {
-        // Arrange
-        restart_application()
-        let requests = list.repeat(mock_server.get("/stream/fast"), 4)
-        let _first_round = send_all(requests)
-
-        // Act
-        let _second_round = send_all(requests)
-
-        // Assert
-        connection_count()
-        |> should
-        |> be_equal(4)
-        |> or_fail_with("The pool keeps the connections")
       }),
     ]),
     group("step 2: HTTP/2", [
@@ -86,11 +78,14 @@ pub fn tests() -> TestSuite {
 
         // Act
         let statuses = send_all(list.repeat(request, 4))
+        let lines = [
+          string.inspect(statuses) <> ", " <> connections(connection_count()),
+        ]
 
         // Assert
-        #(statuses, connection_count())
+        output_file.lines(lines)
         |> should
-        |> be_equal(#([Ok(200), Ok(200), Ok(200), Ok(200)], 1))
+        |> be_equal(output_file.read("guide_connections_step_2"))
         |> or_fail_with("HTTP/2 multiplexes the requests")
       }),
     ]),
@@ -105,37 +100,32 @@ pub fn tests() -> TestSuite {
         |> be_equal(50)
         |> or_fail_with("The default max_connections is 50")
       }),
-      it("four requests share two connections at a limit of 2", fn() {
+      it("four requests at a limit of two, with and without a timeout", fn() {
         // Arrange
+        let request = mock_server.get("/stream/fast")
         restart_application()
         limit_connections(2)
 
         // Act
-        let statuses = send_all(list.repeat(mock_server.get("/stream/fast"), 4))
+        let statuses = send_all(list.repeat(request, 4))
         let count = connection_count()
+        let outcomes =
+          send_all(list.repeat(request |> client.timeout(500), 4))
+          |> describe_all()
         client.configure_transport(client.transport_config())
+        let lines = [
+          "send_all of four requests            -> "
+            <> string.inspect(statuses)
+            <> ", "
+            <> connections(count),
+          "the same with timeout(500) on each   -> " <> counted(outcomes),
+        ]
 
         // Assert
-        #(statuses, count)
+        output_file.lines(lines)
         |> should
-        |> be_equal(#([Ok(200), Ok(200), Ok(200), Ok(200)], 2))
-        |> or_fail_with("Two requests wait for a free connection")
-      }),
-      it("a request that waits longer than its timeout fails", fn() {
-        // Arrange
-        restart_application()
-        limit_connections(2)
-        let request = mock_server.get("/stream/fast") |> client.timeout(500)
-
-        // Act
-        let outcomes = send_all(list.repeat(request, 4)) |> describe_all()
-        client.configure_transport(client.transport_config())
-
-        // Assert
-        outcomes
-        |> should
-        |> be_equal(["200", "200", "TimedOut(500)", "TimedOut(500)"])
-        |> or_fail_with("Two requests should time out while they wait")
+        |> be_equal(output_file.read("guide_connections_step_3"))
+        |> or_fail_with("Two requests wait, and time out after 500 ms")
       }),
     ]),
     group("step 4: a pool of its own", [
@@ -153,11 +143,14 @@ pub fn tests() -> TestSuite {
 
         // Act
         let statuses = send_all(list.append(pooled, others))
+        let lines = [
+          string.inspect(statuses) <> ", " <> connections(connection_count()),
+        ]
 
         // Assert
-        #(statuses, connection_count())
+        output_file.lines(lines)
         |> should
-        |> be_equal(#([Ok(200), Ok(200), Ok(200), Ok(200), Ok(200)], 3))
+        |> be_equal(output_file.read("guide_connections_step_4"))
         |> or_fail_with("One connection for the pool, two for the others")
       }),
     ]),
@@ -234,13 +227,10 @@ pub fn tests() -> TestSuite {
         // Assert
         lines
         |> should
-        |> be_equal([
-          "warning: [dream_http] connection down: pid=<pid> protocol=http reason=closed killed_streams=1",
-          "warning: [dream_http] connection down: pid=<pid> protocol=http reason=closed killed_streams=1",
-        ])
+        |> be_equal([connection_down_line, connection_down_line])
         |> or_fail_with("Each of the two connections logs a warning")
       }),
-      it("a body the client cannot decompress logs a warning", fn() {
+      it("the default level shows the lines that the guide shows", fn() {
         // Arrange
         restart_application()
 
@@ -249,83 +239,162 @@ pub fn tests() -> TestSuite {
           log_capture.capture(
             fn() {
               #(
+                send_to_edge_server("close_after_response"),
+                send_to_edge_server("close"),
                 client.send(mock_server.get("/unknown-encoding")),
                 client.send(mock_server.get("/corrupted-gzip")),
               )
             },
-            100,
+            1000,
           )
+
+        // Assert
+        output_file.lines(list.sort(list.unique(lines), string.compare))
+        |> should
+        |> be_equal(output_file.read("guide_connections_step_6"))
+        |> or_fail_with("The info line and the three warnings")
+      }),
+      it("LogInfo, the default, shows the info line and the warning", fn() {
+        // Arrange
+        let level = client.LogInfo
+
+        // Act
+        let lines = log_lines_at(level)
 
         // Assert
         lines
         |> should
-        |> be_equal([
-          "warning: unrecognized Content-Encoding, passing through raw bytes: br",
-          "warning: decompression failed, passing through raw bytes",
-        ])
-        |> or_fail_with("Each body logs one warning")
+        |> be_equal([connection_closed_line, connection_down_line])
+        |> or_fail_with("LogInfo shows info lines and warnings")
       }),
-      it("a connection that the server closed while idle logs nothing", fn() {
+      it("LogDebug shows the info line and the warning", fn() {
         // Arrange
-        restart_application()
-        use port <- edge_server.with("close_after_response")
+        let level = client.LogDebug
 
         // Act
-        let #(_result, lines) =
-          log_capture.capture(
-            fn() { client.send(edge_server.request(port)) },
-            1000,
-          )
+        let lines = log_lines_at(level)
+
+        // Assert
+        lines
+        |> should
+        |> be_equal([connection_closed_line, connection_down_line])
+        |> or_fail_with("LogDebug shows every line")
+      }),
+      it("LogWarning shows the warning only", fn() {
+        // Arrange
+        let level = client.LogWarning
+
+        // Act
+        let lines = log_lines_at(level)
+
+        // Assert
+        lines
+        |> should
+        |> be_equal([connection_down_line])
+        |> or_fail_with("LogWarning hides the info line")
+      }),
+      it("LogError shows nothing, because the client logs no errors", fn() {
+        // Arrange
+        let level = client.LogError
+
+        // Act
+        let lines = log_lines_at(level)
 
         // Assert
         lines
         |> should
         |> be_equal([])
-        |> or_fail_with("The info line is below the default log level")
+        |> or_fail_with("LogError hides the info line and the warning")
       }),
-      it("log_level(LogNone) does not hide the warnings today", fn() {
+      it("LogNone shows nothing", fn() {
         // Arrange
-        restart_application()
-        use port <- edge_server.with("close")
-        client.transport_config()
-        |> client.log_level(client.LogNone)
-        |> client.configure_transport()
+        let level = client.LogNone
 
         // Act
-        let #(_result, lines) =
-          log_capture.capture(
-            fn() { client.send(edge_server.request(port)) },
-            1000,
-          )
-        client.configure_transport(client.transport_config())
+        let lines = log_lines_at(level)
 
         // Assert
-        list.unique(lines)
+        lines
         |> should
-        |> be_equal([
-          "warning: [dream_http] connection down: pid=<pid> protocol=http reason=closed killed_streams=1",
-        ])
-        |> or_fail_with(
-          "The warnings carry no module, so the level is not used",
-        )
+        |> be_equal([])
+        |> or_fail_with("LogNone hides every line")
       }),
     ]),
   ])
+}
+
+const connection_closed_line =
+  "info: [dream_http] connection closed: pid=<pid> protocol=http reason=closed"
+
+const connection_down_line =
+  "warning: [dream_http] connection down: pid=<pid> protocol=http reason=closed killed_streams=1"
+
+/// The log lines of the client at `level`, each line once and sorted, for
+/// a GET to a server that closes the connection while it is idle (the info
+/// line) and a GET to a server that closes it without an answer (the
+/// warning). The transport configuration goes back to the defaults.
+fn log_lines_at(level: client.LogLevel) -> List(String) {
+  restart_application()
+  client.transport_config()
+  |> client.log_level(level)
+  |> client.configure_transport()
+  let #(_results, lines) =
+    log_capture.capture(
+      fn() {
+        #(
+          send_to_edge_server("close_after_response"),
+          send_to_edge_server("close"),
+        )
+      },
+      1000,
+    )
+  client.configure_transport(client.transport_config())
+  lines
+  |> list.unique()
+  |> list.sort(string.compare)
+}
+
+/// A GET to a new edge server that plays `scenario`.
+fn send_to_edge_server(
+  scenario: String,
+) -> Result(client.HttpResponse, SendError) {
+  edge_server.with(scenario, fn(port) { client.send(edge_server.request(port)) })
+}
+
+fn connections(count: Int) -> String {
+  case count {
+    1 -> "1 connection"
+    _ -> int.to_string(count) <> " connections"
+  }
+}
+
+/// The outcomes as the guide counts them, the successes first, for example
+/// `two Ok(200), two Error(RequestError(TimedOut(500)))`.
+fn counted(outcomes: List(String)) -> String {
+  outcomes
+  |> list.unique()
+  |> list.sort(fn(first, second) { string.compare(second, first) })
+  |> list.map(fn(outcome) {
+    let count = list.count(outcomes, fn(other) { other == outcome })
+    number_word(count) <> " " <> outcome
+  })
+  |> string.join(", ")
+}
+
+fn number_word(count: Int) -> String {
+  case count {
+    1 -> "one"
+    2 -> "two"
+    3 -> "three"
+    4 -> "four"
+    _ -> int.to_string(count)
+  }
 }
 
 /// Each outcome as text, sorted, because the requests that get a
 /// connection first are not always the same ones.
 fn describe_all(statuses: List(Result(Int, SendError))) -> List(String) {
   statuses
-  |> list.map(describe_outcome)
+  |> list.map(string.inspect)
   |> list.sort(string.compare)
-}
-
-fn describe_outcome(status: Result(Int, SendError)) -> String {
-  case status {
-    Ok(code) -> int.to_string(code)
-    Error(client.RequestError(TimedOut(timeout_ms))) ->
-      "TimedOut(" <> int.to_string(timeout_ms) <> ")"
-    Error(error) -> string.inspect(error)
-  }
 }

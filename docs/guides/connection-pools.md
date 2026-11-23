@@ -86,6 +86,8 @@ fn await_status(
 
 Here's how many connections the client has open after each of these, starting from none:
 
+### Connections after each round of requests <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_1.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 send() four times, one after another, to /stream/fast   -> 1 connection
 send_all of four requests to /stream/fast                -> [Ok(200), Ok(200), Ok(200), Ok(200)], 4 connections
@@ -118,6 +120,8 @@ pub fn feed_request(api: ClientRequest) -> ClientRequest {
 
 Four of these at once, with the same `send_all`, give:
 
+### Four HTTP/2 requests at once <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 [Ok(200), Ok(200), Ok(200), Ok(200)], 1 connection
 ```
@@ -147,6 +151,8 @@ pub fn limit_connections(limit: Int) -> Nil {
 ```
 
 After `limit_connections(2)`, four requests at once to `/stream/fast` still all succeed, but they share two connections: two run, and two wait until a connection is free.
+
+### Four requests at a limit of two connections <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_3.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 send_all of four requests            -> [Ok(200), Ok(200), Ok(200), Ok(200)], 2 connections
@@ -185,6 +191,8 @@ pub fn report_request(
 
 Three report requests and two ordinary requests to the same host, all at once, give:
 
+### Report requests and ordinary requests at once <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_4.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 [Ok(200), Ok(200), Ok(200), Ok(200), Ok(200)], 3 connections
 ```
@@ -221,20 +229,26 @@ Getters read a configuration back. For `busy_service_config()`, `get_max_connect
 
 ## Step 6: Watch connections in the log
 
-The client writes a few lines to the OTP logger about its connections and bodies. With the logger's default settings, you see the warnings:
+The client writes a few lines to the OTP logger about its connections and bodies. With the default `log_level`, `LogInfo`, you see these:
+
+### The log lines of the client <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_6.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
+info: [dream_http] connection closed: pid=<pid> protocol=http reason=closed
 warning: [dream_http] connection down: pid=<pid> protocol=http reason=closed killed_streams=1
-warning: unrecognized Content-Encoding, passing through raw bytes: br
 warning: decompression failed, passing through raw bytes
+warning: unrecognized Content-Encoding, passing through raw bytes: br
 ```
 
+- `connection closed` means a server closed a connection while it was idle. That is normal, and the next request opens a new one.
 - `connection down` means a connection closed while a request was on it. The test of this guide sends a GET to a server that closes the connection without an answer: the client sends it once more on a new connection, so the log shows two of these lines, one for each connection.
 - The two `passing through raw bytes` lines mean the server compressed a body in a way the client can't undo, so you get the bytes as they came.
 
-There is one more line, at the info level: `[dream_http] connection closed: pid=<pid> protocol=http reason=closed`, when a server closes an idle connection. It's below the logger's default level, so you don't see it unless you lower the level of the OTP logger.
+The `log_level` setting of the transport configuration picks which of these lines appear. It applies to every line the client writes, and to nothing else in your program:
 
-The transport configuration has a `log_level` setting, with the values `LogDebug`, `LogInfo`, `LogWarning`, `LogError` and `LogNone`. Today it doesn't change which of these lines appear: the test of this guide sets `LogNone` and still gets the `connection down` warning. To filter the client's lines, use the OTP logger's own level for now.
+- `LogDebug` and `LogInfo` show all four lines. The client writes no debug lines.
+- `LogWarning` shows the three warnings, and hides `connection closed`.
+- `LogError` and `LogNone` show nothing. The client writes no error lines.
 
 ## Test your code
 

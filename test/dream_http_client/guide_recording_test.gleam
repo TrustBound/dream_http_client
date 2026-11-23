@@ -2,9 +2,10 @@
 //// (docs/guides/recording-and-playback.md). The tests record from a mock
 //// server on its own port, stop the server, and play the recordings back,
 //// so playback can reach no server. They assert the exact values that the
-//// guide shows.
+//// guide shows. The output that the guide shows in a `text` block is a file
+//// in `test/outputs/`, and the tests compare it with the real output.
 
-import dream_http_client/client.{NoRecording, RequestError}
+import dream_http_client/client
 import dream_http_client/matching
 import dream_http_client/recorder
 import dream_http_client/recording.{BlockingResponse, RecordedRequest, Recording}
@@ -13,6 +14,8 @@ import dream_mock_server/server
 import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
+import fixtures/output_file
+import fixtures/shown
 import fixtures/temp_directory
 import gleam/http
 import gleam/json
@@ -26,19 +29,6 @@ import snippets/guide_recording_client.{fetch_text, start_recorder}
 import snippets/guide_recording_inspect.{recorded_statuses}
 import snippets/guide_recording_round_trip.{play_back_text, record_text}
 import snippets/guide_recording_stream.{fetch_chunks}
-
-const fast_chunks = [
-  <<"Chunk 1\n">>,
-  <<"Chunk 2\n">>,
-  <<"Chunk 3\n">>,
-  <<"Chunk 4\n">>,
-  <<"Chunk 5\n">>,
-  <<"Chunk 6\n">>,
-  <<"Chunk 7\n">>,
-  <<"Chunk 8\n">>,
-  <<"Chunk 9\n">>,
-  <<"Chunk 10\n">>,
-]
 
 pub fn tests() -> TestSuite {
   describe("recording guide", [
@@ -58,6 +48,27 @@ pub fn tests() -> TestSuite {
         |> be_equal(Ok("Hello, World!"))
         |> or_fail_with("Record mode should send the request")
       }),
+      it("the name of a recording file has two hashes", fn() {
+        // Arrange
+        let recordings = temp_directory.path("guide_recording_file_name")
+        let assert Ok(mock) = server.start(19_952)
+
+        // Act
+        let _text = record_text(api(19_952), recordings)
+        server.stop(mock)
+        let names =
+          simplifile.read_directory(recordings)
+          |> result.unwrap([])
+          |> list.map(name_with_hash_names)
+
+        // Assert
+        output_file.lines(names)
+        |> should
+        |> be_equal(output_file.read("guide_recording_file_name"))
+        |> or_fail_with(
+          "The name holds the method, the host, the path and two hashes",
+        )
+      }),
       it("record mode writes one file for each request", fn() {
         // Arrange
         let recordings = temp_directory.path("guide_recording_files")
@@ -76,33 +87,24 @@ pub fn tests() -> TestSuite {
         |> be_equal(Ok(["GET_localhost__stream_fast", "GET_localhost__text"]))
         |> or_fail_with("Expected one file for each request")
       }),
-      it("playback returns the recorded text with no server", fn() {
+      it("playback answers with no server, and a plain call cannot", fn() {
         // Arrange
         let recordings = temp_directory.path("guide_recording_playback")
         record_text_and_stream(recordings, 19_993)
 
         // Act
-        let text = play_back_text(api(19_993), recordings)
+        let lines = [
+          "play_back_text(api, \"test/recordings\")   -> "
+            <> string.inspect(play_back_text(api(19_993), recordings)),
+          "fetch_text(api)                           -> "
+            <> string.inspect(fetch_text(api(19_993))),
+        ]
 
         // Assert
-        text
+        output_file.lines(lines)
         |> should
-        |> be_equal(Ok("Hello, World!"))
-        |> or_fail_with("Playback should answer without the server")
-      }),
-      it("without the recorder the stopped server is unreachable", fn() {
-        // Arrange
-        let recordings = temp_directory.path("guide_recording_unreachable")
-        record_text_and_stream(recordings, 19_994)
-
-        // Act
-        let text = fetch_text(api(19_994))
-
-        // Assert
-        text
-        |> should
-        |> be_equal(Error("Connection failed: Connection refused"))
-        |> or_fail_with("The server is stopped")
+        |> be_equal(output_file.read("guide_recording_step_2"))
+        |> or_fail_with("Playback answers without the server")
       }),
       it("playback returns the ten recorded chunks", fn() {
         // Arrange
@@ -112,11 +114,15 @@ pub fn tests() -> TestSuite {
 
         // Act
         let chunks = fetch_chunks(api(19_995) |> client.recorder(playback))
+        let shown_chunks = case chunks {
+          Ok(data) -> "Ok(" <> shown.bits_list(data) <> ")"
+          Error(_) -> string.inspect(chunks)
+        }
 
         // Assert
-        chunks
+        output_file.lines([shown_chunks])
         |> should
-        |> be_equal(Ok(fast_chunks))
+        |> be_equal(output_file.read("guide_recording_stream"))
         |> or_fail_with("Playback should keep the chunk boundaries")
       }),
     ]),
@@ -136,16 +142,9 @@ pub fn tests() -> TestSuite {
           |> result.map(fn(response) { response.status })
 
         // Assert
-        result
+        output_file.lines([string.inspect(result)])
         |> should
-        |> be_equal(
-          Error(
-            RequestError(NoRecording(
-              method: "GET",
-              url: "http://localhost:19996/json",
-            )),
-          ),
-        )
+        |> be_equal(output_file.read("guide_recording_no_recording"))
         |> or_fail_with("A playback miss should name the request")
       }),
       it("passthrough mode sends the request and records nothing", fn() {
@@ -179,9 +178,9 @@ pub fn tests() -> TestSuite {
         // Assert
         content
         |> should
-        |> be_equal(Ok(
-          "{\"version\":\"1.0\",\"entries\":[{\"request\":{\"method\":\"GET\",\"scheme\":\"http\",\"host\":\"localhost\",\"port\":9876,\"path\":\"/text\",\"query\":null,\"headers\":[],\"body\":\"\"},\"response\":{\"mode\":\"blocking\",\"status\":429,\"headers\":[[\"retry-after\",\"30\"]],\"body\":\"Slow down\"}}]}",
-        ))
+        |> be_equal(
+          Ok(string.drop_end(output_file.read("guide_recording_by_hand"), 1)),
+        )
         |> or_fail_with("Expected the JSON of the recording")
       }),
       it("playback returns the hand-written 429", fn() {
@@ -290,7 +289,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(recorder) = start_recorder("record", recordings)
 
         // Act
-        recorder.add_recording(recorder, hand_recording())
+        let assert Ok(Nil) = recorder.add_recording(recorder, hand_recording())
         let count = list.length(recorder.get_recordings(recorder))
 
         // Assert
@@ -306,7 +305,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(playback) = start_recorder("playback", recordings)
 
         // Act
-        recorder.add_recording(playback, hand_recording())
+        let assert Ok(Nil) = recorder.add_recording(playback, hand_recording())
         let count = list.length(recorder.get_recordings(playback))
 
         // Assert
@@ -335,6 +334,11 @@ fn record_text_and_stream(recordings: String, port: Int) -> Nil {
   let _chunks = fetch_chunks(api(port) |> client.recorder(recorder))
   let assert Ok(Nil) = recorder.stop(recorder)
   server.stop(mock)
+}
+
+/// A file name with the names of its two hashes in place of the hashes.
+fn name_with_hash_names(file: String) -> String {
+  name_without_hashes(file) <> "_<key hash>_<content hash>.json"
 }
 
 /// A file name without its two hashes and its extension.

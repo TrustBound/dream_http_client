@@ -75,8 +75,10 @@ pub fn fetch_greeting(api: ClientRequest) -> Result(HttpResponse, SendError) {
 
 Send `fetch_greeting` with a base request that has no certificate authority file, `client.new() |> host("localhost") |> port(service_port)`, and the client checks the server's certificate against your system's authorities. None of them signed it, so the handshake fails:
 
+### The request with no file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_tls_unknown_ca.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
-Error(RequestError(ConnectFailed(reason: "{tls_alert,{unknown_ca,...")))
+Error(RequestError(ConnectFailed("{tls_alert,{unknown_ca,...")))
 ```
 
 The reason is the error that Erlang's `ssl` application gave, as text. `unknown_ca` is the part to look for: the server's certificate is signed by an authority the client doesn't trust. That's a safety check doing its job. Never turn it off to make the error go away.
@@ -84,6 +86,8 @@ The reason is the error that Erlang's `ssl` application gave, as text. `unknown_
 ## Step 2: Trust the private authority for one service
 
 `internal_api` in the snippet above already has the fix: `certificate_authority_file(ca_file)`. With it, the request trusts the authorities in that file instead of the system's, the same as `curl --cacert`:
+
+### The request with the file of the authority <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_tls_trusted.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 fetch_greeting(internal_api(service_port, "certs/internal-ca.pem"))
@@ -100,9 +104,11 @@ A few things to know:
 
 Two mistakes are common, and they look different:
 
+### Two mistakes with the file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_tls_mistakes.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
-the file holds another authority   -> Error(RequestError(ConnectFailed(reason: "{tls_alert,{unknown_ca,...")))
-the file doesn't exist             -> Error(RequestError(ConnectFailed(reason: "{options,{cacertfile,\"<the full path>\",{error,enoent}}}")))
+the file holds another authority   -> Error(RequestError(ConnectFailed("{tls_alert,{unknown_ca,...")))
+the file doesn't exist             -> Error(RequestError(ConnectFailed("{options,{cacertfile,\"<the full path>\",{error,enoent}}}")))
 ```
 
 - A file of the wrong authority gives the same `unknown_ca` as no file at all. If you set a file and still see `unknown_ca`, the file holds the wrong certificate, often the server's own certificate instead of the authority that signed it.
@@ -144,10 +150,10 @@ The handshake has its own time limit, `tls_handshake_timeout`, which is 10 secon
 
 To test TLS code for real, you need an HTTPS server with a certificate for `localhost`, and the authority that signed it. Make the three files once, with the tool your team uses for test certificates, and keep them with your tests: the server's certificate, the server's key, and the authority's certificate. The tests of this guide make them with Erlang's `public_key:pkix_test_data`.
 
-Then start a [mist](https://hexdocs.pm/mist) server with TLS on a free port, and point the client at it. Add mist as a dev dependency:
+Then start a [mist](https://hexdocs.pm/mist) server with TLS on a free port, and point the client at it. The tests of this guide get the `mist` module from [dream_http_server](https://hexdocs.pm/dream_http_server), Dream's fork of mist with HTTP/2 fixes, and the test module below runs with it. Add it as a dev dependency:
 
 ```sh
-gleam add --dev mist
+gleam add --dev dream_http_server
 ```
 
 Here's a test module for `fetch_greeting`. It takes the three file paths as a `TestFiles` value, so your `tests()` function passes the paths of your files. It uses [dream_test](https://hexdocs.pm/dream_test), set up as in [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#test-your-code):

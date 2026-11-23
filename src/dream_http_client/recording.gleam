@@ -3,10 +3,10 @@
 //// Defines the structure for storing HTTP request/response recordings
 //// in a custom JSON format that supports both blocking and streaming responses.
 
+import dream_http_client/internal
 import gleam/bit_array
 import gleam/dynamic/decode
 import gleam/http
-import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option
@@ -515,7 +515,7 @@ fn decode_recorded_request_decoder() -> decode.Decoder(RecordedRequest) {
     Error(parse_error) -> {
       // Preserve the original method string but log the parse error so it is
       // not silently discarded.
-      io.println_error(
+      internal.log_warning(
         "Failed to parse HTTP method in recording: " <> parse_error,
       )
       http.Other(method_str)
@@ -537,7 +537,7 @@ fn decode_recorded_request_decoder() -> decode.Decoder(RecordedRequest) {
     Error(parse_error) -> {
       // Invalid scheme in recording - fall back to http and log the error so
       // it is visible when inspecting corrupted recording files.
-      io.println_error(
+      internal.log_warning(
         "Unknown scheme in recording; defaulting to http: " <> parse_error,
       )
       decode.success(RecordedRequest(
@@ -597,7 +597,7 @@ fn decode_stored_body(stored: String, encoding: String) -> BitArray {
       case bit_array.base64_decode(stored) {
         Ok(bits) -> bits
         Error(_) -> {
-          io.println_error(
+          internal.log_warning(
             "Recording body tagged base64 failed to decode; using raw value",
           )
           bit_array.from_string(stored)
@@ -632,7 +632,7 @@ fn decode_chunk_decoder() -> decode.Decoder(Chunk) {
       case bit_array.base64_decode(data_str) {
         Ok(bits) -> bits
         Error(_) -> {
-          io.println_error(
+          internal.log_warning(
             "Recording chunk tagged base64 failed to decode; using raw value",
           )
           <<data_str:utf8>>

@@ -448,12 +448,13 @@ fails is not saved as a recording.
 
 Internal logging has been migrated from `error_logger` and raw `io:format` to
 OTP's `logger` module. Connection events (graceful closures at `info` level,
-unexpected disconnects at `warning` level) and decompression warnings now go
-through `logger`, enabling standard OTP log level filtering.
+unexpected disconnects at `warning` level), decompression warnings and
+recorder warnings go through one module, `dream_http_client_log`.
 
 A new `log_level` field on `TransportConfig` controls the minimum severity for
-dream_http_client's log output. It uses `logger:set_module_level/2` to scope
-filtering to dream's own modules without affecting the rest of your application.
+dream_http_client's log output. It is the `logger:set_module_level/2` level
+of that one module, so it applies to every line of the client and does not
+change the logging of the rest of your application.
 
 ##### Log warnings only <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_log_level.gleam#L1-L7"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
@@ -474,7 +475,7 @@ Defaults to `LogInfo`. Available levels: `LogDebug`, `LogInfo`, `LogWarning`,
 
 #### Connection lifecycle
 
-```text
+```text illustration
 request -> ensure_connection (dream_http_conn_manager, a gen_server)
   -> a connection to the host has room: use it
   -> every connection is full, and the pool is below max_connections:
@@ -507,7 +508,7 @@ with proper method/body handling for 301/302/303/307/308.
 
 ### Guides
 
-The package has nine guides in [`docs/guides/`](https://github.com/TrustBound/dream_http_client/tree/main/docs/guides) and one settings reference. Each guide walks through one task, from a first request to tested code: getting started, sending data, errors and retries, streaming, streaming into an actor, connections, private certificate authorities, recording, and matching and scrubbing recordings. Every code block in them is a tested snippet that runs against a local server. The README is short and links to them, and HexDocs shows them.
+The package has nine guides in [`docs/guides/`](https://github.com/TrustBound/dream_http_client/tree/main/docs/guides) and one settings reference. Each guide walks through one task, from a first request to tested code: getting started, sending data, errors and retries, streaming, streaming into an actor, connections, private certificate authorities, recording, and matching and scrubbing recordings. Every code block in them is proven: each Gleam block is a tested snippet that runs against a local server, and each output block is a file that a test compares with the real output. The README is short and links to them, and HexDocs shows them.
 
 ## Removed
 
@@ -629,9 +630,41 @@ The package has nine guides in [`docs/guides/`](https://github.com/TrustBound/dr
   does not change: a request with no recording goes to the network and is
   recorded. `add_recording` still does nothing in playback mode.
 
+- `log_level` now applies to every log line of the client. Before, the
+  client logged with `logger:info/2` and `logger:warning/2`, which put no
+  module in the log metadata, so the module level that `log_level` set
+  never applied: `LogNone` still showed the `connection down` warnings, and
+  `LogDebug` did not show the `connection closed` info line. Now every line
+  goes through one module, `dream_http_client_log`, with the logger macros,
+  and `log_level` is the module level of that module. `LogDebug` and
+  `LogInfo` (the default) show the info line and the warnings, `LogWarning`
+  shows only the warnings, and `LogError` and `LogNone` show nothing. The
+  recorder and recording warnings that the client wrote to standard error
+  go through the same module, so `log_level` applies to them too. The
+  primary logger level and the logging of other applications do not change.
+- A recording is on disk when the recorded call returns. Before, the
+  recorder wrote the file after an asynchronous message, so a playback
+  recorder started right after `send` could miss it and give
+  `NoRecording`, although the docs said that recordings are saved at once.
+  Now `send` returns after the write, and a stream ends after the write.
+  A failed write is the error of the call:
+  `Error(RequestError(Unexpected("Failed to save recording: ...")))` from
+  `send`, and a `TransportFailure` with the same `Unexpected` as the last
+  item of `stream_yielder` and in `on_stream_error` and `StreamError`.
+  Before, a failed write printed a line to standard error and the call
+  returned the response. `recorder.add_recording` returns
+  `Result(Nil, String)`.
+- A new `idle_timeout` applies at once. Before, the idle check that was
+  scheduled with the old value (60 seconds by default) ran first, so a
+  shorter timeout applied only after it. Now `configure_transport` replaces
+  the scheduled check.
+- The doc of `max_concurrent_streams` says what the value is: the HTTP/2
+  `SETTINGS_MAX_CONCURRENT_STREAMS` that the client sends to the server.
+  The pool follows the limit that the server sends.
+
 ## Testing
 
-750 tests, 0 failed, 100% line coverage (1220 of 1220 lines), in about 146
+738 tests, 0 failed, 100% line coverage (1227 of 1227 lines), in about 155
 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1,
 OTP 29, Gleam 1.19.2.
 
@@ -683,6 +716,7 @@ Step 1 applies to code that handles errors. Step 2 applies to code that reads a 
 | `recording.BlockingResponse.body: String` | `recording.BlockingResponse.body: BitArray` |
 | `recording.RecordedRequest.body: String` | `recording.RecordedRequest.body: BitArray` |
 | `client.get_body() -> String` | `client.get_body() -> BitArray` |
+| `recorder.add_recording() -> Nil` | `recorder.add_recording() -> Result(Nil, String)` |
 
 **Quick migration.** Before 6.0.0, a failed request gave
 `Error(client.RequestError(message: msg))`, where `msg` was a string. Now it

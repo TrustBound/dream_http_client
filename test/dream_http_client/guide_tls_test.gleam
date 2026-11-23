@@ -1,16 +1,19 @@
 //// Tests for the snippets of the TLS guide
 //// (docs/guides/tls-and-certificate-authorities.md). Each test starts a
 //// TLS server with test certificates on its own port, and asserts the
-//// exact value that the guide shows.
+//// exact value that the guide shows. The output that the guide shows in a
+//// `text` block is a file in `test/outputs/`, and the tests compare it with
+//// the real output.
 
 import dream_http_client/client.{ConnectFailed, RequestError}
 import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
 import fixtures/application.{connection_protocols}
+import fixtures/output_file
+import fixtures/shown
 import fixtures/tls_server
 import gleam/list
-import gleam/result
 import gleam/string
 import snippets/guide_tls_request.{fetch_greeting, internal_api}
 
@@ -25,13 +28,12 @@ pub fn tests() -> TestSuite {
         |> client.port(certificates.port)
 
       // Act
-      let starts_with_unknown_ca =
-        fetch_greeting(request) |> reason_starts_with("{tls_alert,{unknown_ca,")
+      let lines = [shown_failure(fetch_greeting(request))]
 
       // Assert
-      starts_with_unknown_ca
+      output_file.lines(lines)
       |> should
-      |> be_equal(True)
+      |> be_equal(output_file.read("guide_tls_unknown_ca"))
       |> or_fail_with("The handshake should fail with unknown_ca")
     }),
     it("step 2: internal_api trusts the private authority", fn() {
@@ -41,50 +43,40 @@ pub fn tests() -> TestSuite {
         internal_api(certificates.port, certificates.certificate_authority)
 
       // Act
-      let greeting =
-        fetch_greeting(api)
-        |> result.map(fn(response) { #(response.status, response.body) })
+      let lines = [
+        "fetch_greeting(internal_api(service_port, \"certs/internal-ca.pem\"))",
+        "  -> " <> shown.sent(fetch_greeting(api)),
+      ]
 
       // Assert
-      greeting
+      output_file.lines(lines)
       |> should
-      |> be_equal(Ok(#(200, <<"hello over tls">>)))
+      |> be_equal(output_file.read("guide_tls_trusted"))
       |> or_fail_with("The private authority should be trusted")
     }),
-    it("step 3: another authority's file is rejected", fn() {
+    it("step 3: another authority's file and a missing file", fn() {
       // Arrange
       use certificates <- tls_server.with(19_983)
-      let api =
+      let other =
         internal_api(
           certificates.port,
           certificates.other_certificate_authority,
         )
+      let missing = internal_api(certificates.port, "certs/missing-ca.pem")
 
       // Act
-      let starts_with_unknown_ca =
-        fetch_greeting(api) |> reason_starts_with("{tls_alert,{unknown_ca,")
+      let lines = [
+        "the file holds another authority   -> "
+          <> shown_failure(fetch_greeting(other)),
+        "the file doesn't exist             -> "
+          <> shown_failure(fetch_greeting(missing)),
+      ]
 
       // Assert
-      starts_with_unknown_ca
+      output_file.lines(lines)
       |> should
-      |> be_equal(True)
-      |> or_fail_with("Another authority should not be trusted")
-    }),
-    it("step 3: a missing file fails the connection", fn() {
-      // Arrange
-      use certificates <- tls_server.with(19_984)
-      let api = internal_api(certificates.port, "certs/missing-ca.pem")
-
-      // Act
-      let names_the_file =
-        fetch_greeting(api)
-        |> reason_contains(["certs/missing-ca.pem", "{error,enoent}"])
-
-      // Assert
-      names_the_file
-      |> should
-      |> be_equal(True)
-      |> or_fail_with("The reason should name the file and enoent")
+      |> be_equal(output_file.read("guide_tls_mistakes"))
+      |> or_fail_with("Both mistakes fail the connection")
     }),
     it("step 5: the client negotiates HTTP/2 over TLS", fn() {
       // Arrange
@@ -133,24 +125,38 @@ pub fn tests() -> TestSuite {
   ])
 }
 
-fn reason_starts_with(
+/// The result as the guide shows it. The reason of a TLS alert is long, so
+/// it ends after `unknown_ca,`, and the full path of a missing file, which
+/// differs from machine to machine, is `<the full path>`.
+fn shown_failure(
   result: Result(client.HttpResponse, client.SendError),
-  prefix: String,
-) -> Bool {
+) -> String {
   case result {
     Error(RequestError(ConnectFailed(reason: reason))) ->
-      string.starts_with(reason, prefix)
-    _ -> False
+      "Error(RequestError(ConnectFailed("
+      <> string.inspect(shown_reason(reason))
+      <> ")))"
+    _ -> shown.sent(result)
   }
 }
 
-fn reason_contains(
-  result: Result(client.HttpResponse, client.SendError),
-  parts: List(String),
-) -> Bool {
-  case result {
-    Error(RequestError(ConnectFailed(reason: reason))) ->
-      list.all(parts, string.contains(reason, _))
-    _ -> False
+fn shown_reason(written: String) -> String {
+  let unknown_ca = "{tls_alert,{unknown_ca,"
+  let reason = without_line_breaks(written)
+  case string.starts_with(reason, unknown_ca), string.split(reason, "\"") {
+    True, _ -> unknown_ca <> "..."
+    False, [before, _path, after] -> before <> "\"<the full path>\"" <> after
+    False, _ -> reason
+  }
+}
+
+/// The reason without the line breaks and the indentation that Erlang
+/// puts in a long term. Where it breaks the term depends on the length of
+/// the path, so it changes from machine to machine.
+fn without_line_breaks(reason: String) -> String {
+  case string.split(reason, "\n") {
+    [first, ..rest] ->
+      string.concat([first, ..list.map(rest, string.trim_start)])
+    [] -> reason
   }
 }

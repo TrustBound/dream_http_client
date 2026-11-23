@@ -1,7 +1,9 @@
 //// Tests for the snippets of the sending data guide
 //// (docs/guides/sending-data.md). Each test sends a snippet's request to
 //// the local mock server or to an edge server that echoes the request, and
-//// asserts the exact value that the guide shows.
+//// asserts the exact value that the guide shows. The output that the guide
+//// shows in a `text` block is a file in `test/outputs/`, and the tests
+//// compare it with the real output.
 
 import dream_http_client/client.{
   type HttpResponse, type SendError, Header, RequestError, Unexpected,
@@ -11,7 +13,9 @@ import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/edge_server
 import fixtures/mock_server
+import fixtures/output_file
 import gleam/http
+import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
@@ -35,50 +39,27 @@ pub fn tests() -> TestSuite {
         |> be_equal(
           Ok(#(
             201,
-            "{\"method\":\"POST\",\"url\":\"/post\",\"data\":\"{\\\"title\\\":\\\"Buy milk\\\",\\\"done\\\":false}\"}",
+            string.drop_end(output_file.read("guide_sending_data_create"), 1),
           )),
         )
         |> or_fail_with("The mock server should echo the JSON body")
       }),
-      it("step 2: replace_todo puts the JSON body", fn() {
+      it("step 2: replace_todo, mark_done and delete_todo", fn() {
         // Act
-        let answer = status_and_body(replace_todo(api(), "Buy oat milk"))
+        let lines = [
+          "replace_todo(api, \"Buy oat milk\") -> "
+            <> status_line(replace_todo(api(), "Buy oat milk")),
+          "mark_done(api)                    -> "
+            <> status_line(mark_done(api())),
+          "delete_todo(api)                  -> "
+            <> status_line(delete_todo(api())),
+        ]
 
         // Assert
-        answer
+        output_file.lines(lines)
         |> should
-        |> be_equal(
-          Ok(#(
-            200,
-            "{\"method\":\"PUT\",\"url\":\"/put\",\"data\":\"{\\\"title\\\":\\\"Buy oat milk\\\",\\\"done\\\":false}\"}",
-          )),
-        )
-        |> or_fail_with("The mock server should echo the PUT body")
-      }),
-      it("step 2: mark_done patches the done field", fn() {
-        // Act
-        let answer = status_and_body(mark_done(api()))
-
-        // Assert
-        answer
-        |> should
-        |> be_equal(
-          Ok(#(
-            200,
-            "{\"method\":\"PATCH\",\"url\":\"/patch\",\"data\":\"{\\\"done\\\":true}\"}",
-          )),
-        )
-        |> or_fail_with("The mock server should echo the PATCH body")
-      }),
-      it("step 2: delete_todo sends a DELETE", fn() {
-        // Act
-        let answer = status_and_body(delete_todo(api()))
-
-        // Assert
-        answer
-        |> should
-        |> be_equal(Ok(#(200, "{\"method\":\"DELETE\",\"url\":\"/delete\"}")))
-        |> or_fail_with("The mock server should answer the DELETE")
+        |> be_equal(output_file.read("guide_sending_data_update"))
+        |> or_fail_with("The mock server should echo each request")
       }),
       it("step 3: search_todos encodes the query", fn() {
         // Act
@@ -90,7 +71,7 @@ pub fn tests() -> TestSuite {
         |> be_equal(
           Ok(#(
             200,
-            "{\"method\":\"GET\",\"url\":\"/get\",\"query\":\"q=milk%20%26%20eggs&page=2\",\"headers\":[]}",
+            string.drop_end(output_file.read("guide_sending_data_search"), 1),
           )),
         )
         |> or_fail_with("The query should reach the server encoded")
@@ -108,14 +89,9 @@ pub fn tests() -> TestSuite {
 
         // Assert
         head
+        |> result.map(output_file.lines)
         |> should
-        |> be_equal(
-          Ok([
-            "GET /items HTTP/1.1", "content-length: 0",
-            "user-agent: greeter/1.0", "authorization: Bearer test-token-123",
-            "accept-encoding: gzip, deflate",
-          ]),
-        )
+        |> be_equal(Ok(output_file.read("guide_sending_data_headers")))
         |> or_fail_with("The server should receive both headers")
       }),
       it("step 5: upload sends bytes that are not text", fn() {
@@ -132,7 +108,7 @@ pub fn tests() -> TestSuite {
         |> be_equal(Ok(<<137, 80, 78, 71, 0, 255>>))
         |> or_fail_with("The server should get the exact bytes")
       }),
-      it("step 6: header_value reads a header in lower case", fn() {
+      it("step 6: header_value and explain", fn() {
         // Arrange
         use port <- edge_server.with("echo_head")
 
@@ -141,42 +117,27 @@ pub fn tests() -> TestSuite {
           client.send(edge_server.request(port))
           |> result.replace_error(Nil)
           |> result.try(header_value(_, "x-request-id"))
+        let lines = [
+          "header_value(response, \"x-request-id\")          -> "
+            <> string.inspect(value)
+            <> "      (the server sent X-Request-Id: req-42)",
+          "explain(send(api |> path(\"/status/422\")))       -> "
+            <> string.inspect(
+            explain(client.send(mock_server.get("/status/422"))),
+          ),
+          "explain(send(api |> port(1)))                   -> "
+            <> string.inspect(
+            explain(client.send(mock_server.closed_port("/"))),
+          ),
+          "explain(send(api |> path(\"/text\")))             -> "
+            <> string.inspect(explain(client.send(mock_server.get("/text")))),
+        ]
 
         // Assert
-        value
+        output_file.lines(lines)
         |> should
-        |> be_equal(Ok("req-42"))
-        |> or_fail_with("The server sent X-Request-Id: req-42")
-      }),
-      it("step 6: explain reads the body of a refusal", fn() {
-        // Act
-        let message = explain(client.send(mock_server.get("/status/422")))
-
-        // Assert
-        message
-        |> should
-        |> be_equal("Refused with 422: {\"status\":422}")
-        |> or_fail_with("explain should show the status and the body")
-      }),
-      it("step 6: explain describes a request with no answer", fn() {
-        // Act
-        let message = explain(client.send(mock_server.closed_port("/")))
-
-        // Assert
-        message
-        |> should
-        |> be_equal("No answer: Connection failed: Connection refused")
-        |> or_fail_with("explain should describe the transport error")
-      }),
-      it("step 6: explain reports a success", fn() {
-        // Act
-        let message = explain(client.send(mock_server.get("/text")))
-
-        // Assert
-        message
-        |> should
-        |> be_equal("Done: 200")
-        |> or_fail_with("explain should show the status of a success")
+        |> be_equal(output_file.read("guide_sending_data_responses"))
+        |> or_fail_with("explain shows the status, the body or the error")
       }),
     ]),
     group("failures and pitfalls", [
@@ -276,6 +237,14 @@ fn api() -> client.ClientRequest {
   |> client.scheme(http.Http)
   |> client.host("localhost")
   |> client.port(mock_server.port())
+}
+
+/// The status and the body of a response, as `200 {...}`.
+fn status_line(result: Result(HttpResponse, SendError)) -> String {
+  case status_and_body(result) {
+    Ok(#(status, body)) -> int.to_string(status) <> " " <> body
+    Error(Nil) -> string.inspect(result)
+  }
 }
 
 fn status_and_body(

@@ -108,9 +108,9 @@ import gleam/erlang/reference
 import gleam/http
 import gleam/http/request
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/yielder
 
 /// HTTP header
@@ -585,22 +585,28 @@ pub type Protocols {
   Http2Preferred
 }
 
-/// Minimum log level for dream_http_client's internal log output.
+/// Minimum log level for dream_http_client's own log output.
 ///
-/// Controls which log messages are emitted by the library's connection manager
-/// and HTTP shim. Uses OTP's `logger:set_module_level/2` under the hood, so
-/// filtering is scoped to dream's own modules and does not affect the rest of
-/// your application.
+/// Every log line of the client goes through one Erlang module,
+/// `dream_http_client_log`, and this setting is the OTP logger module level
+/// of that module (`logger:set_module_level/2`). It changes only the lines of
+/// the client: the primary logger level and the logging of the rest of your
+/// application stay the same.
 ///
 /// ## Variants
 ///
-/// - `LogDebug` — All messages including debug-level detail.
-/// - `LogInfo` — Informational messages and above (default). Includes graceful
-///   connection closures.
-/// - `LogWarning` — Warnings and above only. Unexpected disconnects,
-///   decompression failures, unrecognized content encodings.
-/// - `LogError` — Errors only.
-/// - `LogNone` — Suppress all log output from dream_http_client.
+/// - `LogDebug` — Every line. The client writes no debug lines, so this shows
+///   the same lines as `LogInfo`.
+/// - `LogInfo` — Info lines and warnings (default). The info line is
+///   `[dream_http] connection closed: ...`, when a server closes an idle
+///   connection.
+/// - `LogWarning` — Warnings only: a connection that went down while a
+///   request was on it, a body that the client cannot decompress, an unknown
+///   content encoding, a recorder that does not answer, a recording that
+///   cannot be read correctly, and a recorded stream that failed.
+/// - `LogError` — Errors only. The client writes no error lines, so this
+///   shows nothing.
+/// - `LogNone` — No lines.
 ///
 /// ## Example
 ///
@@ -1509,7 +1515,8 @@ pub opaque type TransportConfig {
 /// - tls_handshake_timeout: 10_000ms (TLS negotiation timeout)
 /// - keepalive: 30_000ms (HTTP/2 ping interval)
 /// - keepalive_tolerance: 3 (unack'd pings before disconnect)
-/// - max_concurrent_streams: 100 (HTTP/2 streams per connection)
+/// - max_concurrent_streams: 100 (the HTTP/2 SETTINGS_MAX_CONCURRENT_STREAMS
+///   value that the client sends to the server)
 /// - initial_connection_window_size: 65_535 (HTTP/2 connection flow control)
 /// - initial_stream_window_size: 65_535 (HTTP/2 per-stream flow control)
 /// - closing_timeout: 15_000ms (graceful shutdown wait)
@@ -1598,7 +1605,10 @@ pub fn max_connections(config: TransportConfig, count: Int) -> TransportConfig {
 /// Controls how long an idle connection is held open before being closed.
 /// Longer timeouts improve connection reuse but consume resources. A
 /// connection that serves a response, for example a long stream, is not
-/// idle and stays open.
+/// idle and stays open. The pool checks for idle connections once per
+/// timeout, so an idle connection closes between one and two timeouts after
+/// its last use. A new value applies at once: `configure_transport` makes
+/// the pool replace the check that it scheduled with the old value.
 ///
 /// ## Parameters
 ///
@@ -1813,10 +1823,13 @@ pub fn keepalive_tolerance(
   TransportConfig(..config, keepalive_tolerance: count)
 }
 
-/// Set maximum concurrent HTTP/2 streams per connection
+/// Set the HTTP/2 SETTINGS_MAX_CONCURRENT_STREAMS value that the client sends
 ///
-/// Controls the maximum number of concurrent streams allowed on a single
-/// HTTP/2 connection. Increase for highly concurrent workloads.
+/// gun sends this value to the server in the client's SETTINGS frame: it is
+/// the number of streams that the server may open to the client at once. It
+/// does not limit the requests of the client. The pool puts requests on an
+/// HTTP/2 connection up to the limit that the server sends in its own
+/// SETTINGS frame.
 ///
 /// ## Parameters
 ///
@@ -1964,11 +1977,13 @@ pub fn closing_timeout(config: TransportConfig, ms: Int) -> TransportConfig {
   TransportConfig(..config, closing_timeout: ms)
 }
 
-/// Set the minimum log level for dream_http_client's internal log output
+/// Set the minimum log level for dream_http_client's own log output
 ///
-/// Controls which log messages are emitted by the library's connection manager
-/// and HTTP shim. Filtering is scoped to dream's own modules via OTP's
-/// `logger:set_module_level/2` and does not affect the rest of your application.
+/// Every log line of the client goes through one module, and this level
+/// applies to all of them (see `LogLevel` for what each level shows). It is
+/// the OTP logger module level of that module (`logger:set_module_level/2`),
+/// so it does not change the logging of the rest of your application. The
+/// level applies when `configure_transport` returns.
 ///
 /// ## Parameters
 ///
@@ -2230,7 +2245,7 @@ pub fn get_keepalive_tolerance(config: TransportConfig) -> Int {
   config.keepalive_tolerance
 }
 
-/// Get the configured maximum concurrent HTTP/2 streams per connection
+/// Get the HTTP/2 SETTINGS_MAX_CONCURRENT_STREAMS value that the client sends
 ///
 /// ## Example
 ///
@@ -3442,25 +3457,27 @@ fn send_and_maybe_record(
         recorded_request,
         response_for_recording,
       )
-
-      response_result(status, headers, body)
+      |> result.map_error(fn(reason) { RequestError(Unexpected(raw: reason)) })
+      |> result.try(fn(_saved) { response_result(status, headers, body) })
     }
     Error(error) -> Error(RequestError(error: error))
   }
 }
 
+// In record mode, saves the response and returns when it is on disk. A
+// failed write is the error of the call.
 fn record_response_if_needed(
   recorder_instance: recorder.Recorder,
   recorded_request: recording.RecordedRequest,
   response: recording.RecordedResponse,
-) -> Nil {
+) -> Result(Nil, String) {
   case recorder.is_record_mode(recorder_instance) {
     True -> {
       let recorder_entry =
         recording.Recording(request: recorded_request, response: response)
       recorder.add_recording(recorder_instance, recorder_entry)
     }
-    False -> Nil
+    False -> Ok(Nil)
   }
 }
 
@@ -3916,11 +3933,14 @@ fn yield_next_event(
           recording: record_stream_chunk(stream_recording, data),
         ),
       )
-    // The saved headers of a yielder stream are the response headers.
-    internal.Done(_trailers) -> {
-      record_stream_end(stream_recording, [])
-      yielder.Done
-    }
+    // The saved headers of a yielder stream are the response headers. The
+    // stream ends when its recording is on disk; a failed write is the
+    // last item of the yielder.
+    internal.Done(_trailers) ->
+      case record_stream_end(stream_recording, []) {
+        Ok(Nil) -> yielder.Done
+        Error(failure) -> yielder.Next(Error(failure), YielderFailed)
+      }
     // The stream owner gave the lease back and stopped before it gave the
     // failure.
     internal.Failed(failure) -> yielder.Next(Error(failure), YielderFailed)
@@ -3979,15 +3999,15 @@ fn get_time_ms() -> Int {
 @external(erlang, "erlang", "convert_time_unit")
 fn convert_time_unit(time: Int, from_unit: atom.Atom, to_unit: atom.Atom) -> Int
 
-// Saves a streamed response. `reversed_chunks` holds the chunks newest
-// first.
+// Saves a streamed response and returns when it is on disk.
+// `reversed_chunks` holds the chunks newest first.
 fn save_stream_recording(
   recorder_instance: recorder.Recorder,
   recorded_request: recording.RecordedRequest,
   status: Int,
   headers: List(#(String, String)),
   reversed_chunks: List(recording.Chunk),
-) -> Nil {
+) -> Result(Nil, String) {
   let response =
     recording.StreamingResponse(
       status: status,
@@ -4649,10 +4669,11 @@ fn process_stream_loop(
       internal.grant_next(translator)
       process_stream_loop(selector, translator, handlers, updated)
     }
-    FromTranslator(TranslatorEnd(headers)) -> {
-      record_stream_end(stream_recording, headers)
-      handlers.on_end(headers)
-    }
+    FromTranslator(TranslatorEnd(headers)) ->
+      case record_stream_end(stream_recording, headers) {
+        Ok(Nil) -> handlers.on_end(headers)
+        Error(failure) -> handlers.on_error(failure)
+      }
     FromTranslator(TranslatorError(failure)) -> {
       record_stream_error(stream_recording, failure)
       handlers.on_error(failure)
@@ -4700,10 +4721,12 @@ fn add_recorded_chunk(
   )
 }
 
+// Saves the recording of a stream that ended, and returns when it is on
+// disk. A failed write is a `TransportFailure` with `Unexpected`.
 fn record_stream_end(
   stream_recording: Option(StreamRecording),
   trailers: List(Header),
-) -> Nil {
+) -> Result(Nil, StreamFailure) {
   case stream_recording {
     Some(state) ->
       save_stream_recording(
@@ -4713,7 +4736,10 @@ fn record_stream_end(
         recorded_end_headers(state.headers, trailers),
         state.chunks,
       )
-    None -> Nil
+      |> result.map_error(fn(reason) {
+        TransportFailure(error: Unexpected(raw: reason))
+      })
+    None -> Ok(Nil)
   }
 }
 
@@ -4737,7 +4763,7 @@ fn record_stream_error(
 ) -> Nil {
   case stream_recording {
     Some(_state) ->
-      io.println_error(
+      internal.log_warning(
         "HTTP stream error while recording a stream, so the recording is not saved: "
         <> stream_failure_to_string(failure),
       )

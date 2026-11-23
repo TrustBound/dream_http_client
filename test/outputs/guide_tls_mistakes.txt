@@ -1,0 +1,2 @@
+the file holds another authority   -> Error(RequestError(ConnectFailed("{tls_alert,{unknown_ca,...")))
+the file doesn't exist             -> Error(RequestError(ConnectFailed("{options,{cacertfile,\"<the full path>\",{error,enoent}}}")))

@@ -167,6 +167,8 @@ fn update(progress: Progress, message: StreamMessage) -> Progress {
 
 When `/stream/fast` has ended, the tracker's progress is:
 
+### The progress at the end of the stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_actors_progress_end.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 Progress(bytes: 81, chunks: 10, finished: True, failure: None)
 ```
@@ -189,6 +191,8 @@ pub fn progress(tracker: Subject(Message)) -> Progress {
 
 Called right after `start_tracker` on `/stream/slow`, whose first chunk takes 2 seconds, it returns at once:
 
+### The progress right after the start <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_actors_progress_start.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 Progress(bytes: 0, chunks: 0, finished: False, failure: None)
 ```
@@ -210,6 +214,8 @@ pub fn cancel(tracker: Subject(Message)) -> Nil {
 
 The `Cancel` branch of `handle_message` in Step 2 calls `cancel_stream(state.request_id)` and marks the progress as finished. On `/stream/slow`, a cancel right after the start leaves this, even 2.5 seconds later, when the first chunk would have arrived:
 
+### The progress after a cancel <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_actors_cancel.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 Progress(bytes: 0, chunks: 0, finished: True, failure: Some("Cancelled"))
 ```
@@ -219,6 +225,8 @@ You don't need to cancel when the actor stops. The actor owns the stream, so the
 ## When a stream fails
 
 A failure is the last message of a stream: `StreamError(request_id, error)`, where `error` is a `StreamFailure`. The tracker keeps its text, written by `stream_failure_to_string`. Here's what it ends with for the two failing endpoints:
+
+### The progress after a failure <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_actors_failures.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 /stream/error  -> Progress(bytes: 0, chunks: 0, finished: True, failure: Some("HTTP 500: Error test chunk 1\nError test chunk 2\nError test chunk 3\n"))

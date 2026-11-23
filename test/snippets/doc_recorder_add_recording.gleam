@@ -6,7 +6,7 @@ import gleam/option
 import gleam/result
 
 pub fn add_by_hand(mocks_directory: String) -> Result(Int, String) {
-  use rec <- result.map(
+  use rec <- result.try(
     recorder.new()
     |> directory(mocks_directory)
     |> mode("record")
@@ -30,6 +30,7 @@ pub fn add_by_hand(mocks_directory: String) -> Result(Int, String) {
         "[]",
       >>),
     )
-  recorder.add_recording(rec, manual_recording)
+  // Returns when the recording is on disk, or with the write error
+  use Nil <- result.map(recorder.add_recording(rec, manual_recording))
   list.length(recorder.get_recordings(rec))
 }

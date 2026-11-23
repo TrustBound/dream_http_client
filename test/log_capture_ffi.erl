@@ -1,6 +1,6 @@
 -module(log_capture_ffi).
 
-%% Keeps the log events of the dream_http_client modules while a function
+%% Keeps the log events of dream_http_client while a function
 %% runs, so a test can assert the exact log output.
 
 -export([capture/2, log/2]).
@@ -16,17 +16,14 @@ capture(Fun, WaitMs) ->
     ok = logger:remove_handler(Id),
     {Value, collect([])}.
 
-%% The client logs through logger:info/2 and logger:warning/2, which add
-%% no module to the metadata, so the handler keeps the events by their text.
-log(#{level := Level, msg := Msg}, #{config := #{pid := Pid}}) ->
-    Text = text(Msg),
-    case is_client_message(Text) of
-        true -> Pid ! {log_capture, Level, Text};
-        false -> ok
-    end.
-
-is_client_message(Text) ->
-    binary:match(Text, [<<"[dream_http]">>, <<"passing through raw bytes">>]) =/= nomatch.
+%% Every log line of the client comes from dream_http_client_log, and the
+%% logger macros there put that module in the metadata, so the handler
+%% keeps the events of that module.
+log(#{level := Level, msg := Msg, meta := #{mfa := {dream_http_client_log, _, _}}},
+    #{config := #{pid := Pid}}) ->
+    Pid ! {log_capture, Level, text(Msg)};
+log(_Event, _Config) ->
+    ok.
 
 text({string, String}) -> unicode:characters_to_binary(String);
 text({report, Report}) -> unicode:characters_to_binary(io_lib:format("~p", [Report]));

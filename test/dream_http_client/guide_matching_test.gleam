@@ -1,9 +1,11 @@
 //// Tests for the snippets of the request matching guide
 //// (docs/guides/request-matching-and-scrubbing.md). Each test records real
 //// requests into its own directory, stops the recorder, and plays them
-//// back, and asserts the exact value that the guide shows.
+//// back, and asserts the exact value that the guide shows. The output that
+//// the guide shows in a `text` block is a file in `test/outputs/`, and the
+//// tests compare it with the real output.
 
-import dream_http_client/client.{RequestError, Unexpected}
+import dream_http_client/client
 import dream_http_client/matching
 import dream_http_client/recorder
 import dream_http_client/recording.{BlockingResponse, RecordedRequest, Recording}
@@ -13,9 +15,10 @@ import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/edge_server
 import fixtures/mock_server
+import fixtures/output_file
+import fixtures/shown
 import fixtures/temp_directory
 import gleam/http
-import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
@@ -27,28 +30,16 @@ import snippets/guide_matching_scrub.{start_scrubbing_recorder}
 pub fn tests() -> TestSuite {
   describe("request matching guide", [
     group("step 1: the default key", [
-      it("the default key is the method and the URL", fn() {
+      it("the default key and a key with the body", fn() {
         // Arrange
-        let key =
+        let default_key =
           matching.request_key(
             method: True,
             url: True,
             headers: False,
             body: False,
           )
-
-        // Act
-        let signature = key(search_request("milk"))
-
-        // Assert
-        signature
-        |> should
-        |> be_equal("POSThttp://localhost:9876/search")
-        |> or_fail_with("The key joins the method and the URL")
-      }),
-      it("a key with the body adds the body", fn() {
-        // Arrange
-        let key =
+        let body_key =
           matching.request_key(
             method: True,
             url: True,
@@ -57,13 +48,18 @@ pub fn tests() -> TestSuite {
           )
 
         // Act
-        let signature = key(search_request("milk"))
+        let lines = [
+          "request_key(method: True, url: True, headers: False, body: False)   -> "
+            <> string.inspect(default_key(search_request("milk"))),
+          "request_key(method: True, url: True, headers: False, body: True)    -> "
+            <> string.inspect(body_key(search_request("milk"))),
+        ]
 
         // Assert
-        signature
+        output_file.lines(lines)
         |> should
-        |> be_equal("POSThttp://localhost:9876/searchmilk")
-        |> or_fail_with("The body is added to the key")
+        |> be_equal(output_file.read("guide_matching_keys"))
+        |> or_fail_with("The key joins the method, the URL and the body")
       }),
     ]),
     group("step 2: a key with the body", [
@@ -74,18 +70,16 @@ pub fn tests() -> TestSuite {
         let assert Ok(playback) = start_search_recorder("playback", recordings)
 
         // Act
-        let answers =
+        let lines =
           list.map(["milk", "eggs"], fn(words) {
-            post_search(words, playback) |> result.map(fn(r) { r.body })
+            let body = body_text(post_search(words, playback))
+            "search " <> string.inspect(words) <> " -> " <> body
           })
 
         // Assert
-        answers
+        output_file.lines(lines)
         |> should
-        |> be_equal([
-          Ok(<<"{\"method\":\"POST\",\"url\":\"/post\",\"data\":\"milk\"}">>),
-          Ok(<<"{\"method\":\"POST\",\"url\":\"/post\",\"data\":\"eggs\"}">>),
-        ])
+        |> be_equal(output_file.read("guide_matching_body_key"))
         |> or_fail_with("Each body should find its recording")
       }),
       it("the default key finds two recordings and refuses", fn() {
@@ -103,17 +97,9 @@ pub fn tests() -> TestSuite {
           post_search("eggs", playback) |> result.map(fn(r) { r.status })
 
         // Assert
-        result
+        output_file.lines([string.inspect(result)])
         |> should
-        |> be_equal(
-          Error(
-            RequestError(Unexpected(
-              "Ambiguous recording match for key: POSThttp://localhost:"
-              <> int.to_string(mock_server.port())
-              <> "/post (2 recordings)",
-            )),
-          ),
-        )
+        |> be_equal(output_file.read("guide_matching_ambiguous"))
         |> or_fail_with("Two different answers for one key is an error")
       }),
     ]),
@@ -144,79 +130,65 @@ pub fn tests() -> TestSuite {
         |> be_equal(Ok([[#("Authorization", "Bearer test-token-123")]]))
         |> or_fail_with("The name keeps its capital letters")
       }),
-      it("the caller still gets the live cookie", fn() {
-        // Arrange
-        let recordings = temp_directory.path("guide_matching_live_cookie")
-        use port <- edge_server.with("set_cookie")
-        let assert Ok(scrubbing) =
-          start_scrubbing_recorder("record", recordings)
-
-        // Act
-        let headers =
-          session_request(port, "test-token-123")
-          |> client.recorder(scrubbing)
-          |> client.send()
-          |> result.map(fn(response) { response.headers })
-
-        // Assert
-        headers
-        |> should
-        |> be_equal(
-          Ok([
-            client.Header("set-cookie", "session=abc123"),
-            client.Header("content-length", "2"),
-          ]),
-        )
-        |> or_fail_with("Scrubbing changes only what is saved")
-      }),
-      it("the saved file holds no token and no cookie", fn() {
+      it("the request transformer keeps the token out of the file", fn() {
         // Arrange
         let recordings = temp_directory.path("guide_matching_file")
-        use port <- edge_server.with("set_cookie")
-        record_session(recordings, port)
-
-        // Act
-        let leaks =
-          simplifile.read_directory(recordings)
-          |> result.try(fn(files) {
-            list.try_map(files, fn(file) {
-              simplifile.read(recordings <> "/" <> file)
-            })
-          })
-          |> result.map(fn(contents) {
-            let all = string.concat(contents)
-            #(
-              string.contains(all, "test-token-123"),
-              string.contains(all, "session=abc123"),
-            )
-          })
-
-        // Assert
-        leaks
-        |> should
-        |> be_equal(Ok(#(False, False)))
-        |> or_fail_with("Neither secret should reach the file")
-      }),
-      it("playback with another token still matches", fn() {
-        // Arrange
-        let recordings = temp_directory.path("guide_matching_other_token")
         use port <- edge_server.with("set_cookie")
         record_session(recordings, port)
         let assert Ok(playback) =
           start_scrubbing_recorder("playback", recordings)
 
         // Act
-        let answer =
-          session_request(port, "other-token")
-          |> client.recorder(playback)
-          |> client.send()
-          |> result.map(fn(response) { #(response.headers, response.body) })
+        let lines = [
+          "the saved file contains \"test-token-123\"         -> "
+            <> files_contain(recordings, "test-token-123"),
+          "playback with Authorization: Bearer other-token  -> "
+            <> shown.sent(
+            session_request(port, "other-token")
+            |> client.recorder(playback)
+            |> client.send(),
+          ),
+        ]
 
         // Assert
-        answer
+        output_file.lines(lines)
         |> should
-        |> be_equal(Ok(#([client.Header("content-length", "2")], <<"ok">>)))
-        |> or_fail_with("The token is not part of the key")
+        |> be_equal(output_file.read("guide_matching_request_scrub"))
+        |> or_fail_with("The token is not saved and not part of the key")
+      }),
+      it("the response transformer keeps the cookie out of the file", fn() {
+        // Arrange
+        let recordings = temp_directory.path("guide_matching_cookie")
+        use port <- edge_server.with("set_cookie")
+        let assert Ok(scrubbing) =
+          start_scrubbing_recorder("record", recordings)
+        let live =
+          session_request(port, "test-token-123")
+          |> client.recorder(scrubbing)
+          |> client.send()
+        let assert Ok(Nil) = recorder.stop(scrubbing)
+        let assert Ok(playback) =
+          start_scrubbing_recorder("playback", recordings)
+
+        // Act
+        let lines = [
+          "the response your code gets while recording   -> "
+            <> response_headers(live),
+          "the saved file contains \"session=abc123\"      -> "
+            <> files_contain(recordings, "session=abc123"),
+          "playback of the recording                       -> "
+            <> response_headers_and_body(
+            session_request(port, "test-token-123")
+            |> client.recorder(playback)
+            |> client.send(),
+          ),
+        ]
+
+        // Assert
+        output_file.lines(lines)
+        |> should
+        |> be_equal(output_file.read("guide_matching_response_scrub"))
+        |> or_fail_with("Scrubbing changes only what is saved")
       }),
       it("the response transformer does not run in playback", fn() {
         // Arrange
@@ -318,4 +290,52 @@ fn record_session(recordings: String, port: Int) -> Nil {
     |> client.send()
   let assert Ok(Nil) = recorder.stop(scrubbing)
   Nil
+}
+
+/// `"yes"` when a recording file in `recordings` contains `text`, and
+/// `"no"` when none does.
+fn files_contain(recordings: String, text: String) -> String {
+  let found =
+    simplifile.read_directory(recordings)
+    |> result.unwrap([])
+    |> list.any(fn(file) {
+      simplifile.read(recordings <> "/" <> file)
+      |> result.map(string.contains(_, text))
+      |> result.unwrap(False)
+    })
+  case found {
+    True -> "yes"
+    False -> "no"
+  }
+}
+
+/// The headers of a response, as `headers name: value, name: value`.
+fn response_headers(
+  sent: Result(client.HttpResponse, client.SendError),
+) -> String {
+  case sent {
+    Ok(response) ->
+      "headers "
+      <> string.join(
+        list.map(response.headers, fn(header) {
+          header.name <> ": " <> header.value
+        }),
+        ", ",
+      )
+    Error(_) -> string.inspect(sent)
+  }
+}
+
+/// The headers and the body of a response.
+fn response_headers_and_body(
+  sent: Result(client.HttpResponse, client.SendError),
+) -> String {
+  response_headers(sent) <> ", body " <> string.inspect(body_text(sent))
+}
+
+/// The body of a response as text, or `""`.
+fn body_text(sent: Result(client.HttpResponse, client.SendError)) -> String {
+  sent
+  |> result.map(fn(response) { client.body_text(response) |> result.unwrap("") })
+  |> result.unwrap("")
 }

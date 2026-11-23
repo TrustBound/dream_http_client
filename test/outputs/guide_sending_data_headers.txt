@@ -1,0 +1,5 @@
+GET /items HTTP/1.1
+content-length: 0
+user-agent: greeter/1.0
+authorization: Bearer test-token-123
+accept-encoding: gzip, deflate

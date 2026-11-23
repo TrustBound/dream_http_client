@@ -99,7 +99,7 @@ fn describe_send_error(error: client.SendError) -> String {
 }
 ```
 
-To record, start a recorder in `"record"` mode, put it on the base request with `client.recorder`, and stop it when you're done:
+To record, start a recorder in `"record"` mode, put it on the base request with `client.recorder`, and stop it when you're done with it:
 
 ### Record the text once <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_round_trip.gleam#L10-L19"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
@@ -110,7 +110,7 @@ pub fn record_text(
 ) -> Result(String, String) {
   use recording <- result.try(start_recorder("record", recordings))
   let text = fetch_text(api |> with_recorder(recording))
-  // Returns when the recordings that this process handed over are on disk
+  // Ends the recorder process: the recording is already on disk
   use Nil <- result.try(recorder.stop(recording))
   text
 }
@@ -118,13 +118,15 @@ pub fn record_text(
 
 `record_text(api, "test/recordings")` returns `Ok("Hello, World!")`. The request went to the server, and `fetch_text` got the live answer. The recorder also wrote it to a file in `test/recordings`, one file for each request:
 
+### The name of a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_file_name.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 GET_localhost__text_<key hash>_<content hash>.json
 ```
 
 The name starts with the method, the host and the path, so you can find a recording by eye. The two hashes keep names unique: one comes from the request's match key, and one from the content.
 
-The recorder writes each file in its own process, right after `send` hands it the recording, so the file can still be on its way when `send` returns. `recorder.stop` waits for the recordings that the calling process handed over, then ends the recorder. Call it before you read the files or start a playback recorder on them.
+A recorded call returns only when its file is on disk: `send` returns after the write, and a stream ends after the write. So you can read the files, or start a playback recorder on them, right after the call. `recorder.stop` only ends the recorder process. If the recorder can't write the file, the call fails with that error in place of the response: `send` returns `Error(RequestError(Unexpected("Failed to save recording: ...")))`, and a stream ends with a `TransportFailure` with the same `Unexpected`.
 
 ## Step 2: Play it back with no network
 
@@ -143,6 +145,8 @@ pub fn play_back_text(
 ```
 
 With the server stopped:
+
+### Played back with the server stopped <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 play_back_text(api, "test/recordings")   -> Ok("Hello, World!")
@@ -180,8 +184,10 @@ pub fn fetch_chunks(
 
 Recorded from `/stream/fast` and played back with the server stopped, `fetch_chunks` returns the same ten chunks, with the same boundaries:
 
+### The chunks played back <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_stream.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
-Ok([<<"Chunk 1\n">>, <<"Chunk 2\n">>, ..., <<"Chunk 10\n">>])
+Ok([<<"Chunk 1\n">>, <<"Chunk 2\n">>, <<"Chunk 3\n">>, <<"Chunk 4\n">>, <<"Chunk 5\n">>, <<"Chunk 6\n">>, <<"Chunk 7\n">>, <<"Chunk 8\n">>, <<"Chunk 9\n">>, <<"Chunk 10\n">>])
 ```
 
 Playback also waits the recorded time before each chunk, so a test sees the stream at the pace it really came. The [Streaming a response](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming.md#test-your-streaming-code) guide covers what that means for timeouts, error statuses and streams that fail while you record.
@@ -190,8 +196,10 @@ Playback also waits the recorded time before each chunk, so a test sees the stre
 
 In playback mode, a request with no recording isn't sent anywhere. It fails, and the error names the request. A GET of `/json`, which the recordings above don't have, through the playback recorder returns:
 
+### A request with no recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_no_recording.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
-Error(RequestError(NoRecording(method: "GET", url: "http://localhost:19996/json")))
+Error(RequestError(NoRecording("GET", "http://localhost:19996/json")))
 ```
 
 `transport_error_to_string` writes it as `No recording matches GET http://localhost:19996/json`. The streaming functions report it as `TransportFailure(NoRecording(..))`: `stream_yielder` yields it once and ends, `start_stream` calls only `on_stream_error`, and `stream_to` sends only `StreamError`.
@@ -245,6 +253,8 @@ pub fn save_rate_limit_recording(recordings: String) -> Result(Nil, String) {
 
 `save_rate_limit_recording("test/recordings")` writes `GET_localhost__text_7646ad_f0cb30.json`, with this content:
 
+### The file of the 429 <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_by_hand.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
 ```text
 {"version":"1.0","entries":[{"request":{"method":"GET","scheme":"http","host":"localhost","port":9876,"path":"/text","query":null,"headers":[],"body":""},"response":{"mode":"blocking","status":429,"headers":[["retry-after","30"]],"body":"Slow down"}}]}
 ```
@@ -253,7 +263,7 @@ Played back, `fetch_text` returns `Error("HTTP 429")`, so you can test what your
 
 The key you pass to `save_recording_immediately` must be the key the playback recorder uses, or the file name won't match what the recorder expects. The default key is `matching.request_key(method: True, url: True, headers: False, body: False)`.
 
-You can also add a recording to a running recorder with `recorder.add_recording(recorder, recording)`. In record mode, the recorder keeps it and saves it. In playback mode, `add_recording` does nothing: `recorder.get_recordings` stays as it was, so write the file before you start the playback recorder.
+You can also add a recording to a running recorder with `recorder.add_recording(recorder, recording)`. In record mode, the recorder writes it and keeps it, and `add_recording` returns `Ok(Nil)` when the file is on disk, or `Error` with the write error. In playback mode, `add_recording` does nothing: `recorder.get_recordings` stays as it was, so write the file before you start the playback recorder.
 
 To check recording files with a script, read them with `recording.decode_recording_file`. It turns the JSON of a file into a `RecordingFile`, with a `version` and a list of `entries`:
 
@@ -325,7 +335,7 @@ To refresh the recordings, run the same code once with `start_recorder("record",
 
 **Secrets in committed recordings.** *Symptom:* an API token or a session cookie shows up in a recording file in your repository. *Fix:* record with a request transformer and a response transformer that remove them. See [Matching requests and hiding secrets in recordings](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-matching-and-scrubbing.md).
 
-**Playing back right after recording.** *Symptom:* a test records, starts a playback recorder on the same directory, and gets `NoRecording` for a request it just recorded. *Fix:* the files may not be on disk yet. Call `recorder.stop` on the recording recorder first, as in [Step 1](#step-1-record-a-real-call).
+**A recording directory that can't be written.** *Symptom:* in record mode, `send` returns `Error(RequestError(Unexpected("Failed to save recording: ...")))` although the server answered. *Fix:* the recorder could not write the file, and the call returns that error, so no test goes on with a recording that is not there. Check that the directory, or its parent, exists as a directory and that the program may write to it.
 
 **Adding a recording to a playback recorder.** *Symptom:* `add_recording` returns, but playback still fails with `NoRecording`. *Fix:* `add_recording` does nothing in playback mode. Save the file with `storage.save_recording_immediately` before you start the playback recorder.
 

@@ -126,6 +126,38 @@ version.
   does not change: a request with no recording goes to the network and is
   recorded. `add_recording` still does nothing in playback mode.
 
+- `log_level` now applies to every log line of the client. Before, the
+  client logged with `logger:info/2` and `logger:warning/2`, which put no
+  module in the log metadata, so the module level that `log_level` set
+  never applied: `LogNone` still showed the `connection down` warnings, and
+  `LogDebug` did not show the `connection closed` info line. Now every line
+  goes through one module, `dream_http_client_log`, with the logger macros,
+  and `log_level` is the module level of that module. `LogDebug` and
+  `LogInfo` (the default) show the info line and the warnings, `LogWarning`
+  shows only the warnings, and `LogError` and `LogNone` show nothing. The
+  recorder and recording warnings that the client wrote to standard error
+  go through the same module, so `log_level` applies to them too. The
+  primary logger level and the logging of other applications do not change.
+- A recording is on disk when the recorded call returns. Before, the
+  recorder wrote the file after an asynchronous message, so a playback
+  recorder started right after `send` could miss it and give
+  `NoRecording`, although the docs said that recordings are saved at once.
+  Now `send` returns after the write, and a stream ends after the write.
+  A failed write is the error of the call:
+  `Error(RequestError(Unexpected("Failed to save recording: ...")))` from
+  `send`, and a `TransportFailure` with the same `Unexpected` as the last
+  item of `stream_yielder` and in `on_stream_error` and `StreamError`.
+  Before, a failed write printed a line to standard error and the call
+  returned the response. `recorder.add_recording` returns
+  `Result(Nil, String)`.
+- A new `idle_timeout` applies at once. Before, the idle check that was
+  scheduled with the old value (60 seconds by default) ran first, so a
+  shorter timeout applied only after it. Now `configure_transport` replaces
+  the scheduled check.
+- The doc of `max_concurrent_streams` says what the value is: the HTTP/2
+  `SETTINGS_MAX_CONCURRENT_STREAMS` that the client sends to the server.
+  The pool follows the limit that the server sends.
+
 ### Added
 
 - `client.new_pool(max_connections:)` makes a connection pool, and
@@ -145,6 +177,9 @@ version.
 
 ### Changed
 
+- **BREAKING:** `recorder.add_recording` returns `Result(Nil, String)`:
+  `Ok(Nil)` when the recording is on disk, or the write error. Before, it
+  returned `Nil` before the write.
 - **BREAKING:** `HttpResponse.body` is a `BitArray`, the exact bytes the
   server sent. Before, it was a `String` that could hold bytes that are not
   UTF-8. Use `client.body_text(response)` for text. The body of an
@@ -186,13 +221,15 @@ version.
 - **`stream_yielder` error type from `String` to `StreamFailure`.** Error results
   now carry structured failure information instead of formatted strings.
 - **Logging uses OTP `logger` instead of `error_logger`/`io:format`.** Connection
-  events and decompression warnings now go through OTP's logger, enabling
-  level-based filtering. Use `log_level()` on `TransportConfig` to control
-  verbosity — defaults to `LogInfo`.
+  events, decompression warnings and recorder warnings go through OTP's
+  logger. Use `log_level()` on `TransportConfig` to choose which of them
+  appear. It defaults to `LogInfo`.
 - The package has nine guides in `docs/guides/`, each one a walk through
   one task from a first request to tested code, and one settings reference.
-  Every code block in them is a tested snippet that runs against a local
-  server. The README is short and links to them, and HexDocs shows them.
+  Every code block in them is proven: each Gleam block is a tested snippet
+  that runs against a local server, and each output block is a file that a
+  test compares with the real output. The README is short and links to
+  them, and HexDocs shows them.
 
 ### Added
 
@@ -285,7 +322,7 @@ version.
 
 ### Testing
 
-- 750 tests, 0 failed, 100% line coverage (1220 of 1220 lines), in about 146 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
+- 738 tests, 0 failed, 100% line coverage (1227 of 1227 lines), in about 155 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
 
 ## [5.1.3] - 2026-03-17
 

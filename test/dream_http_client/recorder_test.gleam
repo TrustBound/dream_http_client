@@ -139,7 +139,8 @@ pub fn tests() -> TestSuite {
           |> start()
 
         // Act
-        recorder.add_recording(rec, recorded.text_recording())
+        let assert Ok(Nil) =
+          recorder.add_recording(rec, recorded.text_recording())
         let recordings = recorder.get_recordings(rec)
         let assert Ok(Nil) = recorder.stop(rec)
 
@@ -156,8 +157,8 @@ pub fn tests() -> TestSuite {
           recorder.new() |> directory(path) |> mode("record") |> start()
 
         // Act
-        recorder.add_recording(rec, recorded.text_recording())
-        let _recordings = recorder.get_recordings(rec)
+        let assert Ok(Nil) =
+          recorder.add_recording(rec, recorded.text_recording())
         let loaded = storage.load_recordings(path)
         let assert Ok(Nil) = recorder.stop(rec)
 
@@ -176,8 +177,10 @@ pub fn tests() -> TestSuite {
           |> start()
 
         // Act
-        recorder.add_recording(rec, recorded.text_recording())
-        recorder.add_recording(rec, recorded.text_recording())
+        let assert Ok(Nil) =
+          recorder.add_recording(rec, recorded.text_recording())
+        let assert Ok(Nil) =
+          recorder.add_recording(rec, recorded.text_recording())
         let recordings = recorder.get_recordings(rec)
         let assert Ok(Nil) = recorder.stop(rec)
 
@@ -201,8 +204,9 @@ pub fn tests() -> TestSuite {
           |> start()
 
         // Act
-        recorder.add_recording(rec, recorded.text_recording())
-        recorder.add_recording(rec, other)
+        let assert Ok(Nil) =
+          recorder.add_recording(rec, recorded.text_recording())
+        let assert Ok(Nil) = recorder.add_recording(rec, other)
         let recordings = recorder.get_recordings(rec)
         let assert Ok(Nil) = recorder.stop(rec)
 
@@ -212,7 +216,7 @@ pub fn tests() -> TestSuite {
         |> be_equal([other, recorded.text_recording()])
         |> or_fail_with("Both responses should be kept, newest first")
       }),
-      it("keeps the recording in memory when the save fails", fn() {
+      it("returns the write error when the save fails", fn() {
         // Arrange
         let path = temp_directory.path("recorder_add_read_only")
         let assert Ok(Nil) = simplifile.create_directory_all(path)
@@ -221,22 +225,43 @@ pub fn tests() -> TestSuite {
           recorder.new() |> directory(path) |> mode("record") |> start()
 
         // Act
-        recorder.add_recording(rec, recorded.text_recording())
+        let saved = recorder.add_recording(rec, recorded.text_recording())
+        let assert Ok(Nil) = recorder.stop(rec)
+
+        // Assert
+        saved
+        |> should
+        |> be_equal(Error(
+          "Failed to save recording: Failed to write recording file build/test_tmp/recorder_add_read_only/GET_localhost__text_7646ad_f1bb9a.json: \"eacces\"",
+        ))
+        |> or_fail_with("A failed write is the error of add_recording")
+      }),
+      it("does not keep a recording that it could not save", fn() {
+        // Arrange
+        let path = temp_directory.path("recorder_add_read_only_kept")
+        let assert Ok(Nil) = simplifile.create_directory_all(path)
+        let assert Ok(Nil) = simplifile.set_permissions_octal(path, 0o555)
+        let assert Ok(rec) =
+          recorder.new() |> directory(path) |> mode("record") |> start()
+
+        // Act
+        let _saved = recorder.add_recording(rec, recorded.text_recording())
         let recordings = recorder.get_recordings(rec)
         let assert Ok(Nil) = recorder.stop(rec)
 
         // Assert
         recordings
         |> should
-        |> be_equal([recorded.text_recording()])
-        |> or_fail_with("A failed save should not lose the recording")
+        |> be_equal([])
+        |> or_fail_with("A later add of the same recording is not a duplicate")
       }),
       it("ignores recordings in passthrough mode", fn() {
         // Arrange
         let assert Ok(rec) = recorder.new() |> start()
 
         // Act
-        recorder.add_recording(rec, recorded.text_recording())
+        let assert Ok(Nil) =
+          recorder.add_recording(rec, recorded.text_recording())
         let recordings = recorder.get_recordings(rec)
         let assert Ok(Nil) = recorder.stop(rec)
 
@@ -255,7 +280,8 @@ pub fn tests() -> TestSuite {
           |> start()
 
         // Act
-        recorder.add_recording(rec, recorded.text_recording())
+        let assert Ok(Nil) =
+          recorder.add_recording(rec, recorded.text_recording())
         let recordings = recorder.get_recordings(rec)
         let assert Ok(Nil) = recorder.stop(rec)
 
@@ -314,7 +340,8 @@ pub fn tests() -> TestSuite {
           |> directory(temp_directory.path("recorder_find_record_mode"))
           |> mode("record")
           |> start()
-        recorder.add_recording(rec, recorded.text_recording())
+        let assert Ok(Nil) =
+          recorder.add_recording(rec, recorded.text_recording())
 
         // Act
         let found = recorder.find_recording(rec, recorded.text_request())
@@ -331,14 +358,16 @@ pub fn tests() -> TestSuite {
         let path = temp_directory.path("recorder_find_ambiguous")
         let assert Ok(writer) =
           recorder.new() |> directory(path) |> mode("record") |> start()
-        recorder.add_recording(writer, recorded.text_recording())
-        recorder.add_recording(
-          writer,
-          recording.Recording(
-            ..recorded.text_recording(),
-            response: recorded.ok_response("Different"),
-          ),
-        )
+        let assert Ok(Nil) =
+          recorder.add_recording(writer, recorded.text_recording())
+        let assert Ok(Nil) =
+          recorder.add_recording(
+            writer,
+            recording.Recording(
+              ..recorded.text_recording(),
+              response: recorded.ok_response("Different"),
+            ),
+          )
         let assert Ok(Nil) = recorder.stop(writer)
         let assert Ok(rec) =
           recorder.new() |> directory(path) |> mode("playback") |> start()
@@ -360,20 +389,22 @@ pub fn tests() -> TestSuite {
         let path = temp_directory.path("recorder_find_ambiguous_binary")
         let assert Ok(writer) =
           recorder.new() |> directory(path) |> mode("record") |> start()
-        recorder.add_recording(
-          writer,
-          recording.Recording(
-            ..recorded.text_recording(),
-            response: recording.BlockingResponse(200, [], <<255, 0>>),
-          ),
-        )
-        recorder.add_recording(
-          writer,
-          recording.Recording(
-            ..recorded.text_recording(),
-            response: recording.BlockingResponse(200, [], <<255, 1>>),
-          ),
-        )
+        let assert Ok(Nil) =
+          recorder.add_recording(
+            writer,
+            recording.Recording(
+              ..recorded.text_recording(),
+              response: recording.BlockingResponse(200, [], <<255, 0>>),
+            ),
+          )
+        let assert Ok(Nil) =
+          recorder.add_recording(
+            writer,
+            recording.Recording(
+              ..recorded.text_recording(),
+              response: recording.BlockingResponse(200, [], <<255, 1>>),
+            ),
+          )
         let assert Ok(Nil) = recorder.stop(writer)
         let assert Ok(rec) =
           recorder.new() |> directory(path) |> mode("playback") |> start()
@@ -654,6 +685,26 @@ pub fn tests() -> TestSuite {
         |> should
         |> be_equal([])
         |> or_fail_with("A stopped recorder should return no recordings")
+      }),
+      it("add_recording returns an error", fn() {
+        // Arrange
+        let assert Ok(rec) =
+          recorder.new()
+          |> directory(temp_directory.path("recorder_stopped_add"))
+          |> mode("record")
+          |> start()
+        let assert Ok(Nil) = recorder.stop(rec)
+
+        // Act
+        let value = recorder.add_recording(rec, recorded.text_recording())
+
+        // Assert
+        value
+        |> should
+        |> be_equal(Error(
+          "Recorder did not save the recording within 5 seconds",
+        ))
+        |> or_fail_with("A stopped recorder saves nothing")
       }),
       it("stop returns an error", fn() {
         // Arrange
