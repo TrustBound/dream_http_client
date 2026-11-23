@@ -61,10 +61,25 @@ pub fn kill_connections(port: Int) -> Int
 @external(erlang, "edge_server_ffi", "flood_sent")
 pub fn flood_sent(port: Int) -> Bool
 
+/// The number of HTTP/1.1 requests, and of `h2_` HTTP/2 requests, that the
+/// server on `port` read.
+@external(erlang, "edge_server_ffi", "requests_received")
+pub fn requests_received(port: Int) -> Int
+
 /// As `kill_connections`, but the connection processes stop with the
 /// reason `shutdown`, as a connection does that lost its socket.
 @external(erlang, "edge_server_ffi", "stop_connections")
 pub fn stop_connections(port: Int) -> Int
+
+/// Suspend the connection processes to `port`, so a request sent to them
+/// waits in their mailbox. Returns the number of suspended connections.
+@external(erlang, "edge_server_ffi", "suspend_connections")
+pub fn suspend_connections(port: Int) -> Int
+
+/// As `stop_connections`, but the connection processes stop with the reason
+/// `{shutdown, closed}`, as gun stops by itself after it lost its socket.
+@external(erlang, "edge_server_ffi", "lose_connections")
+pub fn lose_connections(port: Int) -> Int
 
 @external(erlang, "edge_server_ffi", "start")
 fn start(scenario: String) -> #(Int, process.Pid)

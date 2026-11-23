@@ -170,6 +170,34 @@ pub fn tests() -> TestSuite {
         )
         |> or_fail_with("A stalled body should end with one TimedOut error")
       }),
+      it("ends with exactly one StreamError when the stream drops", fn() {
+        // Arrange
+        let request = mock_server.get("/stream/drop")
+
+        // Act
+        let endings = stream_to_endings(request)
+
+        // Assert
+        endings
+        |> should
+        |> be_equal(["StreamError: Remote closed connection"])
+        |> or_fail_with("A dropped stream should end with one StreamError")
+      }),
+      it("ends with exactly one StreamError on a 500 response", fn() {
+        // Arrange
+        let request = mock_server.get("/stream/error")
+
+        // Act
+        let endings = stream_to_endings(request)
+
+        // Assert
+        endings
+        |> should
+        |> be_equal([
+          "StreamError: HTTP 500: Error test chunk 1\nError test chunk 2\nError test chunk 3\n",
+        ])
+        |> or_fail_with("A 500 response should end with one StreamError")
+      }),
     ]),
     group("client.cancel_stream", [
       it("stops further messages", fn() {
@@ -413,4 +441,28 @@ pub fn tests() -> TestSuite {
       }),
     ]),
   ])
+}
+
+// Runs `request` with stream_to() until its stream process stops, and
+// returns each StreamEnd and StreamError message, oldest first.
+fn stream_to_endings(request: client.ClientRequest) -> List(String) {
+  let inbox = process.new_subject()
+  let assert Ok(request_id) = client.stream_to(request, inbox)
+  let stream_monitor = process.monitor(stream_process.of(request_id))
+  let assert Ok(_down) =
+    process.new_selector()
+    |> process.select_specific_monitor(stream_monitor, fn(down) { down })
+    |> process.selector_receive(20_000)
+  mailbox.drain(inbox)
+  |> list.filter_map(describe_ending)
+}
+
+fn describe_ending(message: client.StreamMessage) -> Result(String, Nil) {
+  case message {
+    client.StreamEnd(..) -> Ok("StreamEnd")
+    client.StreamError(error: error, ..) ->
+      Ok("StreamError: " <> client.stream_failure_to_string(error))
+    client.StreamStart(..) -> Error(Nil)
+    client.Chunk(..) -> Error(Nil)
+  }
 }

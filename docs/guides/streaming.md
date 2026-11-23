@@ -66,7 +66,7 @@ The client gives you three ways to read a stream. They all use the same request 
 | A process that must stay free while the stream runs, such as a request handler that starts a download | `start_stream` with callbacks | The stream runs in its own process and calls your functions there. You get a handle to wait for it or to stop it. |
 | An OTP actor that keeps state across chunks and handles other messages too | `stream_to` | The stream sends typed messages to your actor's inbox, next to its other messages. |
 
-The third way has its own guide, [Streaming to actors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md). In short, `stream_to(request, inbox)` sends `StreamStart`, one `Chunk` for each part of the body, and then exactly one `StreamEnd` or `StreamError` to a `Subject(StreamMessage)`. The stream stops when the actor that started it stops.
+The third way has its own guide, [Streaming into an OTP actor](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md). In short, `stream_to(request, inbox)` sends `StreamStart`, one `Chunk` for each part of the body, and then exactly one `StreamEnd` or `StreamError` to a `Subject(StreamMessage)`. The stream stops when the actor that started it stops.
 
 This guide covers the first two.
 
@@ -131,7 +131,7 @@ Here's what each part does:
 
 - The builder calls (`scheme`, `host`, `port`, `path`) describe the request, exactly as they do for `send()`.
 - `stream_yielder()` doesn't send anything yet. The request goes out when you take the first item. Each item is a `Result(BytesTree, StreamFailure)`: `Ok(chunk)` for a piece of the body, or `Error(failure)` when the stream breaks.
-- `yielder.try_fold` takes the chunks one at a time and stops at the first `Error`. Stopping there matters, and [Step 3](#step-3-handle-a-stream-that-fails) shows why.
+- `yielder.try_fold` takes the chunks one at a time and stops at the first `Error`. It hands you that error along with whatever you built up so far, and [Step 3](#step-3-handle-a-stream-that-fails) shows why that's handy.
 - `print_chunk` handles one chunk and lets go of it. Only the count survives from one chunk to the next, so memory stays flat however long the stream runs.
 
 When the body ends, the yielder ends, and `try_fold` returns `Ok` with the final count. A clean end never shows up as an error.
@@ -347,7 +347,7 @@ port 1, where nothing listens    -> Error(Unreachable(reason: "Connection refuse
 
 Each one calls for a different response. `Refused` is the server's answer, so read the status and the body before you retry. `Unreachable` means the request never reached the server, so you can try again later. `Stalled` and `Broken` mean you have part of the body. If you need all of it, start again from the beginning, or ask for the rest with a `Range` header if the server supports it.
 
-**Stop at the first error.** After an `Error`, the yielder does not end. If you keep taking items, you get more errors. A stream that broke in the middle gives `ProcessDown` errors after the first one, a stream that timed out times out again, and a stream that failed before its first chunk sends the request again for each item you take. So `yielder.to_list` or `yielder.fold` on a failing stream never returns. Use `try_fold`, as all the examples here do, or stop by hand at the first `Error`.
+**An error ends the stream.** After an `Error`, the yielder is done. It doesn't send the request again, and the connection goes back to the pool, so the error is always the last item. That means `yielder.to_list` or `yielder.fold` on a failing stream returns, with the `Error` as the last item it saw. `try_fold` is still the nicer fit when you want to stop at the first error: it gives you the error and the running total in one `Result`, so you don't have to dig through a list to find out what went wrong.
 
 ## Step 4: Stream in the background with callbacks
 
@@ -534,7 +534,7 @@ The same timeout also limits the wait for the response headers. The TCP connect 
 Your streaming code depends on two things you can't control in a unit test: what the server sends, and how the network splits it into chunks. You can test both:
 
 - **Against a mock server**, to test the whole path over a real connection, including failures. `dream_mock_server` sends known chunks with known delays, and has endpoints for an error status (`/stream/error`) and a dropped connection (`/stream/drop`).
-- **Against a recording**, to test exact chunk boundaries with no network at all. A recording of a stream holds each chunk as it arrived, so you can write one with a line split across two chunks, which no well-behaved test server will do for you.
+- **Against a recording**, to test exact chunk boundaries, the timing between chunks, and an error status, with no network at all. A recording of a stream holds each chunk as it arrived, so you can write one with a line split across two chunks, which no well-behaved test server will do for you.
 
 Add the test dependencies first. `dream_test` and `dream_mock_server` aren't on Hex yet, so add them from GitHub, with the same commits that this package tests with:
 
@@ -656,22 +656,23 @@ A recording of a stream stores:
 - The response status and headers.
 - Each chunk, with `delay_ms`, the time since the chunk before it.
 
-You can make recordings from real traffic, too. Attach a recorder in `"record"` mode, run your code once against the real API, and commit the files. The [Recording and playback](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md) guide shows how. Know what playback does and doesn't do:
+You can make recordings from real traffic, too. Attach a recorder in `"record"` mode, run your code once against the real API, and commit the files. The [Testing with recorded responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md) guide shows how. Know what playback does and doesn't do:
 
-- Playback hands over the recorded chunks with the same boundaries, but at once, without the recorded delays.
-- Playback always treats a stream as a success, whatever status the recording holds.
-- A stream that fails while you record it isn't saved, and neither is one that you cancel.
-- In playback mode, a request that matches no recording goes to the real network.
+- Playback hands over the recorded chunks with the same boundaries, and waits each chunk's `delay_ms` before it hands the chunk over. A slow chunk handler doesn't add to those waits: each chunk is due at its recorded time.
+- The request's `timeout` applies in playback just as it does live. A recorded delay longer than the timeout ends the stream with the same `TimedOut` failure a live stream gives.
+- A recording with a status outside 2xx plays back as the live client would: one `HttpFailure` with the recorded status, the headers, and all the chunks joined as the body. No chunk and no end event come.
+- A stream that fails while you record it isn't saved, and neither is one that you cancel. Record mode never saves a failing status, so you write that recording by hand.
+- In playback mode, a request that matches no recording isn't sent. The stream fails with `TransportFailure(NoRecording(method, url))`, which names the request, so you can see which recording is missing.
 
-So a recording can't test your failure handling. Test that against the mock server, as the Step 3 examples do.
+So a recording can test how your code handles an error status or a timeout. It can't test a dropped connection: test that against the mock server, as the Step 3 examples do.
 
 ## Common pitfalls
 
-**A yielder inside an actor.** *Symptom:* the actor stops answering its other messages until the stream ends, and calls to it time out. *Fix:* `stream_yielder` blocks the process that reads it. In an actor, use `stream_to`, so chunks arrive as messages between the others. See [Streaming to actors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md).
+**A yielder inside an actor.** *Symptom:* the actor stops answering its other messages until the stream ends, and calls to it time out. *Fix:* `stream_yielder` blocks the process that reads it. In an actor, use `stream_to`, so chunks arrive as messages between the others. See [Streaming into an OTP actor](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md).
 
 **Treating a chunk as a message.** *Symptom:* JSON decode errors that come and go, often only under load or over slow networks. *Fix:* buffer the bytes and split on the separator, as in [Step 2](#step-2-turn-chunks-into-lines). Test the split with a recording that cuts a line in half.
 
-**Folding past an error.** *Symptom:* `yielder.to_list` or `yielder.fold` on a failing stream never returns. When the stream failed before its first chunk, the server also gets the same request again and again. *Fix:* the yielder doesn't end after an error. Use `yielder.try_fold`, which stops at the first `Error`.
+**Dropping the error at the end of the list.** *Symptom:* a download looks complete, but the file is short. *Fix:* `yielder.to_list` on a failing stream returns, and its last item is the `Error`. If you keep only the `Ok` chunks, half a body looks like a whole one. Use `yielder.try_fold`, which stops at the first `Error` and returns it, or check every item.
 
 **Not waiting for a background stream.** *Symptom:* a script exits with half a file, or a test checks the result before the stream ends. *Fix:* `start_stream()` returns before the stream does. Wait for a message from `on_stream_end` and `on_stream_error`, as in [Step 4](#step-4-stream-in-the-background-with-callbacks), or call `await_stream(handle)`.
 
@@ -681,9 +682,9 @@ So a recording can't test your failure handling. Test that against the mock serv
 
 ## Where to go next
 
-- [Streaming to actors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md): handle a stream as typed messages in an OTP actor, with its own state.
-- [Errors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/errors.md): every error type of the client, for `send()` and for streams.
-- [Request settings](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-settings.md): timeouts, redirects and the HTTP version for one request.
-- [Recording and playback](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md): record real traffic and play it back in tests.
-- [Connection pools](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/connection-pools.md): how streams share connections with other requests.
+- [Streaming into an OTP actor](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md): handle a stream as typed messages in an OTP actor, with its own state.
+- [Handling errors, timeouts and retries](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/errors.md): every error type of the client, for `send()` and for streams.
+- [Handling errors, timeouts and retries](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/errors.md#step-2-set-the-timeouts): timeouts and redirects for one request.
+- [Testing with recorded responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md): record real traffic and play it back in tests.
+- [Controlling connections](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/connection-pools.md): how streams share connections with other requests.
 - [API reference on HexDocs](https://hexdocs.pm/dream_http_client/dream_http_client/client.html): `stream_yielder`, `start_stream`, `stream_to`, `StreamFailure` and the rest of the client.

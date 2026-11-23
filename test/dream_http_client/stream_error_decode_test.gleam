@@ -100,7 +100,7 @@ pub fn tests() -> TestSuite {
         |> be_equal(Ok(client.TransportFailure(client.RemoteClosed)))
         |> or_fail_with("on_stream_error should get RemoteClosed")
       }),
-      it("stream_yielder ends with ProcessDown noproc", fn() {
+      it("stream_yielder ends with RemoteClosed", fn() {
         // Arrange
         let request = mock_server.get("/stream/drop")
 
@@ -114,9 +114,7 @@ pub fn tests() -> TestSuite {
         // Assert
         last
         |> should
-        |> be_equal(
-          Ok(Error(client.TransportFailure(client.ProcessDown("noproc")))),
-        )
+        |> be_equal(Ok(Error(client.TransportFailure(client.RemoteClosed))))
         |> or_fail_with("The last item should be the dropped stream error")
       }),
     ]),

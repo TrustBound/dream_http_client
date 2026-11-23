@@ -4,7 +4,8 @@
 %% edge cases that the mock server cannot produce: trailers, stalled
 %% bodies, empty bodies, chunks 100 ms apart, closed connections, redirect
 %% loops and HTTP/2 frames such as RST_STREAM and GOAWAY. The `echo_body`
-%% scenario sends the body of the request back.
+%% scenario sends the body of the request back, and `echo_head` sends its
+%% head back.
 %%
 %% start/1 returns {Port, Listener}. stop/1 stops the listener and every
 %% connection process, which are linked to it.
@@ -12,8 +13,12 @@
 %% The `h2s_` scenarios serve many HTTP/2 streams on each connection, so the
 %% tests can check how the pool shares a connection. Each connection knows
 %% its number: 1 for the first connection to the listener.
+%%
+%% requests_received/1 returns the number of HTTP/1.1 requests, and of
+%% `h2_` HTTP/2 requests, that the server on a port read.
 
--export([start/1, start_tls/3, stop/1, kill_connections/1, stop_connections/1, flood_sent/1]).
+-export([start/1, start_tls/3, stop/1, kill_connections/1, stop_connections/1, flood_sent/1,
+         requests_received/1, suspend_connections/1, lose_connections/1]).
 
 start(Scenario) ->
     Parent = self(),
@@ -21,6 +26,7 @@ start(Scenario) ->
         {ok, Socket} = gen_tcp:listen(0, [binary, {active, false}, {reuseaddr, true},
                                           {ip, {127, 0, 0, 1}}]),
         {ok, Port} = inet:port(Socket),
+        persistent_term:put({edge_server_requests, Port}, counters:new(1, [])),
         Parent ! {edge_server_port, self(), Port},
         accept_loop(Socket, Scenario, 1)
     end),
@@ -76,6 +82,22 @@ kill_connections(Port) ->
 stop_connections(Port) ->
     end_connections(Port, shutdown).
 
+%% Suspends the connection processes to the port, so a request sent to them
+%% waits in their mailbox. Returns the number of suspended connections.
+suspend_connections(Port) ->
+    Pids = connections(Port),
+    lists:foreach(fun(Pid) -> sys:suspend(Pid) end, Pids),
+    length(Pids).
+
+%% As stop_connections/1, but the connection processes stop with the reason
+%% {shutdown, closed}, as gun stops by itself after it lost its socket.
+lose_connections(Port) ->
+    end_connections(Port, {shutdown, closed}).
+
+connections(Port) ->
+    [Pid || {{_Scheme, _Host, P, _Protocols, _Authority, _Pool}, Pid, _, _, _}
+                <- ets:tab2list(dream_http_client_connections), P =:= Port].
+
 end_connections(Port, Reason) ->
     case [Pid || {{_Scheme, _Host, P, _Protocols, _Authority, _Pool}, Pid, _, _, _}
                      <- ets:tab2list(dream_http_client_connections), P =:= Port] of
@@ -102,6 +124,8 @@ serve(<<"h2s_", _/binary>> = Scenario, Socket, Number) ->
     serve_h2_streams(Scenario, {gen_tcp, Socket}, Number);
 serve(<<"echo_body">>, Socket, _Number) ->
     serve_echo(Socket);
+serve(<<"echo_head">>, Socket, _Number) ->
+    serve_echo_head(Socket);
 serve(Scenario, Socket, _Number) ->
     serve(Scenario, Socket).
 
@@ -114,6 +138,14 @@ serve_echo(Socket) ->
     Length = binary_to_integer(LengthText),
     Body = read_body(Socket, Rest, Length),
     send(Socket, [<<"HTTP/1.1 200 OK\r\ncontent-length: ">>, LengthText, <<"\r\n\r\n">>, Body]),
+    hold(Socket).
+
+%% Reads one request head and sends it back as the body, with a header
+%% whose name has capital letters.
+serve_echo_head(Socket) ->
+    {Head, _Rest} = read_head(Socket, <<>>),
+    send(Socket, [<<"HTTP/1.1 200 OK\r\nX-Request-Id: req-42\r\ncontent-length: ">>,
+                  integer_to_binary(byte_size(Head)), <<"\r\n\r\n">>, Head]),
     hold(Socket).
 
 read_head(Socket, Buffer) ->
@@ -140,6 +172,7 @@ serve(<<"h2_", _/binary>> = Scenario, Socket) ->
 serve(Scenario, Socket) ->
     case read_request(Socket, <<>>) of
         ok ->
+            count_request(Socket),
             respond(Scenario, Socket),
             %% A keep-alive connection can carry more requests.
             serve(Scenario, Socket);
@@ -157,6 +190,15 @@ read_request(Socket, Buffer) ->
                 {error, _Reason} -> closed
             end
     end.
+
+%% Adds one to the request count of the server that Socket belongs to.
+count_request(Socket) ->
+    {ok, Port} = inet:port(Socket),
+    counters:add(persistent_term:get({edge_server_requests, Port}), 1, 1).
+
+%% The number of HTTP/1.1 and `h2_` HTTP/2 requests that the server on Port read.
+requests_received(Port) ->
+    counters:get(persistent_term:get({edge_server_requests, Port}), 1).
 
 %% Waits until the client closes the connection.
 hold(Socket) ->
@@ -245,6 +287,11 @@ respond(<<"early_hints">>, Socket) ->
                   <<"HTTP/1.1 200 OK\r\n">>,
                   <<"content-length: 2\r\n\r\n">>,
                   <<"ok">>]);
+respond(<<"set_cookie">>, Socket) ->
+    send(Socket, [<<"HTTP/1.1 200 OK\r\n">>,
+                  <<"set-cookie: session=abc123\r\n">>,
+                  <<"content-length: 2\r\n\r\n">>,
+                  <<"ok">>]);
 respond(<<"empty">>, Socket) ->
     send(Socket, [<<"HTTP/1.1 200 OK\r\n">>,
                   <<"content-length: 0\r\n\r\n">>]);
@@ -257,6 +304,10 @@ respond(<<"stall_body">>, Socket) ->
     send(Socket, [<<"HTTP/1.1 200 OK\r\n">>,
                   <<"content-length: 10\r\n\r\n">>]),
     hold(Socket);
+respond(<<"server_error">>, Socket) ->
+    send(Socket, [<<"HTTP/1.1 500 Internal Server Error\r\n">>,
+                  <<"content-length: 4\r\n\r\n">>,
+                  <<"oops">>]);
 respond(<<"error_stall">>, Socket) ->
     send(Socket, [<<"HTTP/1.1 500 Internal Server Error\r\n">>,
                   <<"content-length: 10\r\n\r\n">>]),
@@ -287,6 +338,7 @@ serve_h2(Scenario, Socket) ->
     {ok, <<"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n">>} = gen_tcp:recv(Socket, 24),
     send(Socket, [cow_http2:settings(#{}), cow_http2:settings_ack()]),
     StreamId = await_headers(Socket, <<>>),
+    count_request(Socket),
     respond_h2(Scenario, Socket, StreamId),
     hold(Socket).
 
@@ -314,6 +366,9 @@ respond_h2(<<"h2_rst_unknown">>, Socket, StreamId) ->
     send(Socket, <<4:24, 3:8, 0:8, 0:1, StreamId:31, 255:32>>);
 respond_h2(<<"h2_rst_after_headers">>, Socket, StreamId) ->
     send(Socket, [ok_headers(StreamId), cow_http2:rst_stream(StreamId, internal_error)]);
+respond_h2(<<"h2_close">>, Socket, _StreamId) ->
+    %% Reads the request and closes the connection with no answer.
+    gen_tcp:close(Socket);
 respond_h2(<<"h2_goaway">>, Socket, _StreamId) ->
     send(Socket, cow_http2:goaway(0, no_error, <<>>));
 respond_h2(<<"h2_connection_error">>, Socket, StreamId) ->

@@ -411,7 +411,11 @@ pub fn tests() -> TestSuite {
         value
         |> should
         |> be_equal(
-          Ok(Error(client.TransportFailure(client.ProcessDown("noproc")))),
+          Ok(
+            Error(
+              client.TransportFailure(client.ConnectFailed("Connection refused")),
+            ),
+          ),
         )
         |> or_fail_with("The record path should yield the start failure")
       }),

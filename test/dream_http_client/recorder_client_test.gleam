@@ -264,28 +264,6 @@ pub fn tests() -> TestSuite {
         |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("Passthrough should reach the server")
       }),
-      it("sends a real request when playback has no recording", fn() {
-        // Arrange
-        let assert Ok(rec) =
-          recorder.new()
-          |> directory(temp_directory.path("rc_send_playback_miss"))
-          |> mode("playback")
-          |> start()
-
-        // Act
-        let value =
-          mock_server.get("/text")
-          |> client.recorder(rec)
-          |> client.send
-          |> result.map(fn(r) { #(r.status, r.body) })
-        let assert Ok(Nil) = recorder.stop(rec)
-
-        // Assert
-        value
-        |> should
-        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
-        |> or_fail_with("A miss should reach the server")
-      }),
       it("returns the transport error with a recorder", fn() {
         // Arrange
         let assert Ok(rec) = recorder.new() |> start()
@@ -563,12 +541,12 @@ pub fn tests() -> TestSuite {
         |> be_equal([Ok(<<"RECORDED">>)])
         |> or_fail_with("A blocking recording should be one chunk")
       }),
-      it("streams from the server when playback has no recording", fn() {
+      it("streams from the server in passthrough mode", fn() {
         // Arrange
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("rc_yield_miss"))
-          |> mode("playback")
+          |> mode("passthrough")
           |> start()
 
         // Act
@@ -591,7 +569,7 @@ pub fn tests() -> TestSuite {
             "Chunk 6\nChunk 7\nChunk 8\nChunk 9\nChunk 10\n",
           >>),
         )
-        |> or_fail_with("A miss should stream from the server")
+        |> or_fail_with("Passthrough should stream from the server")
       }),
       it("records a real stream", fn() {
         // Arrange
@@ -751,12 +729,12 @@ pub fn tests() -> TestSuite {
         |> be_equal(#(Ok(True), <<"RECORDED">>))
         |> or_fail_with("The callbacks should get the body as one chunk")
       }),
-      it("streams from the server when playback has no recording", fn() {
+      it("streams from the server in passthrough mode", fn() {
         // Arrange
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("rc_start_miss"))
-          |> mode("playback")
+          |> mode("passthrough")
           |> start()
         let chunks = process.new_subject()
         let ended = process.new_subject()
@@ -782,7 +760,7 @@ pub fn tests() -> TestSuite {
             "Chunk 6\nChunk 7\nChunk 8\nChunk 9\nChunk 10\n",
           >>),
         )
-        |> or_fail_with("A miss should stream from the server")
+        |> or_fail_with("Passthrough should stream from the server")
       }),
       it("records a real stream", fn() {
         // Arrange

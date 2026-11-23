@@ -848,11 +848,7 @@ fn handle_recorder_message(
       actor.continue(state)
     }
     CheckMode(reply_to) -> {
-      let is_record = case state.mode {
-        Record -> True
-        _ -> False
-      }
-      process.send(reply_to, is_record)
+      process.send(reply_to, state.mode)
       actor.continue(state)
     }
     TransformResponse(request, response, reply_to) -> {
@@ -879,7 +875,7 @@ type RecorderMessage {
     ),
   )
   GetRecordings(reply_to: process.Subject(List(recording.Recording)))
-  CheckMode(reply_to: process.Subject(Bool))
+  CheckMode(reply_to: process.Subject(RecorderMode))
   TransformResponse(
     request: recording.RecordedRequest,
     response: recording.RecordedResponse,
@@ -1089,20 +1085,34 @@ pub fn add_recording(recorder: Recorder, rec: recording.Recording) -> Nil {
 /// - Returns `False` if the recorder process doesn't respond (safe default)
 /// - Timeout is 1 second - recorder should respond quickly
 pub fn is_record_mode(recorder: Recorder) -> Bool {
+  current_mode(recorder) == Ok(Record)
+}
+
+/// True when the recorder is in playback mode. The client asks this when
+/// no recording matches a request: in playback mode the request fails with
+/// `NoRecording` and goes to no server.
+@internal
+pub fn is_playback_mode(recorder: Recorder) -> Bool {
+  current_mode(recorder) == Ok(Playback)
+}
+
+/// The mode of the recorder, or `Error(Nil)` when the recorder does not
+/// answer within 1 second.
+fn current_mode(recorder: Recorder) -> Result(RecorderMode, Nil) {
   let Recorder(subject) = recorder
   let reply_subject = process.new_subject()
   process.send(subject, CheckMode(reply_subject))
 
   case process.receive(reply_subject, 1000) {
-    Ok(is_record) -> is_record
+    Ok(mode) -> Ok(mode)
     Error(timeout_error) -> {
       // Process timeout (1 second) - recorder is not responding. Log the
-      // timeout and return False as a safe default.
+      // timeout, and the caller treats the recorder as in no mode.
       io.println_error(
         "Recorder did not respond to CheckMode within 1 second: "
         <> string.inspect(timeout_error),
       )
-      False
+      Error(timeout_error)
     }
   }
 }
@@ -1224,6 +1234,10 @@ pub fn transform_response(
 /// ## Notes
 ///
 /// - Only works in Playback mode (returns `None` in other modes)
+/// - When it returns `None` in Playback mode, the client does not send the
+///   request: `send` and the stream functions fail with
+///   `client.NoRecording(method, url)`. In Record and Passthrough mode the
+///   client sends the request to the network.
 /// - Matching uses the recorder's configured key + request transformer
 /// - Returns `None` if recorder doesn't respond (safe default)
 /// - Timeout is 1 second - recorder should respond quickly

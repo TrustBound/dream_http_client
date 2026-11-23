@@ -11,17 +11,15 @@ links = [
 [documentation]
 pages = [
     { title = "Getting started", path = "guides/getting-started.html", source = "./docs/guides/getting-started.md" },
-    { title = "Requests and responses", path = "guides/requests-and-responses.html", source = "./docs/guides/requests-and-responses.md" },
+    { title = "Sending data to an API", path = "guides/sending-data.html", source = "./docs/guides/sending-data.md" },
+    { title = "Handling errors, timeouts and retries", path = "guides/errors.html", source = "./docs/guides/errors.md" },
     { title = "Streaming a response", path = "guides/streaming.html", source = "./docs/guides/streaming.md" },
-    { title = "Streaming to actors", path = "guides/streaming-to-actors.html", source = "./docs/guides/streaming-to-actors.md" },
-    { title = "Errors", path = "guides/errors.html", source = "./docs/guides/errors.md" },
-    { title = "Request settings", path = "guides/request-settings.html", source = "./docs/guides/request-settings.md" },
-    { title = "Transport configuration", path = "guides/transport-configuration.html", source = "./docs/guides/transport-configuration.md" },
-    { title = "Connection pools", path = "guides/connection-pools.html", source = "./docs/guides/connection-pools.md" },
-    { title = "TLS and certificate authorities", path = "guides/tls-and-certificate-authorities.html", source = "./docs/guides/tls-and-certificate-authorities.md" },
-    { title = "Logging", path = "guides/logging.html", source = "./docs/guides/logging.md" },
-    { title = "Recording and playback", path = "guides/recording-and-playback.html", source = "./docs/guides/recording-and-playback.md" },
-    { title = "Request matching and scrubbing", path = "guides/request-matching-and-scrubbing.html", source = "./docs/guides/request-matching-and-scrubbing.md" },
+    { title = "Streaming into an OTP actor", path = "guides/streaming-to-actors.html", source = "./docs/guides/streaming-to-actors.md" },
+    { title = "Controlling connections", path = "guides/connection-pools.html", source = "./docs/guides/connection-pools.md" },
+    { title = "Calling a service with a private certificate authority", path = "guides/tls-and-certificate-authorities.html", source = "./docs/guides/tls-and-certificate-authorities.md" },
+    { title = "Testing with recorded responses", path = "guides/recording-and-playback.html", source = "./docs/guides/recording-and-playback.md" },
+    { title = "Matching requests and hiding secrets in recordings", path = "guides/request-matching-and-scrubbing.html", source = "./docs/guides/request-matching-and-scrubbing.md" },
+    { title = "Settings reference", path = "guides/settings-reference.html", source = "./docs/guides/settings-reference.md" },
 ]
 
 [dependencies]

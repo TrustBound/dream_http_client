@@ -54,7 +54,8 @@ version.
   connection. Before, gun connected again after a wait and held new requests
   for that time, and a held request could get response headers and no body,
   and then time out. A request that was sent on a connection that is gone is
-  sent once more on a new connection.
+  sent once more on a new connection when that is safe (see the RFC 9110 item
+  below).
 - A 1xx response before the final response, for example 103 Early Hints, no
   longer crashes `send` and the stream functions. The client skips it and
   returns the final response.
@@ -73,8 +74,8 @@ version.
   HTTP/2 stream reset gives `StreamReset(code, description)`, an HTTP/2
   connection error gives `ConnectionError`, a closed connection gives
   `RemoteClosed`, and a killed connection gives `ProcessDown`. Before, most of
-  them came back as `Unexpected`. A GOAWAY now gets the one stale-connection
-  retry.
+  them came back as `Unexpected`. A stream that a GOAWAY ends was not
+  processed, so it gets the one retry on another connection.
 - A streamed redirect now works like `send`. A 3xx response with no Location
   returns `HttpFailure` at once instead of waiting until it timed out, and a
   redirect loop returns `Unexpected("Too many redirects (max 5)")` instead of
@@ -84,6 +85,46 @@ version.
 - Fixed PUT, POST, and PATCH requests hanging when sent with an empty body.
   The underlying gun dispatch now uses `gun:request/5` directly instead of
   method-specific functions that behave inconsistently for empty bodies.
+- A `stream_yielder` that yields an `Error` now ends. Before, it yielded more
+  errors on each later pull, and a stream that failed before its first chunk
+  sent the request again each time. So `yielder.to_list` never returned. The
+  stream also gives its connection back to the pool. In record mode, a stream
+  that does not start now yields its real error, not `ProcessDown`.
+- Playback of a recorded stream now waits the recorded `delay_ms` before it
+  hands over each chunk. Before, all chunks came at once. The request timeout
+  limits each wait, as it does live. A cancel, or a `stream_to` owner that
+  stops, ends the stream during a wait.
+- Playback of a recorded stream with a status outside 2xx now gives one
+  `HttpFailure` with the recorded status, headers and body, and no chunks.
+  Before, it played back as a successful stream. This applies to
+  `stream_yielder`, `start_stream` and `stream_to`, and also to a blocking
+  recording that one of them plays back.
+- A request whose connection closed before the response head is now sent
+  once more only when that is safe. Before, every method was sent again, so
+  a server that read a POST and then closed the connection got the POST
+  twice. Now the client follows RFC 9110, section 9.2.2, and RFC 9113,
+  sections 6.8 and 8.7:
+  - A GET, HEAD, OPTIONS, TRACE, PUT or DELETE request is sent once more on
+    another connection.
+  - A POST, PATCH or other request is sent once, and returns
+    `RemoteClosed`, or `ProcessDown("shutdown")` when its connection process
+    was stopped.
+  - A request that the server did not process is sent once more for every
+    method: a stream refused with `REFUSED_STREAM`, a stream above the last
+    stream identifier of a GOAWAY, and a request that the connection process
+    never took because it stopped after it lost its socket.
+  This applies to `send`, `stream_yielder`, `start_stream` and `stream_to`.
+- In playback mode, a request that no recording matches is no longer sent
+  to the network. Before, it went on to the live service, although the docs
+  said that playback uses no network. Now `send` returns
+  `Error(RequestError(NoRecording(method: "GET", url: "https://api.example.com/users/42")))`,
+  `stream_yielder` yields that error once and ends, `start_stream` calls
+  only `on_stream_error`, and `stream_to` sends only `StreamError`. The new
+  `TransportError` variant `NoRecording(method, url)` names the request,
+  and `transport_error_to_string` gives
+  `No recording matches GET https://api.example.com/users/42`. Record mode
+  does not change: a request with no recording goes to the network and is
+  recorded. `add_recording` still does nothing in playback mode.
 
 ### Added
 
@@ -148,8 +189,10 @@ version.
   events and decompression warnings now go through OTP's logger, enabling
   level-based filtering. Use `log_level()` on `TransportConfig` to control
   verbosity — defaults to `LogInfo`.
-- The package has guides in `docs/guides/`. The README is short and links
-  to them, and HexDocs shows the guides.
+- The package has nine guides in `docs/guides/`, each one a walk through
+  one task from a first request to tested code, and one settings reference.
+  Every code block in them is a tested snippet that runs against a local
+  server. The README is short and links to them, and HexDocs shows them.
 
 ### Added
 
@@ -206,13 +249,15 @@ version.
   a per-host connection pool backed by an ETS `bag` table. Features round-robin
   selection, automatic dead-connection cleanup, idle connection reaping, and
   crash recovery on restart.
-- **Stale connection retry.** Requests that hit a server-closed connection
-  (`{stream_error, closed}`) are automatically retried once on a fresh
+- **Stale connection retry.** An idempotent request (GET, HEAD, OPTIONS,
+  TRACE, PUT, DELETE) that hits a server-closed connection
+  (`{stream_error, closed}`) is automatically retried once on a fresh
   connection, preventing spurious failures when connection pool entries outlive
   the server-side keep-alive.
-- **`TransportError` type (8 variants)** preserving all gun error details:
+- **`TransportError` type (9 variants)** preserving all gun error details:
   `StreamReset`, `Goaway`, `ConnectionError`, `RemoteClosed`, `TimedOut`,
-  `ProcessDown`, `ConnectFailed`, `Unexpected`. Each variant carries the full
+  `ProcessDown`, `ConnectFailed`, `Unexpected`, and `NoRecording` for a
+  playback request that no recording matches. Each variant carries the full
   structured information from gun (HTTP/2 error codes, human-readable
   descriptions, GOAWAY fields) instead of flattening to formatted strings.
 - **`StreamFailure` type** with `HttpFailure(response: HttpResponse)` and
@@ -240,7 +285,7 @@ version.
 
 ### Testing
 
-- 576 tests, 0 failed, 100% line coverage (1207 of 1207 lines), in about 85 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
+- 750 tests, 0 failed, 100% line coverage (1220 of 1220 lines), in about 146 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
 
 ## [5.1.3] - 2026-03-17
 

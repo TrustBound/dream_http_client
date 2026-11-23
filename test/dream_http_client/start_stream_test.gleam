@@ -3,7 +3,7 @@
 import dream_http_client/client
 import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/suite.{type TestSuite}
-import dream_test/unit.{describe, it}
+import dream_test/unit.{describe, group, it}
 import fixtures/mailbox
 import fixtures/mock_server
 import gleam/erlang/process
@@ -132,5 +132,82 @@ pub fn tests() -> TestSuite {
       |> be_equal(False)
       |> or_fail_with("The stream should not be active after a cancel")
     }),
+    group("a failing stream", [
+      it("calls on_stream_error once and no on_stream_end on a drop", fn() {
+        // Arrange
+        let request = mock_server.get("/stream/drop")
+
+        // Act
+        let endings = stream_endings(request)
+
+        // Assert
+        endings
+        |> should
+        |> be_equal(["error: Remote closed connection"])
+        |> or_fail_with("A dropped stream should end with one error")
+      }),
+      it("calls on_stream_error once and no on_stream_end on a 500", fn() {
+        // Arrange
+        let request = mock_server.get("/stream/error")
+
+        // Act
+        let endings = stream_endings(request)
+
+        // Assert
+        endings
+        |> should
+        |> be_equal([
+          "error: HTTP 500: Error test chunk 1\nError test chunk 2\nError test chunk 3\n",
+        ])
+        |> or_fail_with("A 500 response should end with one error")
+      }),
+      it("calls on_stream_error once and no on_stream_end on a timeout", fn() {
+        // Arrange
+        let request = mock_server.get("/stream/slow") |> client.timeout(300)
+
+        // Act
+        let endings = stream_endings(request)
+
+        // Assert
+        endings
+        |> should
+        |> be_equal(["error: Timed out after 300ms"])
+        |> or_fail_with("A stream that timed out should end with one error")
+      }),
+      it(
+        "calls on_stream_error once and no on_stream_end on a refused connection",
+        fn() {
+          // Arrange
+          let request = mock_server.closed_port("/")
+
+          // Act
+          let endings = stream_endings(request)
+
+          // Assert
+          endings
+          |> should
+          |> be_equal(["error: Connection failed: Connection refused"])
+          |> or_fail_with("A refused connection should end with one error")
+        },
+      ),
+    ]),
   ])
+}
+
+// Runs `request` with start_stream() until the stream process stops, and
+// returns each call of on_stream_end and on_stream_error, oldest first.
+fn stream_endings(request: client.ClientRequest) -> List(String) {
+  let endings = process.new_subject()
+  let assert Ok(handle) =
+    request
+    |> client.on_stream_end(fn(_headers) { process.send(endings, "end") })
+    |> client.on_stream_error(fn(failure) {
+      process.send(
+        endings,
+        "error: " <> client.stream_failure_to_string(failure),
+      )
+    })
+    |> client.start_stream()
+  client.await_stream(handle)
+  mailbox.drain(endings)
 }

@@ -4,8 +4,9 @@
 %% the connection manager while coverage runs, and read state that the
 %% public API does not show.
 
--export([restart_application/0, restart_connection_manager/0, shim_log_level/0,
-         send_unknown_messages/0, connection_count/0]).
+-export([connection_protocols/1, restart_application/0, restart_connection_manager/0, shim_log_level/0,
+         send_unknown_messages/0, connection_count/0, lease_count/0,
+         kill_stream_owner/0]).
 
 restart_application() ->
     ok = application:stop(dream_http_client),
@@ -39,5 +40,41 @@ send_unknown_messages() ->
     dream_http_conn_manager ! unknown_message,
     nil.
 
+%% The protocol of each open connection to Port: "http" for HTTP/1.1 and
+%% "http2" for HTTP/2, sorted.
+connection_protocols(Port) ->
+    lists:sort([atom_to_binary(Protocol)
+                || {{_Scheme, _Host, P, _Protocols, _Authority, _Pool}, _Pid, _, Protocol, _}
+                       <- ets:tab2list(dream_http_client_connections), P =:= Port]).
+
 connection_count() ->
     ets:info(dream_http_client_connections, size).
+
+%% The number of leases in the state of the connection manager.
+lease_count() ->
+    #{leases := Leases} = sys:get_state(dream_http_conn_manager),
+    map_size(Leases).
+
+%% Kills the owner process of each pull stream that the calling process
+%% reads (the owner monitors the process that started the stream), and
+%% waits until they stopped. Returns the number of killed owners.
+kill_stream_owner() ->
+    Self = self(),
+    Owners = [Pid || Pid <- erlang:processes(), is_stream_owner_of(Pid, Self)],
+    lists:foreach(fun kill_and_wait/1, Owners),
+    length(Owners).
+
+is_stream_owner_of(Pid, Requester) ->
+    case erlang:process_info(Pid, [current_function, monitors]) of
+        [{current_function, {dream_http_shim, stream_owner_loop, 1}}, {monitors, Monitors}] ->
+            lists:member({process, Requester}, Monitors);
+        _ ->
+            false
+    end.
+
+kill_and_wait(Pid) ->
+    MonitorRef = erlang:monitor(process, Pid),
+    exit(Pid, kill),
+    receive
+        {'DOWN', MonitorRef, process, Pid, _Reason} -> ok
+    end.

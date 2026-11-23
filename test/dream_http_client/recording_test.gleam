@@ -174,6 +174,35 @@ pub fn tests() -> TestSuite {
         )
         |> or_fail_with("The streaming entry should decode")
       }),
+      it("decodes a streaming entry with status 500", fn() {
+        // Arrange
+        let text =
+          "{\"version\":\"1.0\",\"entries\":[{\"request\":{\"method\":\"GET\",\"scheme\":\"https\",\"host\":\"api.example.com\",\"port\":null,\"path\":\"/stream\",\"query\":null,\"headers\":[],\"body\":\"\"},\"response\":{\"mode\":\"streaming\",\"status\":500,\"headers\":[[\"content-type\",\"text/plain\"]],\"chunks\":[{\"data\":\"server \",\"delay_ms\":0},{\"data\":\"error\",\"delay_ms\":20}]}}]}"
+
+        // Act
+        let decoded =
+          recording.decode_recording_file(text)
+          |> result.map(fn(file) {
+            list.map(file.entries, fn(entry) { entry.response })
+          })
+
+        // Assert
+        decoded
+        |> should
+        |> be_equal(
+          Ok([
+            recording.StreamingResponse(
+              status: 500,
+              headers: [#("content-type", "text/plain")],
+              chunks: [
+                recording.Chunk(data: <<"server ">>, delay_ms: 0),
+                recording.Chunk(data: <<"error">>, delay_ms: 20),
+              ],
+            ),
+          ]),
+        )
+        |> or_fail_with("A streaming entry with status 500 should decode")
+      }),
       it("decodes an empty entry list", fn() {
         // Arrange
         let text = "{\"version\":\"1.0\",\"entries\":[]}"

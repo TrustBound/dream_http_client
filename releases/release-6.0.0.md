@@ -31,8 +31,9 @@ The HTTP client backend has been replaced from Erlang's `httpc` to
   carries one request at a time, an HTTP/2 connection carries as many
   streams as the server allows, and automatic dead-connection cleanup
   removes connections that stopped
-- **Stale connection retry**: requests that hit a server-closed connection
-  are automatically retried once on a fresh connection
+- **Stale connection retry**: a request that hits a server-closed
+  connection is sent once more on a fresh connection when its method is
+  idempotent, or when the server did not process it
 - **Protocol negotiation**: TLS connections negotiate HTTP/2 via ALPN,
   falling back to HTTP/1.1; plain TCP uses HTTP/1.1
 
@@ -52,10 +53,12 @@ for retry logic, alerting, or circuit breakers without fragile string parsing.
 
 #### New types
 
-**`TransportError`** has 8 variants that preserve all gun error details:
+**`TransportError`** has 9 variants. Eight preserve all gun error details:
 `StreamReset(code, description)`, `Goaway(code, description)`,
 `ConnectionError(code, description)`, `RemoteClosed`, `TimedOut(timeout_ms)`,
-`ProcessDown(reason)`, `ConnectFailed(reason)` and `Unexpected(raw)`.
+`ProcessDown(reason)`, `ConnectFailed(reason)` and `Unexpected(raw)`. The
+ninth, `NoRecording(method, url)`, is a playback request that no recording
+matches, which the client does not send.
 
 The `code` of `StreamReset`, `Goaway` and `ConnectionError` is an
 `Http2ErrorCode`: one constructor for each HTTP/2 error code of RFC 9113,
@@ -477,8 +480,12 @@ request -> ensure_connection (dream_http_conn_manager, a gen_server)
   -> every connection is full, and the pool is below max_connections:
      gun:open, gun:await_up, wait for the server's SETTINGS on HTTP/2
   -> the pool is at max_connections: wait for room, up to the request timeout
-  -> the stream is refused, or the connection was stale or got a GOAWAY:
-     one more try on another connection
+  -> no response head, and the server did not process the request (the
+     stream was refused, a GOAWAY ended it, or gun never took it): one more
+     try on another connection
+  -> no response head, the connection closed, and the method is idempotent
+     (GET, HEAD, OPTIONS, TRACE, PUT, DELETE): one more try on another
+     connection. A POST or PATCH returns the error.
 ```
 
 #### Message routing
@@ -500,7 +507,7 @@ with proper method/body handling for 301/302/303/307/308.
 
 ### Guides
 
-The package has guides in [`docs/guides/`](https://github.com/TrustBound/dream_http_client/tree/main/docs/guides). The README is short and links to them, and HexDocs shows the guides.
+The package has nine guides in [`docs/guides/`](https://github.com/TrustBound/dream_http_client/tree/main/docs/guides) and one settings reference. Each guide walks through one task, from a first request to tested code: getting started, sending data, errors and retries, streaming, streaming into an actor, connections, private certificate authorities, recording, and matching and scrubbing recordings. Every code block in them is a tested snippet that runs against a local server. The README is short and links to them, and HexDocs shows them.
 
 ## Removed
 
@@ -550,7 +557,8 @@ The package has guides in [`docs/guides/`](https://github.com/TrustBound/dream_h
   connection. Before, gun connected again after a wait and held new requests
   for that time, and a held request could get response headers and no body,
   and then time out. A request that was sent on a connection that is gone is
-  sent once more on a new connection.
+  sent once more on a new connection when that is safe (see the RFC 9110 item
+  below).
 - A 1xx response before the final response, for example 103 Early Hints, no
   longer crashes `send` and the stream functions. The client skips it and
   returns the final response.
@@ -569,8 +577,8 @@ The package has guides in [`docs/guides/`](https://github.com/TrustBound/dream_h
   HTTP/2 stream reset gives `StreamReset(code, description)`, an HTTP/2
   connection error gives `ConnectionError`, a closed connection gives
   `RemoteClosed`, and a killed connection gives `ProcessDown`. Before, most of
-  them came back as `Unexpected`. A GOAWAY now gets the one stale-connection
-  retry.
+  them came back as `Unexpected`. A stream that a GOAWAY ends was not
+  processed, so it gets the one retry on another connection.
 - A streamed redirect now works like `send`. A 3xx response with no Location
   returns `HttpFailure` at once instead of waiting until it timed out, and a
   redirect loop returns `Unexpected("Too many redirects (max 5)")` instead of
@@ -580,10 +588,50 @@ The package has guides in [`docs/guides/`](https://github.com/TrustBound/dream_h
 - Fixed PUT, POST, and PATCH requests hanging when sent with an empty body.
   The underlying gun dispatch now uses `gun:request/5` directly instead of
   method-specific functions that behave inconsistently for empty bodies.
+- A `stream_yielder` that yields an `Error` now ends. Before, it yielded more
+  errors on each later pull, and a stream that failed before its first chunk
+  sent the request again each time. So `yielder.to_list` never returned. The
+  stream also gives its connection back to the pool. In record mode, a stream
+  that does not start now yields its real error, not `ProcessDown`.
+- Playback of a recorded stream now waits the recorded `delay_ms` before it
+  hands over each chunk. Before, all chunks came at once. The request timeout
+  limits each wait, as it does live. A cancel, or a `stream_to` owner that
+  stops, ends the stream during a wait.
+- Playback of a recorded stream with a status outside 2xx now gives one
+  `HttpFailure` with the recorded status, headers and body, and no chunks.
+  Before, it played back as a successful stream. This applies to
+  `stream_yielder`, `start_stream` and `stream_to`, and also to a blocking
+  recording that one of them plays back.
+- A request whose connection closed before the response head is now sent
+  once more only when that is safe. Before, every method was sent again, so
+  a server that read a POST and then closed the connection got the POST
+  twice. Now the client follows RFC 9110, section 9.2.2, and RFC 9113,
+  sections 6.8 and 8.7:
+  - A GET, HEAD, OPTIONS, TRACE, PUT or DELETE request is sent once more on
+    another connection.
+  - A POST, PATCH or other request is sent once, and returns
+    `RemoteClosed`, or `ProcessDown("shutdown")` when its connection process
+    was stopped.
+  - A request that the server did not process is sent once more for every
+    method: a stream refused with `REFUSED_STREAM`, a stream above the last
+    stream identifier of a GOAWAY, and a request that the connection process
+    never took because it stopped after it lost its socket.
+  This applies to `send`, `stream_yielder`, `start_stream` and `stream_to`.
+- In playback mode, a request that no recording matches is no longer sent
+  to the network. Before, it went on to the live service, although the docs
+  said that playback uses no network. Now `send` returns
+  `Error(RequestError(NoRecording(method: "GET", url: "https://api.example.com/users/42")))`,
+  `stream_yielder` yields that error once and ends, `start_stream` calls
+  only `on_stream_error`, and `stream_to` sends only `StreamError`. The new
+  `TransportError` variant `NoRecording(method, url)` names the request,
+  and `transport_error_to_string` gives
+  `No recording matches GET https://api.example.com/users/42`. Record mode
+  does not change: a request with no recording goes to the network and is
+  recorded. `add_recording` still does nothing in playback mode.
 
 ## Testing
 
-576 tests, 0 failed, 100% line coverage (1207 of 1207 lines), in about 85
+750 tests, 0 failed, 100% line coverage (1220 of 1220 lines), in about 146
 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1,
 OTP 29, Gleam 1.19.2.
 
@@ -597,6 +645,11 @@ The tests cover:
 - `transport_error_to_string` and `stream_failure_to_string` helper output
 - `stream_to` message order, cancel, and stop with the owner process
 - Every tested snippet in the README, the release notes, and the doc comments
+- Every tested snippet of the guides, each run against a local mock
+  server, edge server or TLS server, with the exact output the guide shows
+- Which requests the client sends again after a failure, counted at the
+  server, for `send`, `stream_yielder`, `start_stream` and `stream_to`
+- A playback request with no recording: no request reaches the server
 
 ## Upgrading
 
@@ -661,6 +714,15 @@ pub fn send_and_describe(request: client.ClientRequest) -> String {
 **Recommended.** Pattern match on the `TransportError` variants for structured
 handling, as `explain` in **Explain a transport error** above does.
 
+**A `case` over every `TransportError` value.** `TransportError` has a new
+variant, `NoRecording(method, url)`. A `case` that names every variant and
+has no catch-all branch needs one more branch for it.
+
+**Tests that use playback.** A request that no recording matches now fails
+with `NoRecording` and is not sent. A test that passed only because such a
+request went to the live service now fails. Record that request, or add its
+recording to the directory of the recorder.
+
 **Streaming errors.** Before 6.0.0, the `on_stream_error` callback got a
 string. Now it gets a `StreamFailure`, which distinguishes HTTP failures from
 transport errors:
@@ -704,17 +766,15 @@ The constructor is removed. Remove the `DecodeError` branch from each `case` on 
 - [dream_http_client hexdocs](https://hexdocs.pm/dream_http_client) -- v6.0.0
 - [README](https://github.com/TrustBound/dream_http_client/tree/main)
 - [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md)
-- [Requests and responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/requests-and-responses.md)
-- [Streaming](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming.md)
-- [Streaming to actors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md)
-- [Errors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/errors.md)
-- [Request settings](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-settings.md)
-- [Transport configuration](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/transport-configuration.md)
-- [Connection pools](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/connection-pools.md)
-- [TLS and certificate authorities](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/tls-and-certificate-authorities.md)
-- [Logging](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/logging.md)
-- [Recording and playback](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md)
-- [Request matching and scrubbing](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-matching-and-scrubbing.md)
+- [Sending data to an API](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/sending-data.md)
+- [Handling errors, timeouts and retries](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/errors.md)
+- [Streaming a response](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming.md)
+- [Streaming into an OTP actor](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md)
+- [Controlling connections](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/connection-pools.md)
+- [Calling a service with a private certificate authority](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/tls-and-certificate-authorities.md)
+- [Testing with recorded responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md)
+- [Matching requests and hiding secrets in recordings](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-matching-and-scrubbing.md)
+- [Settings reference](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/settings-reference.md)
 - [CHANGELOG](https://github.com/TrustBound/dream_http_client/blob/main/CHANGELOG.md)
 
 ## Community

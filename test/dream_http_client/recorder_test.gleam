@@ -246,6 +246,25 @@ pub fn tests() -> TestSuite {
         |> be_equal([])
         |> or_fail_with("Passthrough mode should keep nothing")
       }),
+      it("ignores recordings in playback mode", fn() {
+        // Arrange
+        let assert Ok(rec) =
+          recorder.new()
+          |> directory(temp_directory.path("recorder_add_playback"))
+          |> mode("playback")
+          |> start()
+
+        // Act
+        recorder.add_recording(rec, recorded.text_recording())
+        let recordings = recorder.get_recordings(rec)
+        let assert Ok(Nil) = recorder.stop(rec)
+
+        // Assert
+        recordings
+        |> should
+        |> be_equal([])
+        |> or_fail_with("Playback mode should keep nothing that is added")
+      }),
     ]),
     group("find_recording", [
       it("finds a saved recording in playback mode", fn() {

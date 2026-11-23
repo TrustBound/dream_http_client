@@ -46,45 +46,57 @@ gleam add dream_http_client
 
 ## Quick Start
 
-Make a simple HTTP request:
+Send a request and print the answer:
 
-### Simple GET request <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/blocking_request.gleam#L6-L19"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a> <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/docs/guides/getting-started.md#simple-get-request-"><img align="right" alt="Guide" src="https://img.shields.io/badge/%F0%9F%93%96_read-guide-blue.svg?style=flat-square"></a>
+### Send a request and print the answer <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_getting_started_first_request.gleam#L5-L32"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a> <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/docs/guides/getting-started.md#send-a-request-and-print-the-answer-"><img align="right" alt="Guide" src="https://img.shields.io/badge/%F0%9F%93%96_read-guide-blue.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
-  type HttpResponse, type SendError, host, method, path, port, scheme, send,
+  type HttpResponse, host, path, port, scheme, send,
 }
 import gleam/http
+import gleam/int
+import gleam/io
+import gleam/result
+import gleam/string
 
-pub fn simple_get() -> Result(HttpResponse, SendError) {
-  client.new()
-  |> method(http.Get)
-  |> scheme(http.Http)
-  |> host("localhost")
-  |> port(9876)
-  |> path("/text")
-  |> send()
+pub fn main() -> Nil {
+  let request =
+    client.new()
+    |> scheme(http.Http)
+    |> host("localhost")
+    |> port(9876)
+    |> path("/text")
+
+  case send(request) {
+    Ok(response) -> print_response(response)
+    Error(error) -> io.println("The request failed: " <> string.inspect(error))
+  }
+}
+
+fn print_response(response: HttpResponse) -> Nil {
+  let text = client.body_text(response) |> result.unwrap("<not text>")
+  io.println("Status: " <> int.to_string(response.status))
+  io.println("Body: " <> text)
 }
 ```
 
 ## Guides
 
-- [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md): install the package, send a first request, and choose an execution mode
-- [Requests and responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/requests-and-responses.md): build a request, send it, and read the response body
+- [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md): go from an empty project to a tested module that calls an API and decodes its JSON
+- [Sending data to an API](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/sending-data.md): POST, PUT, PATCH and DELETE JSON, send query strings, tokens and bytes, and read response headers
+- [Handling errors, timeouts and retries](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/errors.md): tell each failure apart, set timeouts and redirects, retry safely, and know when the client sends a request again
 - [Streaming a response](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming.md): read a long or endless response chunk by chunk, handle failures, and test it
-- [Streaming to actors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md): handle a stream as typed messages in an OTP actor
-- [Errors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/errors.md): handle HTTP errors and transport failures
-- [Request settings](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-settings.md): set timeouts, redirects, and the HTTP version for one request
-- [Transport configuration](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/transport-configuration.md): configure the global transport, with every default
-- [Connection pools](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/connection-pools.md): how connections are used, and a pool of its own for a caller
-- [TLS and certificate authorities](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/tls-and-certificate-authorities.md): trust a private certificate authority
-- [Logging](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/logging.md): set the log level of the client
-- [Recording and playback](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md): record requests and responses and play them back
-- [Request matching and scrubbing](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-matching-and-scrubbing.md): match requests to recordings and remove secrets
+- [Streaming into an OTP actor](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md): handle a stream as typed messages in an actor that keeps state and answers other messages
+- [Controlling connections](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/connection-pools.md): see how connections are shared, use HTTP/2, set limits, give one caller its own pool, and read the log
+- [Calling a service with a private certificate authority](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/tls-and-certificate-authorities.md): trust an internal certificate authority for one service or for all requests, and test it over TLS
+- [Testing with recorded responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md): record real API calls once and play them back in tests with no network
+- [Matching requests and hiding secrets in recordings](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-matching-and-scrubbing.md): choose which recording answers a request, and keep tokens and cookies out of the files
+- [Settings reference](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/settings-reference.md): every request, transport and recorder setting with its default
 
 ## API Reference
 
-The full API reference is on [HexDocs](https://hexdocs.pm/dream_http_client). Each guide lists the functions and types it uses.
+The full API reference is on [HexDocs](https://hexdocs.pm/dream_http_client). The guides introduce each function where a task needs it.
 
 ---
 

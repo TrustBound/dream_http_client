@@ -84,9 +84,10 @@ open_response(Request, Redirects) ->
             Error
     end.
 
-%% Sends one request. A request on a connection that the server closed or
-%% sent a GOAWAY on, or a stream that was refused, is sent once more on
-%% another connection. The server did not process it in these cases.
+%% Sends one request. When the request gets no response head, the client
+%% sends it once more on another connection only when that is safe (RFC 9110,
+%% section 9.2.2): the server did not process it, or its method is idempotent
+%% and the connection closed. failure/1 says which case an error is.
 open_stream(Request, RetriesLeft) ->
     #{method := Method, url := Url, headers := Headers, body := Body,
       timeout := TimeoutMs, connect_timeout := ConnectTimeoutMs,
@@ -102,9 +103,9 @@ open_stream(Request, RetriesLeft) ->
                         {response, IsFin, Status, RespHeaders} ->
                             {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders};
                         {error, Reason} ->
-                            Kind = error_kind(Reason),
-                            give_back(Kind, Lease),
-                            case RetriesLeft > 0 andalso Kind =/= other of
+                            {Connection, Delivery} = failure(Reason),
+                            give_back(Connection, Lease),
+                            case RetriesLeft > 0 andalso may_send_again(Delivery, Method) of
                                 true ->
                                     open_stream(Request, RetriesLeft - 1);
                                 false ->
@@ -269,18 +270,19 @@ stream_owner_init(Request = #{timeout := TimeoutMs}, Requester) ->
 
 %% Gives each fetched event to its caller. gun reads at most ?STREAM_WINDOW
 %% data messages of the stream ahead (flow control), and one more for each
-%% chunk a caller takes, so the owner never holds more than that. The owner gives the lease back
-%% and stops after it gives the last event of the stream. When the owner
-%% stops before that, the connection manager sees the lease abandoned.
-stream_owner_loop(Owner = #owner{waiter = Waiter, events = [Event | Events]}) when Waiter =/= none ->
+%% chunk a caller takes, so the owner never holds more than that. The last
+%% event of a stream is `done` or `failed`. The owner gives the lease back,
+%% then gives the last event to its caller and stops. So the lease is back
+%% before the caller sees the end of the stream. When the owner stops
+%% before that, the connection manager sees the lease abandoned.
+stream_owner_loop(Owner = #owner{waiter = Waiter, events = [{chunk, _Data} = Event | Events]})
+        when Waiter =/= none ->
     Waiter ! {stream_event, self(), Event},
-    case Event of
-        {chunk, _Data} ->
-            gun:update_flow(Owner#owner.conn, Owner#owner.ref, 1),
-            stream_owner_loop(Owner#owner{waiter = none, events = Events});
-        _ ->
-            finish_stream(Owner#owner.lease, Event, Owner#owner.received)
-    end;
+    gun:update_flow(Owner#owner.conn, Owner#owner.ref, 1),
+    stream_owner_loop(Owner#owner{waiter = none, events = Events});
+stream_owner_loop(Owner = #owner{waiter = Waiter, events = [LastEvent | _Events]}) when Waiter =/= none ->
+    finish_stream(Owner#owner.lease, LastEvent, Owner#owner.received),
+    Waiter ! {stream_event, self(), LastEvent};
 stream_owner_loop(Owner = #owner{requester = Requester, conn = ConnPid, ref = StreamRef,
                                  waiter = Waiter, timeout = TimeoutMs}) ->
     receive
@@ -299,8 +301,11 @@ stream_owner_loop(Owner = #owner{requester = Requester, conn = ConnPid, ref = St
         Message = {gun_error, ConnPid, _Reason} ->
             stream_owner_loop(add_events(Owner, Message))
     after wait_timeout(Waiter, TimeoutMs) ->
-        Waiter ! {stream_event, self(), {failed, {transport_failure, {timed_out, TimeoutMs}}}},
-        stream_owner_loop(Owner#owner{waiter = none})
+        %% A timeout ends the stream, as in the translator.
+        close_zlib(Owner#owner.zlib),
+        gun:cancel(ConnPid, StreamRef),
+        stream_owner_loop(Owner#owner{zlib = undefined,
+                                      events = [{failed, {transport_failure, {timed_out, TimeoutMs}}}]})
     end.
 
 add_events(Owner = #owner{events = Events, zlib = ZlibCtx}, Message) ->
@@ -621,23 +626,55 @@ close_zlib(ZlibCtx) -> zlib:close(ZlibCtx).
 %% Errors
 %% ============================================================================
 
-%% gun:await/3 and gun:await_body/3 return an error that the server closed
-%% the connection when a request reuses a connection that the server closed
-%% while it was idle. A GOAWAY frame refuses a stream that the server did not
-%% start to process. In both cases a new connection can send the request.
-%% `stale`: the server closed the connection, or sent a GOAWAY, or the
-%% connection process stopped because it lost its socket (with `normal` or
-%% a shutdown reason, or it was gone before the request: `noproc`). The
-%% server did not process the request in these cases.
-%% `refused`: gun refused the stream at the server's stream limit
-%% (`too_many_streams`, never sent), or the server reset it with
-%% REFUSED_STREAM (RFC 9113, section 8.7: not processed).
-error_kind({stream_error, closed}) -> stale;
-error_kind({stream_error, {goaway, _Code, _HumanReadable}}) -> stale;
-error_kind({down, Reason}) when Reason =:= normal; Reason =:= shutdown; Reason =:= noproc; element(1, Reason) =:= shutdown -> stale;
-error_kind({stream_error, {stream_error, Code, _HumanReadable}})
-        when Code =:= refused_stream; Code =:= too_many_streams -> refused;
-error_kind(_Reason) -> other.
+%% Sorts the error of a request that got no response head. Returns
+%% {Connection, Delivery}.
+%%
+%% Connection is what the pool does with the connection (see give_back/2):
+%% `stale` when the server closed it, sent a GOAWAY, or its process stopped;
+%% `refused` when the stream was refused; `other` for every other error.
+%%
+%% Delivery is what the client knows about the request:
+%% - `not_processed`: the server did not process it, so any method can be
+%%   sent again (RFC 9113, sections 6.8 and 8.7).
+%% - `maybe_processed`: the connection closed after gun could have written
+%%   the request. The server can have processed it, so only an idempotent
+%%   method is sent again (RFC 9110, section 9.2.2).
+%% - `failed`: any other error. The request is not sent again.
+%%
+%% The terms are the ones gun 2 gives:
+%% - A GOAWAY ends only the streams above its last stream identifier, with
+%%   {goaway, Code, HumanReadable} (gun_http2:goaway/2 and goaway_streams/6).
+%%   The streams that the server kept continue.
+%% - A RST_STREAM from the server gives {stream_error, Code, HumanReadable}
+%%   (gun_http2:rst_stream_frame/5). Only REFUSED_STREAM means "not
+%%   processed". gun gives `too_many_streams` when the stream limit of the
+%%   server is reached, and does not send the request
+%%   (gun_http2:request_common/8).
+%% - When the socket closes, gun first ends each stream it sent with
+%%   `closed` or {closed, SocketError} (gun:disconnect/2, the close/4
+%%   functions of gun_http and gun_http2), and then stops by itself with
+%%   `normal` or {shutdown, Reason} (gun:not_connected/3, retry is 0). A
+%%   request that sees that stop with no error before it was never written.
+%%   {closed, SocketError} is a socket that failed, and is not sent again.
+%%   `noproc`: the process was gone before the request.
+%% - `shutdown` comes from outside gun, for example its supervisor. The
+%%   process can have written the request before it stopped.
+failure({stream_error, {goaway, _Code, _HumanReadable}}) -> {stale, not_processed};
+failure({stream_error, {stream_error, Code, _HumanReadable}})
+        when Code =:= refused_stream; Code =:= too_many_streams -> {refused, not_processed};
+failure({down, Reason}) when Reason =:= normal; Reason =:= noproc; element(1, Reason) =:= shutdown ->
+    {stale, not_processed};
+failure({stream_error, closed}) -> {stale, maybe_processed};
+failure({down, shutdown}) -> {stale, maybe_processed};
+failure(_Reason) -> {other, failed}.
+
+%% True when a request that failed in this way can be sent once more.
+may_send_again(not_processed, _Method) -> true;
+may_send_again(maybe_processed, Method) -> is_idempotent(Method);
+may_send_again(failed, _Method) -> false.
+
+%% The idempotent methods of RFC 9110, section 9.2.2.
+is_idempotent(Method) -> lists:member(Method, [get, head, options, trace, put, delete]).
 
 %% Gives the lease of a failed request back to the pool.
 give_back(stale, Lease) -> dream_http_conn_manager:retire(Lease);

@@ -22,3 +22,13 @@ pub fn send_unknown_messages() -> Nil
 /// The number of open connections in the connection table.
 @external(erlang, "application_ffi", "connection_count")
 pub fn connection_count() -> Int
+
+/// The number of leases that the connection manager holds: one for each
+/// request or stream that has a connection and did not give it back.
+@external(erlang, "application_ffi", "lease_count")
+pub fn lease_count() -> Int
+
+/// The protocol of each open connection to `port`, sorted: `"http"` for
+/// HTTP/1.1 and `"http2"` for HTTP/2.
+@external(erlang, "application_ffi", "connection_protocols")
+pub fn connection_protocols(port: Int) -> List(String)

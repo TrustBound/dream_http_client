@@ -49,7 +49,8 @@
 //// Attach a recorder with `recorder()` to record real HTTP traffic to disk, or
 //// to play back recordings without network calls. All four execution modes
 //// (`send()`, `stream_yielder()`, `start_stream()`, `stream_to()`) fully
-//// support both recording and playback.
+//// support both recording and playback. In playback mode, a request that no
+//// recording matches fails with `NoRecording(method, url)` and is not sent.
 ////
 //// ### Record a call <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_record_call.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ////
@@ -110,7 +111,6 @@ import gleam/int
 import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/result
 import gleam/yielder
 
 /// HTTP header
@@ -306,7 +306,11 @@ pub type Http2ErrorCode {
 ///   explanation.
 ///
 /// - `RemoteClosed` — The remote peer closed the connection without sending
-///   an explicit error code.
+///   an explicit error code. If it closed before the response head, the
+///   server can have processed the request. So the client sends a GET, HEAD,
+///   OPTIONS, TRACE, PUT or DELETE request once more on another connection,
+///   and this error comes back only when that also fails. It sends a POST,
+///   PATCH or other request only once (RFC 9110, section 9.2.2).
 ///
 /// - `TimedOut` — No response was received within the configured timeout.
 ///   `timeout_ms` is the value that was configured.
@@ -320,6 +324,12 @@ pub type Http2ErrorCode {
 ///
 /// - `Unexpected` — An error that doesn't match any known pattern. `raw`
 ///   contains the Erlang term formatted as a string for debugging.
+///
+/// - `NoRecording` — The request has a recorder in playback mode, and no
+///   recording matches it. The client sends nothing to the network.
+///   `method` is the method in upper case, for example `"GET"`, and `url`
+///   is the URL that the client would request: the scheme, the host, the
+///   port when the request sets one, the path and the query.
 ///
 /// ## Example
 ///
@@ -351,6 +361,7 @@ pub type TransportError {
   ProcessDown(reason: String)
   ConnectFailed(reason: String)
   Unexpected(raw: String)
+  NoRecording(method: String, url: String)
 }
 
 /// Failure during streaming, distinguishing HTTP errors from transport errors.
@@ -425,6 +436,8 @@ pub fn transport_error_to_string(error: TransportError) -> String {
     ProcessDown(reason: reason) -> "Process down: " <> reason
     ConnectFailed(reason: reason) -> "Connection failed: " <> reason
     Unexpected(raw: raw) -> "Unexpected error: " <> raw
+    NoRecording(method: method, url: url) ->
+      "No recording matches " <> method <> " " <> url
   }
 }
 
@@ -3271,7 +3284,8 @@ pub opaque type StreamHandle {
 /// When a recorder is attached (via `recorder()`), this function fully supports
 /// both recording and playback. In record mode, the real response is persisted
 /// to disk. In playback mode, the recorded response is returned without making
-/// a network call.
+/// a network call. A request that no recording matches returns
+/// `Error(RequestError(NoRecording(method, url)))` and is not sent.
 ///
 /// ## Parameters
 ///
@@ -3335,13 +3349,56 @@ fn send_with_recorder(
 ) -> Result(HttpResponse, SendError) {
   let recorded_request = client_request_to_recorded_request(client_request)
 
-  case recorder.find_recording(recorder_instance, recorded_request) {
-    Ok(option.Some(recording.Recording(_, response))) ->
-      handle_recorded_blocking_response(response)
-    Ok(option.None) ->
+  case ask_recorder(client_request, recorder_instance, recorded_request) {
+    PlayRecording(response) -> handle_recorded_blocking_response(response)
+    SendLive ->
       send_and_maybe_record(client_request, recorder_instance, recorded_request)
-    Error(reason) -> Error(RequestError(error: Unexpected(raw: reason)))
+    RecorderFailure(error) -> Error(RequestError(error: error))
   }
+}
+
+/// What the recorder of a request says to do with it.
+type RecorderAnswer {
+  /// A recording matches: play its response back.
+  PlayRecording(response: recording.RecordedResponse)
+  /// No recording matches, and the recorder is not in playback mode: send
+  /// the request to the network (and record it in record mode).
+  SendLive
+  /// Fail with this error, and send nothing to the network: no recording
+  /// matches in playback mode (`NoRecording`), or the lookup failed.
+  RecorderFailure(error: TransportError)
+}
+
+/// The one place that decides how a request with a recorder is answered.
+/// `send`, `stream_yielder`, `start_stream` and `stream_to` all use it.
+fn ask_recorder(
+  client_request: ClientRequest,
+  recorder_instance: recorder.Recorder,
+  recorded_request: recording.RecordedRequest,
+) -> RecorderAnswer {
+  case recorder.find_recording(recorder_instance, recorded_request) {
+    Ok(option.Some(recording.Recording(_, response))) -> PlayRecording(response)
+    Ok(option.None) ->
+      answer_without_recording(client_request, recorder_instance)
+    Error(reason) -> RecorderFailure(Unexpected(raw: reason))
+  }
+}
+
+fn answer_without_recording(
+  client_request: ClientRequest,
+  recorder_instance: recorder.Recorder,
+) -> RecorderAnswer {
+  case recorder.is_playback_mode(recorder_instance) {
+    True -> RecorderFailure(no_recording_error(client_request))
+    False -> SendLive
+  }
+}
+
+fn no_recording_error(client_request: ClientRequest) -> TransportError {
+  NoRecording(
+    method: http.method_to_string(client_request.method),
+    url: build_url(to_http_request(client_request)),
+  )
 }
 
 fn handle_recorded_blocking_response(
@@ -3528,8 +3585,13 @@ fn send_sync(
 ///   recording has the status that the server sent. A stream that fails is
 ///   not saved, because playback would show its first part as a whole
 ///   response.
-/// - **Playback mode**: Yields recorded chunks from the fixture file. No network
-///   calls are made.
+/// - **Playback mode**: Yields recorded chunks from the fixture file, each
+///   after its recorded delay. The timeout of the request limits each wait,
+///   as in a live stream: a longer delay yields a `TimedOut` failure. A
+///   recording with a status outside 2xx yields one `HttpFailure` with the
+///   recorded status, headers and body, as a live stream does. No network
+///   calls are made. A request that no recording matches yields one
+///   `TransportFailure(NoRecording(method, url))`, and is not sent.
 ///
 /// The same `StreamingResponse` fixture format is shared with `start_stream()`,
 /// so recordings made with either function can be played back by both.
@@ -3547,9 +3609,12 @@ fn send_sync(
 /// - `Ok(chunk)` - Successful chunk, more may follow
 /// - `Error(failure)` - **Terminal error**, stream is done
 ///
-/// After an `Error`, the yielder immediately returns `Done` on the next call.
-/// This design reflects that HTTP stream errors (timeouts, connection drops,
-/// etc.) are **not recoverable** - you cannot continue reading from a broken stream.
+/// After an `Error`, the yielder returns `Done` on the next call. It does not
+/// send the request again, and the connection goes back to the pool. So
+/// `yielder.to_list` and `yielder.fold` return on a stream that fails, and
+/// the list ends with the one `Error`. HTTP stream errors (timeouts,
+/// connection drops, etc.) are **not recoverable** - you cannot continue
+/// reading from a broken stream.
 ///
 /// **Normal stream completion**: When the stream finishes successfully, the yielder
 /// returns `Done` (no more items). The stream does NOT yield an error for normal completion.
@@ -3653,169 +3718,212 @@ fn stream_yielder_with_recorder(
 ) -> yielder.Yielder(Result(bytes_tree.BytesTree, StreamFailure)) {
   let recorded_request = client_request_to_recorded_request(client_request)
 
-  case recorder.find_recording(recorder_instance, recorded_request) {
-    Ok(option.Some(recording.Recording(_, response))) ->
-      create_yielder_from_recorded_response(response)
-    Ok(option.None) -> create_stream_yielder_from_client_request(client_request)
-    Error(reason) ->
-      yielder.single(Error(TransportFailure(error: Unexpected(raw: reason))))
-  }
-}
-
-fn create_yielder_from_recorded_response(
-  response: recording.RecordedResponse,
-) -> yielder.Yielder(Result(bytes_tree.BytesTree, StreamFailure)) {
-  case response {
-    recording.StreamingResponse(_, _, chunks) ->
-      create_yielder_from_chunks(chunks)
-    recording.BlockingResponse(_, _, body) -> {
-      // Blocking response - return as single chunk
-      let chunk = bytes_tree.from_bit_array(body)
-      yielder.single(Ok(chunk))
-    }
+  case ask_recorder(client_request, recorder_instance, recorded_request) {
+    PlayRecording(response) ->
+      yielder.unfold(
+        YielderPlaybackNotStarted(
+          playback: recorded_playback(response),
+          timeout_ms: resolve_timeout(client_request),
+        ),
+        next_yielder_step,
+      )
+    SendLive -> create_stream_yielder_from_client_request(client_request)
+    RecorderFailure(error) -> yielder.single(Error(TransportFailure(error:)))
   }
 }
 
 fn create_stream_yielder_from_client_request(
   client_request: ClientRequest,
 ) -> yielder.Yielder(Result(bytes_tree.BytesTree, StreamFailure)) {
-  let http_request = to_http_request(client_request)
-  let timeout_value = resolve_timeout(client_request)
-  let connect_timeout_value = resolve_connect_timeout(client_request)
-  let auto_redirect_value = resolve_auto_redirect(client_request)
-  let connection_settings = resolve_connection_settings(client_request)
-
-  case client_request.recorder {
-    option.Some(recorder_instance) ->
-      stream_yielder_with_record_mode(
-        client_request,
-        recorder_instance,
-        http_request,
-        timeout_value,
-        connect_timeout_value,
-        auto_redirect_value,
-        connection_settings,
-      )
-    option.None ->
-      create_plain_yielder(
-        http_request,
-        timeout_value,
-        connect_timeout_value,
-        auto_redirect_value,
-        connection_settings,
-      )
-  }
-}
-
-fn stream_yielder_with_record_mode(
-  client_request: ClientRequest,
-  recorder_instance: recorder.Recorder,
-  http_request: request.Request(BitArray),
-  timeout_value: Int,
-  connect_timeout_value: Int,
-  auto_redirect_value: Bool,
-  connection_settings: internal.ConnectionSettings,
-) -> yielder.Yielder(Result(bytes_tree.BytesTree, StreamFailure)) {
-  case recorder.is_record_mode(recorder_instance) {
-    True -> {
-      let recorded_request = client_request_to_recorded_request(client_request)
-      let initial_state =
-        RecordingYielderState(
-          owner: None,
-          http_req: http_request,
-          timeout_ms: timeout_value,
-          connect_timeout_ms: connect_timeout_value,
-          auto_redirect: auto_redirect_value,
-          connection_settings: connection_settings,
-          recorder: recorder_instance,
-          recorded_request: recorded_request,
-          start_status: 0,
-          start_headers: [],
-          chunks: [],
-          last_chunk_time: 0,
-        )
-      yielder.unfold(initial_state, handle_recording_yielder_unfold)
-    }
-    False ->
-      create_plain_yielder(
-        http_request,
-        timeout_value,
-        connect_timeout_value,
-        auto_redirect_value,
-        connection_settings,
-      )
-  }
-}
-
-fn create_plain_yielder(
-  http_request: request.Request(BitArray),
-  timeout_value: Int,
-  connect_timeout_value: Int,
-  auto_redirect_value: Bool,
-  connection_settings: internal.ConnectionSettings,
-) -> yielder.Yielder(Result(bytes_tree.BytesTree, StreamFailure)) {
-  let initial_state =
-    YielderState(
-      owner: None,
-      http_req: http_request,
-      timeout_ms: timeout_value,
-      connect_timeout_ms: connect_timeout_value,
-      auto_redirect: auto_redirect_value,
-      connection_settings: connection_settings,
+  let pull_request =
+    PullRequest(
+      http_req: to_http_request(client_request),
+      timeout_ms: resolve_timeout(client_request),
+      connect_timeout_ms: resolve_connect_timeout(client_request),
+      auto_redirect: resolve_auto_redirect(client_request),
+      connection_settings: resolve_connection_settings(client_request),
     )
-  yielder.unfold(initial_state, handle_yielder_unfold_with_deps)
+  let stream_recording =
+    option.then(client_request.recorder, fn(recorder_instance) {
+      new_stream_recording(
+        recorder_instance,
+        client_request_to_recorded_request(client_request),
+      )
+    })
+  yielder.unfold(
+    YielderNotStarted(request: pull_request, recording: stream_recording),
+    next_yielder_step,
+  )
 }
 
-fn create_yielder_from_chunks(
-  chunks: List(recording.Chunk),
-) -> yielder.Yielder(Result(bytes_tree.BytesTree, StreamFailure)) {
-  chunks
-  |> yielder.from_list
-  |> yielder.map(convert_chunk_to_result)
+// The request of a pull stream that has not started yet.
+type PullRequest {
+  PullRequest(
+    http_req: request.Request(BitArray),
+    timeout_ms: Int,
+    connect_timeout_ms: Int,
+    auto_redirect: Bool,
+    connection_settings: internal.ConnectionSettings,
+  )
 }
 
-fn convert_chunk_to_result(
-  chunk: recording.Chunk,
-) -> Result(bytes_tree.BytesTree, StreamFailure) {
-  // TODO: Add delay based on chunk.delay_ms
-  let data = bytes_tree.from_bit_array(chunk.data)
-  Ok(data)
-}
-
+// The state of the yielder of stream_yielder().
+//
+// - `YielderNotStarted`: no request went out yet. The first step sends it.
+// - `YielderStreaming`: `owner` is the stream owner process of a running
+//   stream.
+// - `YielderFailed`: the yielder yielded an `Error`. The stream owner gave
+//   the lease back and stopped, so the next step is `Done`, and no request
+//   goes out again.
+//
+// - `YielderPlaybackNotStarted`: playback of a recording, before the first
+//   step.
+// - `YielderPlayback`: playback of a recording. `chunks` are the chunks that
+//   did not come yet, and `previous_due` is the time in milliseconds when
+//   the previous chunk was due.
+//
+// A stream that ends normally needs no state: its step is `Done`.
+// `recording` is the stream that a recorder in record mode saves when the
+// stream ends. A stream that fails is not saved.
 type YielderState {
-  YielderState(
-    owner: Option(process.Pid),
-    http_req: request.Request(BitArray),
-    timeout_ms: Int,
-    connect_timeout_ms: Int,
-    auto_redirect: Bool,
-    connection_settings: internal.ConnectionSettings,
-  )
-}
-
-type RecordingYielderState {
-  RecordingYielderState(
-    owner: Option(process.Pid),
-    http_req: request.Request(BitArray),
-    timeout_ms: Int,
-    connect_timeout_ms: Int,
-    auto_redirect: Bool,
-    connection_settings: internal.ConnectionSettings,
-    recorder: recorder.Recorder,
-    recorded_request: recording.RecordedRequest,
-    start_status: Int,
-    start_headers: List(#(String, String)),
+  YielderNotStarted(request: PullRequest, recording: Option(StreamRecording))
+  YielderStreaming(owner: process.Pid, recording: Option(StreamRecording))
+  YielderFailed
+  YielderPlaybackNotStarted(playback: Playback, timeout_ms: Int)
+  YielderPlayback(
     chunks: List(recording.Chunk),
-    last_chunk_time: Int,
+    previous_due: Int,
+    timeout_ms: Int,
   )
 }
 
-fn handle_yielder_unfold_with_deps(
+fn next_yielder_step(
   state: YielderState,
 ) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
-  case state.owner {
-    None -> handle_yielder_start_with_state(state)
-    Some(owner) -> handle_yielder_next_with_state(owner, state)
+  case state {
+    YielderNotStarted(request: pull_request, recording: stream_recording) ->
+      start_yielder_stream(pull_request, stream_recording)
+    YielderStreaming(owner: owner, recording: stream_recording) ->
+      yield_next_event(owner, stream_recording)
+    YielderFailed -> yielder.Done
+    YielderPlaybackNotStarted(playback: playback, timeout_ms: timeout_ms) ->
+      start_yielder_playback(playback, timeout_ms)
+    YielderPlayback(
+      chunks: chunks,
+      previous_due: previous_due,
+      timeout_ms: timeout_ms,
+    ) -> yield_recorded_chunk(chunks, previous_due, timeout_ms)
+  }
+}
+
+// The first chunk is due after its delay, counted from the first step: a
+// live stream also sends its request at the first step.
+fn start_yielder_playback(
+  playback: Playback,
+  timeout_ms: Int,
+) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
+  case playback {
+    PlaybackFailure(failure) -> yielder.Next(Error(failure), YielderFailed)
+    PlaybackStream(headers: _, chunks: chunks) ->
+      yield_recorded_chunk(chunks, get_time_ms(), timeout_ms)
+  }
+}
+
+// Waits until the next chunk is due, in the process that reads the
+// yielder, and yields it. Playback starts no process, so a reader that
+// stops reading leaves no wait behind.
+fn yield_recorded_chunk(
+  chunks: List(recording.Chunk),
+  previous_due: Int,
+  timeout_ms: Int,
+) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
+  case chunks {
+    [] -> yielder.Done
+    [chunk, ..rest] -> {
+      let due = previous_due + chunk.delay_ms
+      let wait = recorded_chunk_wait(due, timeout_ms)
+      process.sleep(wait_milliseconds(wait))
+      yield_after_wait(wait, chunk, rest, due, timeout_ms)
+    }
+  }
+}
+
+fn yield_after_wait(
+  wait: RecordedChunkWait,
+  chunk: recording.Chunk,
+  rest: List(recording.Chunk),
+  due: Int,
+  timeout_ms: Int,
+) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
+  case wait {
+    ChunkAfter(_wait_ms) ->
+      yielder.Next(
+        Ok(bytes_tree.from_bit_array(chunk.data)),
+        YielderPlayback(chunks: rest, previous_due: due, timeout_ms: timeout_ms),
+      )
+    TimeoutAfter(timeout_ms: waited_ms) ->
+      yielder.Next(Error(recorded_timeout(waited_ms)), YielderFailed)
+  }
+}
+
+fn start_yielder_stream(
+  pull_request: PullRequest,
+  stream_recording: Option(StreamRecording),
+) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
+  let owner =
+    internal.start_gun_stream(
+      pull_request.http_req,
+      pull_request.timeout_ms,
+      pull_request.connect_timeout_ms,
+      pull_request.auto_redirect,
+      pull_request.connection_settings,
+    )
+  case stream_recording {
+    None -> yield_next_event(owner, None)
+    Some(state) -> yield_first_recorded_event(owner, state)
+  }
+}
+
+// A recorded stream saves the status and the headers of the response, so
+// it gets them before the first event. A stream that did not start gives
+// its failure here.
+fn yield_first_recorded_event(
+  owner: process.Pid,
+  stream_recording: StreamRecording,
+) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
+  case internal.fetch_start_headers(owner) {
+    Ok(#(status, headers)) ->
+      yield_next_event(
+        owner,
+        Some(
+          StreamRecording(..stream_recording, status: status, headers: headers),
+        ),
+      )
+    Error(failure) -> yielder.Next(Error(failure), YielderFailed)
+  }
+}
+
+fn yield_next_event(
+  owner: process.Pid,
+  stream_recording: Option(StreamRecording),
+) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
+  case internal.fetch_next(owner) {
+    internal.Chunk(data) ->
+      yielder.Next(
+        Ok(bytes_tree.from_bit_array(data)),
+        YielderStreaming(
+          owner: owner,
+          recording: record_stream_chunk(stream_recording, data),
+        ),
+      )
+    // The saved headers of a yielder stream are the response headers.
+    internal.Done(_trailers) -> {
+      record_stream_end(stream_recording, [])
+      yielder.Done
+    }
+    // The stream owner gave the lease back and stopped before it gave the
+    // failure.
+    internal.Failed(failure) -> yielder.Next(Error(failure), YielderFailed)
   }
 }
 
@@ -3857,40 +3965,6 @@ fn response_result(
   }
 }
 
-fn handle_yielder_start_with_state(
-  state: YielderState,
-) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
-  let owner =
-    internal.start_gun_stream(
-      state.http_req,
-      state.timeout_ms,
-      state.connect_timeout_ms,
-      state.auto_redirect,
-      state.connection_settings,
-    )
-  case internal.fetch_next(owner) {
-    internal.Chunk(bin) ->
-      yielder.Next(
-        Ok(bytes_tree.from_bit_array(bin)),
-        YielderState(..state, owner: Some(owner)),
-      )
-    internal.Done(_) -> yielder.Done
-    internal.Failed(failure) -> yielder.Next(Error(failure), state)
-  }
-}
-
-fn handle_yielder_next_with_state(
-  owner: process.Pid,
-  state: YielderState,
-) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
-  case internal.fetch_next(owner) {
-    internal.Chunk(bin) ->
-      yielder.Next(Ok(bytes_tree.from_bit_array(bin)), state)
-    internal.Done(_) -> yielder.Done
-    internal.Failed(failure) -> yielder.Next(Error(failure), state)
-  }
-}
-
 // Get current time in milliseconds for recording delays
 @external(erlang, "erlang", "monotonic_time")
 fn monotonic_time_native() -> Int
@@ -3904,113 +3978,6 @@ fn get_time_ms() -> Int {
 
 @external(erlang, "erlang", "convert_time_unit")
 fn convert_time_unit(time: Int, from_unit: atom.Atom, to_unit: atom.Atom) -> Int
-
-fn handle_recording_yielder_unfold(
-  state: RecordingYielderState,
-) -> yielder.Step(
-  Result(bytes_tree.BytesTree, StreamFailure),
-  RecordingYielderState,
-) {
-  case state.owner {
-    None -> handle_recording_yielder_start(state)
-    Some(owner) -> handle_recording_yielder_next(owner, state)
-  }
-}
-
-fn handle_recording_yielder_start(
-  state: RecordingYielderState,
-) -> yielder.Step(
-  Result(bytes_tree.BytesTree, StreamFailure),
-  RecordingYielderState,
-) {
-  let owner =
-    internal.start_gun_stream(
-      state.http_req,
-      state.timeout_ms,
-      state.connect_timeout_ms,
-      state.auto_redirect,
-      state.connection_settings,
-    )
-  // A stream that did not start has no status. Its first event is Failed,
-  // and a failed stream is not saved.
-  let #(start_status, start_headers) =
-    internal.fetch_start_headers(owner) |> result.unwrap(#(0, []))
-  let now = get_time_ms()
-
-  case internal.fetch_next(owner) {
-    internal.Chunk(bin) -> {
-      // First chunk - record it
-      let chunk = recording.Chunk(data: bin, delay_ms: 0)
-      let new_state =
-        RecordingYielderState(
-          ..state,
-          owner: Some(owner),
-          start_status: start_status,
-          start_headers: start_headers,
-          chunks: [chunk],
-          last_chunk_time: now,
-        )
-      yielder.Next(Ok(bytes_tree.from_bit_array(bin)), new_state)
-    }
-    internal.Done(_) -> {
-      // Empty stream - save recording with no chunks
-      save_streaming_recording(
-        RecordingYielderState(
-          ..state,
-          start_status: start_status,
-          start_headers: start_headers,
-        ),
-        [],
-      )
-      yielder.Done
-    }
-    internal.Failed(failure) -> yielder.Next(Error(failure), state)
-  }
-}
-
-fn handle_recording_yielder_next(
-  owner: process.Pid,
-  state: RecordingYielderState,
-) -> yielder.Step(
-  Result(bytes_tree.BytesTree, StreamFailure),
-  RecordingYielderState,
-) {
-  let now = get_time_ms()
-
-  case internal.fetch_next(owner) {
-    internal.Chunk(bin) -> {
-      let chunk =
-        recording.Chunk(data: bin, delay_ms: now - state.last_chunk_time)
-      let new_state =
-        RecordingYielderState(
-          ..state,
-          chunks: [chunk, ..state.chunks],
-          last_chunk_time: now,
-        )
-      yielder.Next(Ok(bytes_tree.from_bit_array(bin)), new_state)
-    }
-    internal.Done(_) -> {
-      save_streaming_recording(state, state.chunks)
-      yielder.Done
-    }
-    // A stream that failed is not complete, so it is not saved. Playback
-    // would show the part that arrived as a whole response.
-    internal.Failed(failure) -> yielder.Next(Error(failure), state)
-  }
-}
-
-fn save_streaming_recording(
-  state: RecordingYielderState,
-  chunks: List(recording.Chunk),
-) -> Nil {
-  save_stream_recording(
-    state.recorder,
-    state.recorded_request,
-    state.start_status,
-    state.start_headers,
-    chunks,
-  )
-}
 
 // Saves a streamed response. `reversed_chunks` holds the chunks newest
 // first.
@@ -4142,9 +4109,15 @@ fn record_element(index: Int, record: d.Dynamic) -> TranslatorMessage
 ///
 /// - **Record mode**: Streams from the real server and records chunks to disk.
 ///   The recorded fixture captures each chunk along with timing information.
-/// - **Playback mode**: Replays recorded chunks directly via your callbacks —
-///   `on_stream_start`, `on_stream_chunk`, and `on_stream_end` are called in
-///   sequence with the recorded data. No network calls are made.
+/// - **Playback mode**: Replays recorded chunks via your callbacks:
+///   `on_stream_start`, then `on_stream_chunk` for each chunk after its
+///   recorded delay, then `on_stream_end`. The timeout of the request limits
+///   each wait, as in a live stream: a longer delay calls `on_stream_error`
+///   with a `TimedOut` failure. A recording with a status outside 2xx calls
+///   only `on_stream_error`, with an `HttpFailure` that holds the recorded
+///   status, headers and body. No network calls are made. A request that
+///   no recording matches calls only `on_stream_error`, with
+///   `TransportFailure(NoRecording(method, url))`, and is not sent.
 ///
 /// The same `StreamingResponse` fixture format is shared with `stream_yielder()`,
 /// so recordings made with either function can be played back by both.
@@ -4260,8 +4233,15 @@ pub fn start_stream(request: ClientRequest) -> Result(StreamHandle, String) {
 ///   its `StreamEnd` or `StreamError` message is sent. A cancelled stream is
 ///   not saved.
 /// - **Playback mode**: Sends `StreamStart` with the recorded headers, a
-///   `Chunk` for each recorded chunk, then `StreamEnd(request_id, [])`. A
-///   blocking recording is sent as one chunk. No network calls are made.
+///   `Chunk` for each recorded chunk after its recorded delay, then
+///   `StreamEnd(request_id, [])`. A blocking recording is sent as one chunk.
+///   The timeout of the request limits each wait, as in a live stream: a
+///   longer delay sends `StreamError` with a `TimedOut` failure. A recording
+///   with a status outside 2xx sends only `StreamError`, with an
+///   `HttpFailure` that holds the recorded status, headers and body. No
+///   network calls are made. A request that no recording matches sends only
+///   `StreamError` with `TransportFailure(NoRecording(method, url))`, and
+///   is not sent.
 ///
 /// ## Parameters
 ///
@@ -4442,18 +4422,22 @@ fn stream_with_recorder(
   recorder_instance: recorder.Recorder,
 ) -> Nil {
   let recorded_request = client_request_to_recorded_request(request)
-  case recorder.find_recording(recorder_instance, recorded_request) {
-    Ok(Some(recording.Recording(_, response))) ->
-      replay_recorded_stream(handlers, response)
-    Ok(None) ->
+  case ask_recorder(request, recorder_instance, recorded_request) {
+    PlayRecording(response) ->
+      replay_recorded_stream(
+        handlers,
+        stop_selector,
+        recorded_playback(response),
+        resolve_timeout(request),
+      )
+    SendLive ->
       stream_live(
         request,
         handlers,
         stop_selector,
         new_stream_recording(recorder_instance, recorded_request),
       )
-    Error(reason) ->
-      handlers.on_error(TransportFailure(error: Unexpected(raw: reason)))
+    RecorderFailure(error) -> handlers.on_error(TransportFailure(error:))
   }
 }
 
@@ -4486,24 +4470,155 @@ fn stream_live(
   process_stream_loop(selector, translator, handlers, stream_recording)
 }
 
-/// Replay a recorded response through the stream handlers.
-/// Handles both StreamingResponse (multiple chunks) and BlockingResponse
-/// (body delivered as a single chunk).
+// What playback of a recorded response gives a stream.
+//
+// - `PlaybackFailure`: the recorded status is outside 2xx. A live stream
+//   gives `HttpFailure` with the whole body, and no chunk.
+// - `PlaybackStream`: the recorded status is 2xx. A blocking recording is
+//   one chunk with no delay.
+type Playback {
+  PlaybackFailure(failure: StreamFailure)
+  PlaybackStream(headers: List(Header), chunks: List(recording.Chunk))
+}
+
+fn recorded_playback(response: recording.RecordedResponse) -> Playback {
+  case response {
+    recording.StreamingResponse(status, headers, chunks) ->
+      playback_of(status, headers, chunks)
+    recording.BlockingResponse(status, headers, body) ->
+      playback_of(status, headers, [recording.Chunk(data: body, delay_ms: 0)])
+  }
+}
+
+// The same rule as the live stream in dream_http_shim: a status from 200
+// to 299 starts a stream, and any other status is an `HttpFailure` with
+// the status, the headers and the whole body.
+fn playback_of(
+  status: Int,
+  headers: List(#(String, String)),
+  chunks: List(recording.Chunk),
+) -> Playback {
+  case status >= 200 && status < 300 {
+    True -> PlaybackStream(headers: tuples_to_headers(headers), chunks: chunks)
+    False ->
+      PlaybackFailure(
+        HttpFailure(response: HttpResponse(
+          status: status,
+          headers: tuples_to_headers(headers),
+          body: bit_array.concat(list.map(chunks, fn(chunk) { chunk.data })),
+        )),
+      )
+  }
+}
+
+// The wait for the next recorded chunk.
+//
+// The `delay_ms` of a recorded chunk is the time from the arrival of the
+// previous chunk to its own arrival. So a chunk is due `delay_ms` after the
+// previous chunk was due, and playback waits only for the time that is
+// left: a slow chunk handler does not make the stream slower than the
+// recording. As in a live stream, the timeout of the request limits each
+// wait for the next chunk.
+type RecordedChunkWait {
+  // The chunk comes after `wait_ms`.
+  ChunkAfter(wait_ms: Int)
+  // The timeout ends the wait first: after `timeout_ms`, the stream fails
+  // with `TimedOut`.
+  TimeoutAfter(timeout_ms: Int)
+}
+
+fn recorded_chunk_wait(due: Int, timeout_ms: Int) -> RecordedChunkWait {
+  let wait_ms = int.max(due - get_time_ms(), 0)
+  case wait_ms > timeout_ms {
+    True -> TimeoutAfter(timeout_ms: timeout_ms)
+    False -> ChunkAfter(wait_ms: wait_ms)
+  }
+}
+
+fn wait_milliseconds(wait: RecordedChunkWait) -> Int {
+  case wait {
+    ChunkAfter(wait_ms: wait_ms) -> wait_ms
+    TimeoutAfter(timeout_ms: timeout_ms) -> timeout_ms
+  }
+}
+
+// The failure of a live stream that got no data within the timeout.
+fn recorded_timeout(timeout_ms: Int) -> StreamFailure {
+  TransportFailure(error: TimedOut(timeout_ms: timeout_ms))
+}
+
+// Plays back a recording through the stream handlers. The first chunk is
+// due after its delay, counted from the start.
 fn replay_recorded_stream(
   handlers: StreamHandlers,
-  response: recording.RecordedResponse,
+  stop_selector: process.Selector(StreamProcessMessage),
+  playback: Playback,
+  timeout_ms: Int,
 ) -> Nil {
-  case response {
-    recording.StreamingResponse(_, headers, chunks) -> {
-      handlers.on_start(tuples_to_headers(headers))
-      list.each(chunks, fn(chunk) { handlers.on_chunk(chunk.data) })
-      handlers.on_end([])
+  case playback {
+    PlaybackFailure(failure) -> handlers.on_error(failure)
+    PlaybackStream(headers: headers, chunks: chunks) -> {
+      let started = get_time_ms()
+      handlers.on_start(headers)
+      replay_recorded_chunks(
+        handlers,
+        stop_selector,
+        chunks,
+        started,
+        timeout_ms,
+      )
     }
-    recording.BlockingResponse(_, headers, body) -> {
-      handlers.on_start(tuples_to_headers(headers))
-      handlers.on_chunk(body)
-      handlers.on_end([])
+  }
+}
+
+// Each wait is a receive with a timeout on `stop_selector`, so a stream of
+// stream_to() stops in a wait when its owner stops. A cancel kills the
+// stream process, also in a wait.
+fn replay_recorded_chunks(
+  handlers: StreamHandlers,
+  stop_selector: process.Selector(StreamProcessMessage),
+  chunks: List(recording.Chunk),
+  previous_due: Int,
+  timeout_ms: Int,
+) -> Nil {
+  case chunks {
+    [] -> handlers.on_end([])
+    [chunk, ..rest] -> {
+      let due = previous_due + chunk.delay_ms
+      let wait = recorded_chunk_wait(due, timeout_ms)
+      case process.selector_receive(stop_selector, wait_milliseconds(wait)) {
+        Ok(_owner_stopped) -> Nil
+        Error(Nil) ->
+          replay_after_wait(
+            handlers,
+            stop_selector,
+            wait,
+            chunk,
+            rest,
+            due,
+            timeout_ms,
+          )
+      }
     }
+  }
+}
+
+fn replay_after_wait(
+  handlers: StreamHandlers,
+  stop_selector: process.Selector(StreamProcessMessage),
+  wait: RecordedChunkWait,
+  chunk: recording.Chunk,
+  rest: List(recording.Chunk),
+  due: Int,
+  timeout_ms: Int,
+) -> Nil {
+  case wait {
+    ChunkAfter(_wait_ms) -> {
+      handlers.on_chunk(chunk.data)
+      replay_recorded_chunks(handlers, stop_selector, rest, due, timeout_ms)
+    }
+    TimeoutAfter(timeout_ms: waited_ms) ->
+      handlers.on_error(recorded_timeout(waited_ms))
   }
 }
 

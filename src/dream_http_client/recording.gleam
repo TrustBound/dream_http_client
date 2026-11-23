@@ -73,7 +73,9 @@ pub type RecordedRequest {
 /// ## Variants
 ///
 /// - `BlockingResponse(status, headers, body)`: Complete response body received at once
-/// - `StreamingResponse(status, headers, chunks)`: Response delivered in chunks with timing
+/// - `StreamingResponse(status, headers, chunks)`: Response delivered in chunks with timing.
+///   Playback of a status outside 2xx gives `HttpFailure` with the status,
+///   the headers and all chunks joined as the body, as a live stream does.
 ///
 /// ## Examples
 ///
@@ -117,13 +119,19 @@ pub type RecordedResponse {
 /// A streaming chunk with timing information
 ///
 /// Represents a single chunk of data from a streaming HTTP response, along with
-/// the delay (in milliseconds) since the previous chunk. This timing information
-/// is used during playback to recreate the original streaming behavior.
+/// the delay (in milliseconds) since the previous chunk. Playback uses this
+/// timing to recreate the original streaming behavior: each chunk comes
+/// `delay_ms` after the previous chunk came. The timeout of the request
+/// limits each wait, as in a live stream. A delay longer than the timeout
+/// ends the stream with a `TimedOut` failure.
 ///
 /// ## Fields
 ///
 /// - `data`: The chunk data as a `BitArray`
-/// - `delay_ms`: Milliseconds since the previous chunk (0 for the first chunk)
+/// - `delay_ms`: Milliseconds from the arrival of the previous chunk to the
+///   arrival of this chunk. Record mode saves 0 for the first chunk. In
+///   playback, the delay of the first chunk counts from the start of the
+///   stream.
 ///
 /// ## Examples
 ///
