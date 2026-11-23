@@ -130,7 +130,7 @@ Update documentation for:
 - API changes (update all references)
 - Breaking changes (migration guide)
 
-Every Gleam code block in the README and in doc comments comes from a tested snippet in `test/snippets/`. See "Code Blocks in READMEs and Guides" in the [Full Contributing Guide](https://github.com/TrustBound/dream/blob/main/docs/contributing/contributing.md).
+Every Gleam code block in the README and in doc comments comes from a tested snippet in `test/snippets/`. See "Code Blocks in READMEs and Guides" in the [Full Contributing Guide](https://github.com/TrustBound/dream/blob/main/docs/contributing/contributing.md). Run `make check-snippets` to check them.
 
 ## Review Process
 

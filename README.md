@@ -868,7 +868,7 @@ pub fn fetch_text_with_timeout() -> Result(String, String) {
 
 ## Examples
 
-All examples are tested and verified. See [test/snippets/](https://github.com/TrustBound/dream_http_client/tree/main/test/snippets) for complete, runnable code.
+All examples are tested and verified. See [test/snippets/](https://github.com/TrustBound/dream_http_client/tree/main/test/snippets) for complete, runnable code. `make check-snippets` checks that every code block in the docs matches its tested snippet.
 
 **Basic requests:**
 

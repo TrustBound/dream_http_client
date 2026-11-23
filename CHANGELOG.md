@@ -5,7 +5,7 @@ All notable changes to `dream_http_client` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 6.0.0 - Unreleased
+## [6.0.0] - Unreleased
 
 This release was first prepared as 5.2.0 and never published. It changes four
 public types (`SendError.RequestError`, `StreamMessage.StreamError`, the
@@ -160,7 +160,7 @@ version.
 
 - 518 tests, 0 failed, 100% line coverage, in about 170 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
 
-## 5.1.3 - 2026-03-17
+## [5.1.3] - 2026-03-17
 
 ### Fixed
 
@@ -203,7 +203,7 @@ version.
   `ensure_recorder_table/0`, and `ensure_ets_tables/0` are removed. Tables
   exist from application start.
 
-## 5.1.2 - 2026-03-03
+## [5.1.2] - 2026-03-03
 
 ### Fixed
 
@@ -224,7 +224,7 @@ version.
   and the empty query string edge case. All assertions parse the JSON `query`
   field from the mock server's response for exact matching.
 
-## 5.1.1 - 2026-03-01
+## [5.1.1] - 2026-03-01
 
 ### Fixed
 
@@ -251,7 +251,7 @@ version.
   drop mid-stream), non-UTF-8 response bodies, and error string quality across
   all three execution modes (`send`, `start_stream`, `stream_yielder`).
 
-## 5.1.0 - 2026-02-28
+## [5.1.0] - 2026-02-28
 
 ### Added
 
@@ -295,7 +295,7 @@ version.
   `"HTTP 401 Unauthorized: {\"error\":{\"message\":\"Invalid API key\"}}"` instead of crashing
   or timing out.
 
-## 5.0.0 - 2026-02-16
+## [5.0.0] - 2026-02-16
 
 ### Breaking Changes
 
@@ -363,7 +363,7 @@ case client.send(request) {
 let assert Ok(client.HttpResponse(body: body, ..)) = client.send(request)
 ```
 
-## 4.1.0 - 2026-01-28
+## [4.1.0] - 2026-01-28
 
 ### Changed
 
@@ -373,7 +373,7 @@ let assert Ok(client.HttpResponse(body: body, ..)) = client.send(request)
 
 - Storage test coverage for atomic fixture writes and cleanup.
 
-## 4.0.0 - 2025-12-29
+## [4.0.0] - 2025-12-29
 
 ### Breaking Changes
 
@@ -401,7 +401,7 @@ let assert Ok(client.HttpResponse(body: body, ..)) = client.send(request)
   - **Blocking** recordings persist the response **status code** and **headers**
   - **Streaming** recordings persist response **headers** captured from `stream_start` (and trailing headers when available)
 
-## 3.0.1 - 2025-12-10
+## [3.0.1] - 2025-12-10
 
 ### Added
 
@@ -424,7 +424,7 @@ let assert Ok(client.HttpResponse(body: body, ..)) = client.send(request)
 
 **Note:** Backward compatible - existing recordings still load correctly. User-facing `recorder` API unchanged.
 
-## 3.0.0 - 2025-12-09
+## [3.0.0] - 2025-12-09
 
 ### Breaking Changes
 
@@ -515,7 +515,7 @@ let headers: List(Header) = client.get_headers(req)
 // Access with header.name and header.value
 ```
 
-## 2.1.1 - 2025-11-29
+## [2.1.1] - 2025-11-29
 
 ### Fixed
 
@@ -555,7 +555,7 @@ let headers: List(Header) = client.get_headers(req)
 - Recording only adds overhead when recorder is attached in Record mode - zero cost otherwise
 - ETS tables (`dream_http_client_stream_recorders`, `dream_http_client_ref_mapping`) are created on-demand
 
-## 2.1.0 - 2025-11-28
+## [2.1.0] - 2025-11-28
 
 ### Added
 
@@ -599,7 +599,7 @@ let headers: List(Header) = client.get_headers(req)
 - Added dependencies: `gleam_json`, `simplifile`, `gleam_otp` for recording functionality
 - Internal function `get_timeout` renamed to `resolve_timeout` to avoid naming conflict with public getter
 
-## 2.0.0 - 2025-11-24
+## [2.0.0] - 2025-11-24
 
 ### 🚨 Breaking Changes
 
@@ -683,20 +683,20 @@ let headers: List(Header) = client.get_headers(req)
 
 Special thanks to **Louis Pilfold** for bringing to our attention that the HTTP client did not support message-based streaming for OTP actors, which led to the comprehensive overhaul in this release.
 
-## 1.0.2 - 2025-11-21
+## [1.0.2] - 2025-11-21
 
 ### Changed
 
 - Added HexDocs documentation badge to README
 
-## 1.0.1 - 2025-11-22
+## [1.0.1] - 2025-11-22
 
 ### Fixed
 
 - Fixed logo display on hex.pm by using full GitHub URL
 - Added Dream logo to README
 
-## 1.0.0 - 2025-11-21
+## [1.0.0] - 2025-11-21
 
 ### Added
 
