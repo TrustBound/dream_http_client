@@ -9,11 +9,10 @@ import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
 import fixtures/application.{
-  client_log_level, connection_count, restart_application,
+  await_connection_count, client_log_level, restart_application,
   restart_connection_manager, send_unknown_messages,
 }
 import fixtures/mock_server
-import gleam/erlang/process
 import gleam/result
 
 pub fn tests() -> TestSuite {
@@ -40,6 +39,7 @@ pub fn tests() -> TestSuite {
       // Act
       client.configure_transport(config)
       let level = client_log_level()
+      client.configure_transport(client.transport_config())
 
       // Assert
       level
@@ -55,6 +55,7 @@ pub fn tests() -> TestSuite {
       // Act
       client.configure_transport(config)
       let level = client_log_level()
+      client.configure_transport(client.transport_config())
 
       // Assert
       level
@@ -69,6 +70,7 @@ pub fn tests() -> TestSuite {
       // Act
       client.configure_transport(config)
       let level = client_log_level()
+      client.configure_transport(client.transport_config())
 
       // Assert
       level
@@ -100,8 +102,7 @@ pub fn tests() -> TestSuite {
 
       // Act
       let _ = client.send(mock_server.get("/text"))
-      process.sleep(300)
-      let count = connection_count()
+      let count = await_connection_count(0, 3000)
       client.configure_transport(client.transport_config())
       restart_connection_manager()
 

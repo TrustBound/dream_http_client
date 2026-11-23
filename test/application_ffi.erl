@@ -5,7 +5,7 @@
 %% public API does not show.
 
 -export([connection_protocols/1, restart_application/0, restart_connection_manager/0, client_log_level/0,
-         send_unknown_messages/0, connection_count/0, lease_count/0,
+         send_unknown_messages/0, connection_count/0, await_connection_count/2, lease_count/0,
          kill_stream_owner/0]).
 
 restart_application() ->
@@ -51,6 +51,21 @@ connection_protocols(Port) ->
 
 connection_count() ->
     ets:info(dream_http_client_connections, size).
+
+%% Waits until the pool holds Count connections, or until TimeoutMs passed,
+%% and returns the number of connections then.
+await_connection_count(Count, TimeoutMs) ->
+    await_connection_count(Count, erlang:monotonic_time(millisecond) + TimeoutMs, connection_count()).
+
+await_connection_count(Count, _Deadline, Count) ->
+    Count;
+await_connection_count(Count, Deadline, Current) ->
+    case erlang:monotonic_time(millisecond) >= Deadline of
+        true -> Current;
+        false ->
+            timer:sleep(10),
+            await_connection_count(Count, Deadline, connection_count())
+    end.
 
 %% The number of leases in the state of the connection manager.
 lease_count() ->

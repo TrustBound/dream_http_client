@@ -21,6 +21,11 @@ pub fn client_log_level() -> String
 pub fn send_unknown_messages() -> Nil
 
 /// The number of open connections in the connection table.
+/// Wait until the pool holds `count` connections, or until `timeout_ms`
+/// passed, and return the number of connections then.
+@external(erlang, "application_ffi", "await_connection_count")
+pub fn await_connection_count(count: Int, timeout_ms: Int) -> Int
+
 @external(erlang, "application_ffi", "connection_count")
 pub fn connection_count() -> Int
 

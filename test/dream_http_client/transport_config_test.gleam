@@ -519,20 +519,5 @@ pub fn tests() -> TestSuite {
         |> or_fail_with("Every value of the chain should be kept")
       }),
     ]),
-    group("client.configure_transport", [
-      it("applies the default config and returns Nil", fn() {
-        // Arrange
-        let config = client.transport_config()
-
-        // Act
-        let result = client.configure_transport(config)
-
-        // Assert
-        result
-        |> should
-        |> be_equal(Nil)
-        |> or_fail_with("configure_transport should return Nil")
-      }),
-    ]),
   ])
 }

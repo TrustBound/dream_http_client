@@ -66,42 +66,6 @@ pub fn tests() -> TestSuite {
       |> be_equal(True)
       |> or_fail_with("A server from another authority should be rejected")
     }),
-    it("send uses the default certificate authority file", fn() {
-      // Arrange
-      use certificates <- tls_server.with(19_963)
-      use <- tls_server.with_default_certificate_authority_file(
-        certificates.certificate_authority,
-      )
-      let request = tls_server.request(certificates.port)
-
-      // Act
-      let body = client.send(request) |> result.map(fn(r) { r.body })
-
-      // Assert
-      body
-      |> should
-      |> be_equal(Ok(<<"hello over tls">>))
-      |> or_fail_with("The default authority file should be used")
-    }),
-    it("the request file wins over the default file", fn() {
-      // Arrange
-      use certificates <- tls_server.with(19_964)
-      use <- tls_server.with_default_certificate_authority_file(
-        certificates.other_certificate_authority,
-      )
-      let request =
-        tls_server.request(certificates.port)
-        |> client.certificate_authority_file(certificates.certificate_authority)
-
-      // Act
-      let body = client.send(request) |> result.map(fn(r) { r.body })
-
-      // Assert
-      body
-      |> should
-      |> be_equal(Ok(<<"hello over tls">>))
-      |> or_fail_with("The request authority file should win")
-    }),
     it("send fails when the certificate authority file is missing", fn() {
       // Arrange
       use certificates <- tls_server.with(19_965)

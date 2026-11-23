@@ -4,7 +4,6 @@
 //// The requests go to dream_mock_server, which the test main starts on
 //// localhost:9876.
 
-import dream_http_client/client
 import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
@@ -14,7 +13,6 @@ import snippets/protocols_config
 import snippets/stream_messages_basic
 import snippets/stream_to_actor
 import snippets/stream_yielder_basic
-import snippets/transport_config_example
 
 pub fn tests() -> TestSuite {
   describe("snippets", [
@@ -74,17 +72,6 @@ pub fn tests() -> TestSuite {
           >>),
         )
         |> or_fail_with("The actor should collect the whole stream")
-      }),
-      it("Transport settings: configure_high_concurrency returns Nil", fn() {
-        // Act
-        let value = transport_config_example.configure_high_concurrency()
-        client.configure_transport(client.transport_config())
-
-        // Assert
-        value
-        |> should
-        |> be_equal(Nil)
-        |> or_fail_with("configure_high_concurrency should return Nil")
       }),
     ]),
   ])

@@ -15,10 +15,13 @@
 %%   no new request. The pool closes it when its last lease ends.
 
 -export([start_link/0, ensure_connection/4, release/1, release_paused/1, abandon/1, refuse/1,
-         retire/1, idle_timeout_changed/0]).
+         retire/1, idle_timeout_changed/0, stop_connection/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(TABLE, dream_http_client_connections).
+
+%% How long the pool waits for a connection to stop by itself.
+-define(STOP_TIMEOUT, 5000).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -296,7 +299,7 @@ abandon_lease(Lease, State = #{leases := Leases}) ->
     end_lease(Lease, State).
 
 close(ConnPid) ->
-    gun:close(ConnPid),
+    stop_connection(ConnPid),
     ets:match_delete(?TABLE, {'_', ConnPid, '_', '_', '_'}).
 
 open_connection(Scheme, Host, Port, GunOpts) ->
@@ -372,6 +375,29 @@ await_limit(ConnPid, http2, Deadline) ->
         {error, timeout}
     end.
 
+%% Stops a connection that the pool no longer uses, after the connection
+%% has handled the messages that it already got.
+%%
+%% The server can close the socket just before the pool stops the
+%% connection: gun then has the message of the closed socket in its
+%% mailbox, and it reports the lost socket (gun_down, which the pool logs
+%% as a warning) when it handles that message. gun:close/1 stops gun with
+%% an exit signal, which takes effect before gun handles its messages, so
+%% the report and the warning would be lost. sys:terminate/3 is a message,
+%% so gun handles it after the messages before it. It runs in its own
+%% process, because it waits for gun to stop. When gun stopped first, or
+%% does not stop in time, gun:close/1 makes sure that it is gone.
+stop_connection(ConnPid) ->
+    proc_lib:spawn(fun() -> terminate_connection(ConnPid) end),
+    ok.
+
+terminate_connection(ConnPid) ->
+    try
+        sys:terminate(ConnPid, shutdown, ?STOP_TIMEOUT)
+    catch
+        exit:_ -> gun:close(ConnPid)
+    end.
+
 %% Returns the reference of the timer.
 schedule_idle_check() ->
     IdleTimeout = get_idle_timeout(),
@@ -387,7 +413,7 @@ reap_idle_connections(#{leases := Leases, last_used := LastUsed}) ->
         Used = maps:get(ConnPid, LastUsed, Opened),
         case Now - Used > IdleTimeout andalso lease_count(ConnPid, Leases) =:= 0 of
             true ->
-                gun:close(ConnPid),
+                stop_connection(ConnPid),
                 ets:match_delete(?TABLE, {'_', ConnPid, '_', '_', '_'});
             false ->
                 ok

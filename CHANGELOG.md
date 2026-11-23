@@ -154,6 +154,12 @@ version.
   scheduled with the old value (60 seconds by default) ran first, so a
   shorter timeout applied only after it. Now `configure_transport` replaces
   the scheduled check.
+- The `connection down` warning is no longer lost when the pool closes a
+  connection whose socket the server closed a moment before. gun reports
+  the lost socket while it handles the message of the socket, and the pool
+  stopped gun with an exit signal, which can take effect first. Now the
+  pool stops a connection with a message, after the messages that the
+  connection already got.
 - The doc of `max_concurrent_streams` says what the value is: the HTTP/2
   `SETTINGS_MAX_CONCURRENT_STREAMS` that the client sends to the server.
   The pool follows the limit that the server sends.
@@ -322,7 +328,7 @@ version.
 
 ### Testing
 
-- 738 tests, 0 failed, 100% line coverage (1227 of 1227 lines), in about 155 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
+- 740 tests, 0 failed, 100% line coverage (1232 of 1232 lines), in about 150 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
 
 ## [5.1.3] - 2026-03-17
 

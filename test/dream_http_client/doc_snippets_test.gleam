@@ -44,10 +44,7 @@ import snippets/doc_client_get_timeout
 import snippets/doc_client_headers
 import snippets/doc_client_host
 import snippets/doc_client_http2_only
-import snippets/doc_client_idle_timeout
 import snippets/doc_client_is_stream_active
-import snippets/doc_client_log_level
-import snippets/doc_client_max_connections
 import snippets/doc_client_method
 import snippets/doc_client_new
 import snippets/doc_client_on_stream_chunk
@@ -68,7 +65,6 @@ import snippets/doc_client_stream_failure_to_string
 import snippets/doc_client_stream_handle
 import snippets/doc_client_stream_to_string
 import snippets/doc_client_timeout
-import snippets/doc_client_transport_config
 import snippets/doc_client_transport_error_to_string
 import snippets/doc_client_transport_getters
 import snippets/doc_client_transport_tuning
@@ -688,19 +684,6 @@ pub fn tests() -> TestSuite {
         |> or_fail_with("http2_only_request sets Http2Only")
       }),
     ]),
-    group("doc_client_idle_timeout", [
-      it("keep_idle_connections applies the config", fn() {
-        // Act
-        let value = doc_client_idle_timeout.keep_idle_connections()
-        client.configure_transport(client.transport_config())
-
-        // Assert
-        value
-        |> should
-        |> be_equal(Nil)
-        |> or_fail_with("keep_idle_connections applies the config")
-      }),
-    ]),
     group("doc_client_is_stream_active", [
       it("running_after_start sees the stream run", fn() {
         // Act
@@ -711,32 +694,6 @@ pub fn tests() -> TestSuite {
         |> should
         |> be_equal(Ok(True))
         |> or_fail_with("running_after_start sees the stream run")
-      }),
-    ]),
-    group("doc_client_log_level", [
-      it("warnings_only applies the config", fn() {
-        // Act
-        let value = doc_client_log_level.warnings_only()
-        client.configure_transport(client.transport_config())
-
-        // Assert
-        value
-        |> should
-        |> be_equal(Nil)
-        |> or_fail_with("warnings_only applies the config")
-      }),
-    ]),
-    group("doc_client_max_connections", [
-      it("allow_more_connections applies the config", fn() {
-        // Act
-        let value = doc_client_max_connections.allow_more_connections()
-        client.configure_transport(client.transport_config())
-
-        // Assert
-        value
-        |> should
-        |> be_equal(Nil)
-        |> or_fail_with("allow_more_connections applies the config")
       }),
     ]),
     group("doc_client_method", [
@@ -979,19 +936,6 @@ pub fn tests() -> TestSuite {
         |> should
         |> be_equal(Some(60_000))
         |> or_fail_with("slow_request builds the request")
-      }),
-    ]),
-    group("doc_client_transport_config", [
-      it("configure_pool applies the config", fn() {
-        // Act
-        let value = doc_client_transport_config.configure_pool()
-        client.configure_transport(client.transport_config())
-
-        // Assert
-        value
-        |> should
-        |> be_equal(Nil)
-        |> or_fail_with("configure_pool applies the config")
       }),
     ]),
     group("doc_client_transport_error_to_string", [

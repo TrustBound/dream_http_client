@@ -221,7 +221,8 @@ pub fn tests() -> TestSuite {
         let #(_result, lines) =
           log_capture.capture(
             fn() { client.send(edge_server.request(port)) },
-            1000,
+            2,
+            log_wait_ms,
           )
 
         // Assert
@@ -245,7 +246,8 @@ pub fn tests() -> TestSuite {
                 client.send(mock_server.get("/corrupted-gzip")),
               )
             },
-            1000,
+            5,
+            log_wait_ms,
           )
 
         // Assert
@@ -259,7 +261,7 @@ pub fn tests() -> TestSuite {
         let level = client.LogInfo
 
         // Act
-        let lines = log_lines_at(level)
+        let lines = log_lines_at(level, 3)
 
         // Assert
         lines
@@ -272,7 +274,7 @@ pub fn tests() -> TestSuite {
         let level = client.LogDebug
 
         // Act
-        let lines = log_lines_at(level)
+        let lines = log_lines_at(level, 3)
 
         // Assert
         lines
@@ -285,7 +287,7 @@ pub fn tests() -> TestSuite {
         let level = client.LogWarning
 
         // Act
-        let lines = log_lines_at(level)
+        let lines = log_lines_at(level, 2)
 
         // Assert
         lines
@@ -298,7 +300,7 @@ pub fn tests() -> TestSuite {
         let level = client.LogError
 
         // Act
-        let lines = log_lines_at(level)
+        let lines = log_lines_at(level, 0)
 
         // Assert
         lines
@@ -311,7 +313,7 @@ pub fn tests() -> TestSuite {
         let level = client.LogNone
 
         // Act
-        let lines = log_lines_at(level)
+        let lines = log_lines_at(level, 0)
 
         // Assert
         lines
@@ -323,6 +325,20 @@ pub fn tests() -> TestSuite {
   ])
 }
 
+/// How long a test waits for the log lines that it expects.
+const log_wait_ms = 5000
+
+/// How long a test that expects no log line waits for one that should not
+/// come.
+const quiet_wait_ms = 1000
+
+fn wait_for(count: Int) -> Int {
+  case count {
+    0 -> quiet_wait_ms
+    _ -> log_wait_ms
+  }
+}
+
 const connection_closed_line =
   "info: [dream_http] connection closed: pid=<pid> protocol=http reason=closed"
 
@@ -332,8 +348,10 @@ const connection_down_line =
 /// The log lines of the client at `level`, each line once and sorted, for
 /// a GET to a server that closes the connection while it is idle (the info
 /// line) and a GET to a server that closes it without an answer (the
-/// warning). The transport configuration goes back to the defaults.
-fn log_lines_at(level: client.LogLevel) -> List(String) {
+/// warning). It waits for `count` lines: the info line and one warning for
+/// each of the two connections that the second GET uses, or fewer when the
+/// level hides some. The transport configuration goes back to the defaults.
+fn log_lines_at(level: client.LogLevel, count: Int) -> List(String) {
   restart_application()
   client.transport_config()
   |> client.log_level(level)
@@ -346,7 +364,8 @@ fn log_lines_at(level: client.LogLevel) -> List(String) {
           send_to_edge_server("close"),
         )
       },
-      1000,
+      count,
+      wait_for(count),
     )
   client.configure_transport(client.transport_config())
   lines
