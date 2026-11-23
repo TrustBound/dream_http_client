@@ -14,6 +14,16 @@ version.
 
 ### Fixed
 
+- The connection pool now gives each request a free connection. Before, it
+  opened a new connection for every request until it held 50 for a host, and
+  then picked one by round robin, so a request could wait behind a long
+  stream on the same HTTP/1.1 connection. Now a request uses a connection
+  that serves no other request, opens a new one only when every connection
+  is busy, and shares a busy connection only at `max_connections`.
+- The idle check no longer closes a connection that serves a long response.
+- A stream that stops before its end, for example after a cancel, now closes
+  its HTTP/1.1 connection, so the rest of that response never reaches the
+  next request. An HTTP/2 connection is used again.
 - A streamed response with an empty body now ends at once: `stream_yielder`
   yields nothing and `start_stream` calls `on_stream_end([])`. Before, the
   stream waited until it timed out.

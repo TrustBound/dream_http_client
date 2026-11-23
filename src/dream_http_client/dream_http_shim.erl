@@ -22,7 +22,8 @@
 %% `events` holds the stream events that no caller has fetched yet, and
 %% `waiter` is the caller that waits for the next event. `requester` is the
 %% process that started the stream: the owner stops when it stops.
--record(owner, {requester, conn, ref, headers, zlib, timeout, events = [], waiter = none}).
+%% `lease` is the lease on the connection (see dream_http_conn_manager).
+-record(owner, {requester, conn, ref, lease, headers, zlib, timeout, events = [], waiter = none}).
 
 %% ============================================================================
 %% Requests and redirects
@@ -34,17 +35,17 @@ request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, S
       auto_redirect => AutoRedirect, settings => Settings}.
 
 %% Sends the request and follows redirects. Returns the response head of the
-%% last response, or {error, TransportError}.
+%% last response and the lease on its connection, or {error, TransportError}.
 open_response(_Request, Redirects) when Redirects >= ?MAX_REDIRECTS ->
     {error, {unexpected, <<"Too many redirects (max 5)">>}};
 open_response(Request, Redirects) ->
     #{method := Method, url := Url, body := Body, timeout := TimeoutMs,
       auto_redirect := AutoRedirect} = Request,
     case open_stream(Request, 1) of
-        {ok, ConnPid, StreamRef, IsFin, Status, RespHeaders} = Response ->
+        {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders} = Response ->
             case AutoRedirect andalso redirect_location(Status, RespHeaders) of
                 {ok, Location} ->
-                    _ = await_body(ConnPid, StreamRef, IsFin, TimeoutMs),
+                    _ = finish_body(Lease, await_body(ConnPid, StreamRef, IsFin, TimeoutMs)),
                     Next = Request#{url := uri_string:resolve(Location, Url),
                                     method := redirect_method(Status, Method),
                                     body := redirect_body(Status, Body)},
@@ -66,12 +67,13 @@ open_stream(Request, RetriesLeft) ->
         {ok, Scheme, Host, Port, PathQs} ->
             GunOpts = build_gun_opts(ConnectTimeoutMs, Settings),
             case get_or_open_connection(Scheme, Host, Port, GunOpts) of
-                {ok, ConnPid, _Protocol} ->
+                {ok, ConnPid, _Protocol, Lease} ->
                     StreamRef = gun:request(ConnPid, method_binary(Method), PathQs, Headers, Body),
                     case gun:await(ConnPid, StreamRef, TimeoutMs) of
                         {response, IsFin, Status, RespHeaders} ->
-                            {ok, ConnPid, StreamRef, IsFin, Status, RespHeaders};
+                            {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders};
                         {error, Reason} ->
+                            dream_http_conn_manager:abandon(Lease),
                             case RetriesLeft > 0 andalso is_stale_connection_error(Reason) of
                                 true ->
                                     gun:close(ConnPid),
@@ -96,6 +98,21 @@ await_body(ConnPid, StreamRef, nofin, TimeoutMs) ->
         Result -> Result
     end.
 
+%% Gives the lease back after a body read: released when the body is
+%% complete, abandoned when the read failed. Returns the read result.
+finish_body(Lease, Result = {ok, _Body}) ->
+    dream_http_conn_manager:release(Lease),
+    Result;
+finish_body(Lease, Result) ->
+    dream_http_conn_manager:abandon(Lease),
+    Result.
+
+%% Gives the lease back after the last event of a stream.
+finish_stream(Lease, {done, _Trailers}) ->
+    dream_http_conn_manager:release(Lease);
+finish_stream(Lease, {failed, _Failure}) ->
+    dream_http_conn_manager:abandon(Lease).
+
 redirect_location(Status, Headers)
         when Status =:= 301; Status =:= 302; Status =:= 303; Status =:= 307; Status =:= 308 ->
     case lists:keyfind(<<"location">>, 1, Headers) of
@@ -118,8 +135,8 @@ redirect_body(_Status, Body) -> Body.
 request_sync(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings) ->
     Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings),
     case open_response(Request, 0) of
-        {ok, ConnPid, StreamRef, IsFin, Status, RespHeaders} ->
-            case await_body(ConnPid, StreamRef, IsFin, TimeoutMs) of
+        {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders} ->
+            case finish_body(Lease, await_body(ConnPid, StreamRef, IsFin, TimeoutMs)) of
                 {ok, RespBody} ->
                     {DecompBody, CleanHeaders} = maybe_decompress_response(RespBody, RespHeaders),
                     {ok, {Status, CleanHeaders, DecompBody}};
@@ -134,13 +151,14 @@ request_sync(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedire
 %% Streaming responses (shared by the pull and the message streams)
 %% ============================================================================
 
-%% Returns the head of a 2xx response, or {error, StreamFailure}.
+%% Returns the head of a 2xx response and the lease on its connection, or
+%% {error, StreamFailure}.
 open_streaming_response(Request = #{timeout := TimeoutMs}) ->
     case open_response(Request, 0) of
-        {ok, ConnPid, StreamRef, IsFin, Status, RespHeaders} when Status >= 200, Status < 300 ->
-            {ok, ConnPid, StreamRef, IsFin, RespHeaders};
-        {ok, ConnPid, StreamRef, IsFin, Status, RespHeaders} ->
-            Body = case await_body(ConnPid, StreamRef, IsFin, TimeoutMs) of
+        {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders} when Status >= 200, Status < 300 ->
+            {ok, ConnPid, StreamRef, Lease, IsFin, RespHeaders};
+        {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders} ->
+            Body = case finish_body(Lease, await_body(ConnPid, StreamRef, IsFin, TimeoutMs)) of
                 {ok, FullBody} -> body_text(FullBody);
                 {error, _Reason} -> <<>>
             end,
@@ -178,9 +196,9 @@ request_stream(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedi
 stream_owner_init(Request = #{timeout := TimeoutMs}, Requester) ->
     erlang:monitor(process, Requester),
     case open_streaming_response(Request) of
-        {ok, ConnPid, StreamRef, IsFin, RespHeaders} ->
+        {ok, ConnPid, StreamRef, Lease, IsFin, RespHeaders} ->
             Owner = #owner{requester = Requester, conn = ConnPid, ref = StreamRef,
-                           headers = RespHeaders, zlib = stream_zlib(RespHeaders),
+                           lease = Lease, headers = RespHeaders, zlib = stream_zlib(RespHeaders),
                            timeout = TimeoutMs},
             stream_owner_loop(Owner#owner{events = [{done, []} || IsFin =:= fin]});
         {error, Failure} ->
@@ -188,13 +206,14 @@ stream_owner_init(Request = #{timeout := TimeoutMs}, Requester) ->
     end.
 
 %% Gives each fetched event to its caller, and collects the gun messages of
-%% the stream until a caller fetches them. The owner stops after it gives
-%% the last event of the stream.
+%% the stream until a caller fetches them. The owner gives the lease back
+%% and stops after it gives the last event of the stream. When the owner
+%% stops before that, the connection manager sees the lease abandoned.
 stream_owner_loop(Owner = #owner{waiter = Waiter, events = [Event | Events]}) when Waiter =/= none ->
     Waiter ! {stream_event, self(), Event},
     case Event of
         {chunk, _Data} -> stream_owner_loop(Owner#owner{waiter = none, events = Events});
-        _ -> ok
+        _ -> finish_stream(Owner#owner.lease, Event)
     end;
 stream_owner_loop(Owner = #owner{requester = Requester, conn = ConnPid, ref = StreamRef,
                                  waiter = Waiter, timeout = TimeoutMs}) ->
@@ -259,7 +278,9 @@ down_failure(Reason) -> {transport_failure, {process_down, inspect(Reason)}}.
 %% The translator is linked to the stream process and traps exits. When the
 %% stream process stops, for example after a cancel, the translator cancels
 %% the gun stream and stops too. When the translator crashes, the link stops
-%% the stream process.
+%% the stream process. The translator gives the lease on the connection back
+%% after the last event. When it stops before that, the connection manager
+%% sees the lease abandoned.
 request_stream_messages(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings) ->
     Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings),
     StreamPid = self(),
@@ -269,18 +290,18 @@ request_stream_messages(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs,
 translator_init(Request = #{timeout := TimeoutMs}, StreamPid) ->
     process_flag(trap_exit, true),
     case open_streaming_response(Request) of
-        {ok, ConnPid, StreamRef, IsFin, RespHeaders} ->
+        {ok, ConnPid, StreamRef, Lease, IsFin, RespHeaders} ->
             StreamPid ! {http, {translator_start, gleam_headers(RespHeaders)}},
-            Translator = {ConnPid, StreamRef, StreamPid, TimeoutMs},
+            Translator = {ConnPid, StreamRef, Lease, StreamPid, TimeoutMs},
             case IsFin of
-                fin -> send_events(Translator, [{done, []}]);
+                fin -> finish_stream(Lease, send_events(Translator, [{done, []}]));
                 nofin -> translator_loop(Translator, stream_zlib(RespHeaders))
             end;
         {error, Failure} ->
             StreamPid ! {http, {translator_error, Failure}}
     end.
 
-translator_loop(Translator = {ConnPid, StreamRef, StreamPid, TimeoutMs}, ZlibCtx) ->
+translator_loop(Translator = {ConnPid, StreamRef, _Lease, StreamPid, TimeoutMs}, ZlibCtx) ->
     receive
         Message = {gun_data, ConnPid, StreamRef, _IsFin, _Data} ->
             translate(Translator, Message, ZlibCtx);
@@ -296,15 +317,15 @@ translator_loop(Translator = {ConnPid, StreamRef, StreamPid, TimeoutMs}, ZlibCtx
         StreamPid ! {http, {translator_error, {transport_failure, {timed_out, TimeoutMs}}}}
     end.
 
-translate(Translator, Message, ZlibCtx) ->
+translate(Translator = {_ConnPid, _StreamRef, Lease, _StreamPid, _TimeoutMs}, Message, ZlibCtx) ->
     {Events, NewZlibCtx} = stream_events(Message, ZlibCtx),
     case send_events(Translator, Events) of
         {chunk, _Data} -> translator_loop(Translator, NewZlibCtx);
-        _ -> ok
+        LastEvent -> finish_stream(Lease, LastEvent)
     end.
 
 %% Sends the events to the stream process and returns the last one.
-send_events({_ConnPid, _StreamRef, StreamPid, _TimeoutMs}, Events) ->
+send_events({_ConnPid, _StreamRef, _Lease, StreamPid, _TimeoutMs}, Events) ->
     lists:foreach(fun(Event) -> StreamPid ! {http, translator_message(Event)} end, Events),
     lists:last(Events).
 

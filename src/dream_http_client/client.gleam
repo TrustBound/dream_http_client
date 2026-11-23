@@ -1190,6 +1190,12 @@ pub fn transport_config() -> TransportConfig {
 /// host. With HTTP/2, a single connection supports multiplexed streams,
 /// so fewer connections are needed than with HTTP/1.1.
 ///
+/// Each request gets a connection that serves no other request. The pool
+/// opens a new connection only when every connection to the host is busy.
+/// When `count` connections are busy, a new request shares the connection
+/// with the fewest requests. On HTTP/1.1 it then waits until the responses
+/// before it are complete.
+///
 /// ## Parameters
 ///
 /// - `config`: The transport config to modify
@@ -1215,7 +1221,9 @@ pub fn max_connections(config: TransportConfig, count: Int) -> TransportConfig {
 /// Set idle connection timeout in milliseconds
 ///
 /// Controls how long an idle connection is held open before being closed.
-/// Longer timeouts improve connection reuse but consume resources.
+/// Longer timeouts improve connection reuse but consume resources. A
+/// connection that serves a response, for example a long stream, is not
+/// idle and stays open.
 ///
 /// ## Parameters
 ///

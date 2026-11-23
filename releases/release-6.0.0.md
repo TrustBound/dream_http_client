@@ -240,8 +240,9 @@ The HTTP client backend has been replaced from Erlang's `httpc` to
 - **HTTP/2 support** — native multiplexing over a single TCP connection
   when connecting to HTTP/2-capable servers
 - **Connection pooling** — managed by a new `dream_http_conn_manager`
-  gen_server with per-host multi-connection pools, round-robin selection,
-  and automatic dead-connection cleanup
+  gen_server with per-host multi-connection pools. A request gets a
+  connection that serves no other request, and automatic dead-connection
+  cleanup removes connections that stopped
 - **Stale connection retry** — requests that hit a server-closed connection
   are automatically retried once on a fresh connection
 - **Protocol negotiation** — TLS connections negotiate HTTP/2 via ALPN,
@@ -381,9 +382,12 @@ The connection pool is managed by `dream_http_conn_manager`, a gen_server
 supervised by `dream_http_client_sup`. It uses an ETS `bag` table
 (`dream_http_client_connections`) for per-host multi-connection pooling with:
 
-- Round-robin connection selection
+- A free connection for each request: the pool opens a new connection only
+  when every connection is busy, and shares a busy connection only at
+  `max_connections` (the one with the fewest requests)
 - Proactive dead-connection cleanup
-- Idle connection reaping
+- Idle connection reaping, which never closes a connection that serves a
+  response
 - Crash recovery (re-monitors connections on gen_server restart)
 
 ---
