@@ -3,7 +3,8 @@
 %% The values this module returns to Gleam are Gleam values:
 %%
 %% - a transport error is a `client.TransportError`, for example
-%%   `{timed_out, TimeoutMs}` or `remote_closed`;
+%%   `{timed_out, TimeoutMs}` or `remote_closed`. An HTTP/2 error code in it
+%%   is a `client.Http2ErrorCode`, for example `refused_stream`;
 %% - a stream failure is a `client.StreamFailure`:
 %%   `{transport_failure, TransportError}` or
 %%   `{http_failure, {http_response, Status, [{header, Name, Value}], Body}}`,
@@ -654,11 +655,27 @@ transport_error(Reason, _TimeoutMs) when Reason =:= closed; element(1, Reason) =
     remote_closed;
 transport_error({down, Reason}, _TimeoutMs) -> {process_down, inspect(Reason)};
 transport_error({stream_error, Code, HumanReadable}, _TimeoutMs) ->
-    {stream_reset, atom_to_binary(Code, utf8), atom_to_binary(HumanReadable, utf8)};
+    {stream_reset, http2_error_code(Code), atom_to_binary(HumanReadable, utf8)};
+transport_error({goaway, Code, HumanReadable}, _TimeoutMs) ->
+    {goaway, http2_error_code(Code), atom_to_binary(HumanReadable, utf8)};
 transport_error({Code, HumanReadable}, _TimeoutMs) when is_atom(Code), is_atom(HumanReadable) ->
-    {connection_error, atom_to_binary(Code, utf8), atom_to_binary(HumanReadable, utf8)};
+    {connection_error, http2_error_code(Code), atom_to_binary(HumanReadable, utf8)};
 transport_error(Reason, _TimeoutMs) ->
     {unexpected, inspect(Reason)}.
+
+%% Turns the name gun gives an HTTP/2 error code into a
+%% `client.Http2ErrorCode`. The names are those of cow_http2, and all but
+%% one are also the names of the Gleam constructors.
+http2_error_code(http_1_1_required) ->
+    http11_required;
+http2_error_code(Code) ->
+    Known = [no_error, protocol_error, internal_error, flow_control_error, settings_timeout,
+             stream_closed, frame_size_error, refused_stream, cancel, compression_error,
+             connect_error, enhance_your_calm, inadequate_security],
+    case lists:member(Code, Known) of
+        true -> Code;
+        false -> {unknown_error_code, atom_to_binary(Code, utf8)}
+    end.
 
 connect_error({pool_timeout, TimeoutMs}) -> {timed_out, TimeoutMs};
 connect_error(econnrefused) -> {connect_failed, <<"Connection refused">>};

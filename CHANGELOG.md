@@ -58,6 +58,10 @@ version.
 - A 1xx response before the final response, for example 103 Early Hints, no
   longer crashes `send` and the stream functions. The client skips it and
   returns the final response.
+- An HTTP/2 GOAWAY now comes back as `Goaway(code, description)`. Before, it
+  was `Unexpected("{goaway,no_error,'The connection is going away.'}")`.
+  `Goaway` has no `last_stream_id` and no `debug_data`, because gun does not
+  give them.
 - The idle check no longer closes a connection that serves a long response.
 - A stream that stops before its end, for example after a cancel, now closes
   its HTTP/1.1 connection, so the rest of that response never reaches the
@@ -89,6 +93,11 @@ version.
   opens at most `max_connections` connections to each host.
   `client.get_pool()` and `client.get_pool_max_connections()` read the
   settings, and `ConnectionPool` is the opaque type of a pool.
+- `Http2ErrorCode`, a type for the HTTP/2 error codes of RFC 9113
+  (`NoError`, `RefusedStream`, `EnhanceYourCalm` and the others, and
+  `UnknownErrorCode(name)` for a code outside them). `StreamReset`, `Goaway`
+  and `ConnectionError` carry it in `code`, so a caller matches on a
+  constructor, not on text.
 - `client.body_text(response)` reads a response body as a UTF-8 string.
 - `client.body_bits(request, bytes)` sets a request body that is not text,
   such as a file.

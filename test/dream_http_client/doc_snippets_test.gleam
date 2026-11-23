@@ -440,6 +440,34 @@ pub fn tests() -> TestSuite {
       }),
     ]),
     group("doc_client_explain_transport_error", [
+      it("explain reads a refused stream", fn() {
+        // Act
+        let value =
+          doc_client_explain_transport_error.explain(client.StreamReset(
+            code: client.RefusedStream,
+            description: "Stream reset by server.",
+          ))
+
+        // Assert
+        value
+        |> should
+        |> be_equal("The server refused the request")
+        |> or_fail_with("explain should name a refused stream")
+      }),
+      it("explain reads a GOAWAY", fn() {
+        // Act
+        let value =
+          doc_client_explain_transport_error.explain(client.Goaway(
+            code: client.NoError,
+            description: "The connection is going away.",
+          ))
+
+        // Assert
+        value
+        |> should
+        |> be_equal("The server is going away")
+        |> or_fail_with("explain should name a GOAWAY")
+      }),
       it("explain reads a timeout", fn() {
         // Act
         let value =

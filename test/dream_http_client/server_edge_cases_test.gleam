@@ -5,9 +5,10 @@
 //// own `edge_server` on a free port.
 
 import dream_http_client/client.{
-  ConnectFailed, ConnectionError, Header, HttpFailure, HttpResponse, ProcessDown,
-  RemoteClosed, RequestError, StreamReset, TimedOut, TransportFailure,
-  Unexpected,
+  ConnectFailed, ConnectionError, Goaway, Header, Http11Required, HttpFailure,
+  HttpResponse, InternalError, NoError, ProcessDown, ProtocolError, RemoteClosed,
+  RequestError, StreamReset, TimedOut, TransportFailure, Unexpected,
+  UnknownErrorCode,
 }
 import dream_http_client/recorder.{directory, mode, start}
 import dream_http_client/recording
@@ -245,12 +246,56 @@ pub fn tests() -> TestSuite {
         |> be_equal(
           Error(
             RequestError(StreamReset(
-              code: "internal_error",
+              code: InternalError,
               description: "Stream reset by server.",
             )),
           ),
         )
         |> or_fail_with("RST_STREAM should give StreamReset")
+      }),
+      it("reports the HTTP/2 code that asks for HTTP/1.1", fn() {
+        // Arrange
+        use port <- edge_server.with("h2_rst_http11")
+        let request =
+          edge_server.request(port) |> client.protocols(client.Http2Only)
+
+        // Act
+        let result = client.send(request)
+
+        // Assert
+        result
+        |> should
+        |> be_equal(
+          Error(
+            RequestError(StreamReset(
+              code: Http11Required,
+              description: "Stream reset by server.",
+            )),
+          ),
+        )
+        |> or_fail_with("HTTP_1_1_REQUIRED should give Http11Required")
+      }),
+      it("reports an HTTP/2 code that RFC 9113 does not define", fn() {
+        // Arrange
+        use port <- edge_server.with("h2_rst_unknown")
+        let request =
+          edge_server.request(port) |> client.protocols(client.Http2Only)
+
+        // Act
+        let result = client.send(request)
+
+        // Assert
+        result
+        |> should
+        |> be_equal(
+          Error(
+            RequestError(StreamReset(
+              code: UnknownErrorCode(name: "unknown_error"),
+              description: "Stream reset by server.",
+            )),
+          ),
+        )
+        |> or_fail_with("An unknown code should give UnknownErrorCode")
       }),
       it("sends again once, then reports an HTTP/2 GOAWAY", fn() {
         // Arrange
@@ -266,12 +311,13 @@ pub fn tests() -> TestSuite {
         |> should
         |> be_equal(
           Error(
-            RequestError(Unexpected(
-              "{goaway,no_error,'The connection is going away.'}",
+            RequestError(Goaway(
+              code: NoError,
+              description: "The connection is going away.",
             )),
           ),
         )
-        |> or_fail_with("A second GOAWAY should be reported")
+        |> or_fail_with("A second GOAWAY should give Goaway")
       }),
       it("reports an HTTP/2 connection error", fn() {
         // Arrange
@@ -288,7 +334,7 @@ pub fn tests() -> TestSuite {
         |> be_equal(
           Error(
             RequestError(ConnectionError(
-              code: "protocol_error",
+              code: ProtocolError,
               description: connection_error_description,
             )),
           ),
@@ -455,7 +501,7 @@ pub fn tests() -> TestSuite {
           Ok(
             Error(
               TransportFailure(ConnectionError(
-                code: "protocol_error",
+                code: ProtocolError,
                 description: connection_error_description,
               )),
             ),
@@ -554,7 +600,7 @@ pub fn tests() -> TestSuite {
         |> be_equal(
           Ok(
             TransportFailure(ConnectionError(
-              code: "protocol_error",
+              code: ProtocolError,
               description: connection_error_description,
             )),
           ),

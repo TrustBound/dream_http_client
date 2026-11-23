@@ -37,16 +37,20 @@ for retry logic, alerting, or circuit breakers without fragile string parsing.
 ### New types
 
 **`TransportError`** has 8 variants that preserve all gun error details:
-`StreamReset(code, description)`, `Goaway(code, last_stream_id, debug_data)`,
+`StreamReset(code, description)`, `Goaway(code, description)`,
 `ConnectionError(code, description)`, `RemoteClosed`, `TimedOut(timeout_ms)`,
 `ProcessDown(reason)`, `ConnectFailed(reason)` and `Unexpected(raw)`.
+
+The `code` of `StreamReset`, `Goaway` and `ConnectionError` is an
+`Http2ErrorCode`: one constructor for each HTTP/2 error code of RFC 9113,
+for example `RefusedStream`, and `UnknownErrorCode(name)` for any other code.
 
 #### Explain a transport error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_explain_transport_error.gleam#L1-L15"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
-  type TransportError, ConnectFailed, StreamReset, TimedOut,
-  transport_error_to_string,
+  type TransportError, ConnectFailed, Goaway, NoError, RefusedStream,
+  StreamReset, TimedOut, transport_error_to_string,
 }
 import gleam/int
 
@@ -54,8 +58,8 @@ pub fn explain(error: TransportError) -> String {
   case error {
     ConnectFailed(reason: reason) -> "Cannot reach server: " <> reason
     TimedOut(timeout_ms: ms) -> "Timed out after " <> int.to_string(ms) <> "ms"
-    StreamReset(code: code, description: description) ->
-      "Stream reset: " <> code <> " - " <> description
+    StreamReset(code: RefusedStream, ..) -> "The server refused the request"
+    Goaway(code: NoError, ..) -> "The server is going away"
     _ -> transport_error_to_string(error)
   }
 }
@@ -624,7 +628,7 @@ with proper method/body handling for 301/302/303/307/308.
 
 ## Test coverage
 
-571 tests, 0 failed, 100% line coverage, in about 85 seconds (with the mock
+576 tests, 0 failed, 100% line coverage, in about 90 seconds (with the mock
 server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1,
 OTP 29, Gleam 1.19.2.
 

@@ -216,6 +216,71 @@ pub fn body_text(response: HttpResponse) -> Result(String, Nil) {
   bit_array.to_string(response.body)
 }
 
+/// An HTTP/2 error code, as RFC 9113 section 7 defines them.
+///
+/// A server sends one in a RST_STREAM or a GOAWAY frame to say why it ends a
+/// stream or a connection. `StreamReset`, `Goaway` and `ConnectionError` of
+/// `TransportError` carry it.
+///
+/// ## Variants
+///
+/// - `NoError` — No error. A server uses it for a graceful shutdown.
+/// - `ProtocolError` — The peer broke the HTTP/2 protocol.
+/// - `InternalError` — The peer had an internal error.
+/// - `FlowControlError` — The peer broke the flow control rules.
+/// - `SettingsTimeout` — A SETTINGS frame got no answer in time.
+/// - `StreamClosed` — A frame arrived for a stream that was closed.
+/// - `FrameSizeError` — A frame had a size that is not valid.
+/// - `RefusedStream` — The server refused the stream before it did any work
+///   for it. The request is safe to send again.
+/// - `Cancel` — The stream is no longer needed.
+/// - `CompressionError` — The header compression state is broken.
+/// - `ConnectError` — The connection for a CONNECT request failed.
+/// - `EnhanceYourCalm` — The peer makes too much load.
+/// - `InadequateSecurity` — The transport does not meet the security needs.
+/// - `Http11Required` — The server needs HTTP/1.1 for this request.
+/// - `UnknownErrorCode` — A code that is not one of these. `name` is the
+///   name that gun gives it.
+///
+/// ## Example
+///
+/// ### Explain a transport error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_explain_transport_error.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client.{
+///   type TransportError, ConnectFailed, Goaway, NoError, RefusedStream,
+///   StreamReset, TimedOut, transport_error_to_string,
+/// }
+/// import gleam/int
+///
+/// pub fn explain(error: TransportError) -> String {
+///   case error {
+///     ConnectFailed(reason: reason) -> "Cannot reach server: " <> reason
+///     TimedOut(timeout_ms: ms) -> "Timed out after " <> int.to_string(ms) <> "ms"
+///     StreamReset(code: RefusedStream, ..) -> "The server refused the request"
+///     Goaway(code: NoError, ..) -> "The server is going away"
+///     _ -> transport_error_to_string(error)
+///   }
+/// }
+/// ```
+pub type Http2ErrorCode {
+  NoError
+  ProtocolError
+  InternalError
+  FlowControlError
+  SettingsTimeout
+  StreamClosed
+  FrameSizeError
+  RefusedStream
+  Cancel
+  CompressionError
+  ConnectError
+  EnhanceYourCalm
+  InadequateSecurity
+  Http11Required
+  UnknownErrorCode(name: String)
+}
+
 /// Transport-level error from the underlying gun HTTP client.
 ///
 /// Each variant preserves ALL structured information that gun provides for that
@@ -226,16 +291,19 @@ pub fn body_text(response: HttpResponse) -> Result(String, Nil) {
 /// ## Variants
 ///
 /// - `StreamReset` — HTTP/2 RST_STREAM frame. The `code` field is the HTTP/2
-///   error code as a string (e.g. `"internal_error"`, `"cancel"`,
-///   `"refused_stream"`, `"enhance_your_calm"`). The `description` field is
-///   gun's human-readable explanation.
+///   error code (e.g. `InternalError`, `Cancel`, `RefusedStream`,
+///   `EnhanceYourCalm`). The `description` field is gun's human-readable
+///   explanation.
 ///
-/// - `Goaway` — HTTP/2 GOAWAY frame. The server is shutting down gracefully.
-///   `last_stream_id` indicates the last stream the server will process.
-///   `debug_data` may contain additional context from the server.
+/// - `Goaway` — HTTP/2 GOAWAY frame. The server takes no new requests on the
+///   connection. The client sends the request once more on another
+///   connection, so this error comes back only when that also fails. The
+///   `code` field is the HTTP/2 error code and `description` is gun's
+///   human-readable explanation.
 ///
 /// - `ConnectionError` — Connection-level protocol error. The `code` field is
-///   the error code and `description` is gun's human-readable explanation.
+///   the HTTP/2 error code and `description` is gun's human-readable
+///   explanation.
 ///
 /// - `RemoteClosed` — The remote peer closed the connection without sending
 ///   an explicit error code.
@@ -259,8 +327,8 @@ pub fn body_text(response: HttpResponse) -> Result(String, Nil) {
 ///
 /// ```gleam
 /// import dream_http_client/client.{
-///   type TransportError, ConnectFailed, StreamReset, TimedOut,
-///   transport_error_to_string,
+///   type TransportError, ConnectFailed, Goaway, NoError, RefusedStream,
+///   StreamReset, TimedOut, transport_error_to_string,
 /// }
 /// import gleam/int
 ///
@@ -268,16 +336,16 @@ pub fn body_text(response: HttpResponse) -> Result(String, Nil) {
 ///   case error {
 ///     ConnectFailed(reason: reason) -> "Cannot reach server: " <> reason
 ///     TimedOut(timeout_ms: ms) -> "Timed out after " <> int.to_string(ms) <> "ms"
-///     StreamReset(code: code, description: description) ->
-///       "Stream reset: " <> code <> " - " <> description
+///     StreamReset(code: RefusedStream, ..) -> "The server refused the request"
+///     Goaway(code: NoError, ..) -> "The server is going away"
 ///     _ -> transport_error_to_string(error)
 ///   }
 /// }
 /// ```
 pub type TransportError {
-  StreamReset(code: String, description: String)
-  Goaway(code: String, last_stream_id: Int, debug_data: String)
-  ConnectionError(code: String, description: String)
+  StreamReset(code: Http2ErrorCode, description: String)
+  Goaway(code: Http2ErrorCode, description: String)
+  ConnectionError(code: Http2ErrorCode, description: String)
   RemoteClosed
   TimedOut(timeout_ms: Int)
   ProcessDown(reason: String)
@@ -344,21 +412,41 @@ pub type StreamFailure {
 pub fn transport_error_to_string(error: TransportError) -> String {
   case error {
     StreamReset(code: code, description: description) ->
-      "Stream reset (" <> code <> "): " <> description
-    Goaway(code: code, last_stream_id: last_id, debug_data: debug) ->
-      "GOAWAY ("
-      <> code
-      <> ", last_stream_id="
-      <> int.to_string(last_id)
-      <> "): "
-      <> debug
+      "Stream reset (" <> http2_error_code_name(code) <> "): " <> description
+    Goaway(code: code, description: description) ->
+      "GOAWAY (" <> http2_error_code_name(code) <> "): " <> description
     ConnectionError(code: code, description: description) ->
-      "Connection error (" <> code <> "): " <> description
+      "Connection error ("
+      <> http2_error_code_name(code)
+      <> "): "
+      <> description
     RemoteClosed -> "Remote closed connection"
     TimedOut(timeout_ms: ms) -> "Timed out after " <> int.to_string(ms) <> "ms"
     ProcessDown(reason: reason) -> "Process down: " <> reason
     ConnectFailed(reason: reason) -> "Connection failed: " <> reason
     Unexpected(raw: raw) -> "Unexpected error: " <> raw
+  }
+}
+
+// The name of an HTTP/2 error code for a message, in the lowercase form
+// that RFC 9113 names have in logs.
+fn http2_error_code_name(code: Http2ErrorCode) -> String {
+  case code {
+    NoError -> "no_error"
+    ProtocolError -> "protocol_error"
+    InternalError -> "internal_error"
+    FlowControlError -> "flow_control_error"
+    SettingsTimeout -> "settings_timeout"
+    StreamClosed -> "stream_closed"
+    FrameSizeError -> "frame_size_error"
+    RefusedStream -> "refused_stream"
+    Cancel -> "cancel"
+    CompressionError -> "compression_error"
+    ConnectError -> "connect_error"
+    EnhanceYourCalm -> "enhance_your_calm"
+    InadequateSecurity -> "inadequate_security"
+    Http11Required -> "http_1_1_required"
+    UnknownErrorCode(name: name) -> name
   }
 }
 

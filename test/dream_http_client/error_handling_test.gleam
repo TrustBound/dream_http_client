@@ -304,7 +304,10 @@ pub fn tests() -> TestSuite {
       it("formats StreamReset", fn() {
         // Arrange
         let error =
-          client.StreamReset(code: "cancel", description: "stream cancelled")
+          client.StreamReset(
+            code: client.Cancel,
+            description: "stream cancelled",
+          )
 
         // Act
         let value = client.transport_error_to_string(error)
@@ -319,8 +322,7 @@ pub fn tests() -> TestSuite {
       }),
       it("formats Goaway", fn() {
         // Arrange
-        let error =
-          client.Goaway(code: "no_error", last_stream_id: 7, debug_data: "bye")
+        let error = client.Goaway(code: client.NoError, description: "bye")
 
         // Act
         let value = client.transport_error_to_string(error)
@@ -328,16 +330,65 @@ pub fn tests() -> TestSuite {
         // Assert
         value
         |> should
-        |> be_equal("GOAWAY (no_error, last_stream_id=7): bye")
-        |> or_fail_with(
-          "Goaway should format as GOAWAY (no_error, last_stream_id=7): bye",
-        )
+        |> be_equal("GOAWAY (no_error): bye")
+        |> or_fail_with("Goaway should format as GOAWAY (no_error): bye")
+      }),
+      it("formats the name of every HTTP/2 error code", fn() {
+        // Arrange
+        let codes = [
+          client.NoError,
+          client.ProtocolError,
+          client.InternalError,
+          client.FlowControlError,
+          client.SettingsTimeout,
+          client.StreamClosed,
+          client.FrameSizeError,
+          client.RefusedStream,
+          client.Cancel,
+          client.CompressionError,
+          client.ConnectError,
+          client.EnhanceYourCalm,
+          client.InadequateSecurity,
+          client.Http11Required,
+          client.UnknownErrorCode(name: "new_code"),
+        ]
+
+        // Act
+        let value =
+          list.map(codes, fn(code) {
+            client.transport_error_to_string(client.StreamReset(
+              code: code,
+              description: "x",
+            ))
+          })
+
+        // Assert
+        value
+        |> should
+        |> be_equal([
+          "Stream reset (no_error): x",
+          "Stream reset (protocol_error): x",
+          "Stream reset (internal_error): x",
+          "Stream reset (flow_control_error): x",
+          "Stream reset (settings_timeout): x",
+          "Stream reset (stream_closed): x",
+          "Stream reset (frame_size_error): x",
+          "Stream reset (refused_stream): x",
+          "Stream reset (cancel): x",
+          "Stream reset (compression_error): x",
+          "Stream reset (connect_error): x",
+          "Stream reset (enhance_your_calm): x",
+          "Stream reset (inadequate_security): x",
+          "Stream reset (http_1_1_required): x",
+          "Stream reset (new_code): x",
+        ])
+        |> or_fail_with("Each code should have its RFC name in lowercase")
       }),
       it("formats ConnectionError", fn() {
         // Arrange
         let error =
           client.ConnectionError(
-            code: "protocol_error",
+            code: client.ProtocolError,
             description: "bad frame",
           )
 

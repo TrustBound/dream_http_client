@@ -306,6 +306,12 @@ await_headers(Socket, Buffer) ->
 
 respond_h2(<<"h2_rst">>, Socket, StreamId) ->
     send(Socket, cow_http2:rst_stream(StreamId, internal_error));
+respond_h2(<<"h2_rst_http11">>, Socket, StreamId) ->
+    send(Socket, cow_http2:rst_stream(StreamId, http_1_1_required));
+respond_h2(<<"h2_rst_unknown">>, Socket, StreamId) ->
+    %% A RST_STREAM frame with the error code 255, which RFC 9113 does not
+    %% define.
+    send(Socket, <<4:24, 3:8, 0:8, 0:1, StreamId:31, 255:32>>);
 respond_h2(<<"h2_rst_after_headers">>, Socket, StreamId) ->
     send(Socket, [ok_headers(StreamId), cow_http2:rst_stream(StreamId, internal_error)]);
 respond_h2(<<"h2_goaway">>, Socket, _StreamId) ->
