@@ -238,7 +238,7 @@ version.
 
 ### Testing
 
-- 518 tests, 0 failed, 100% line coverage, in about 170 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
+- 576 tests, 0 failed, 100% line coverage (1207 of 1207 lines), in about 85 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
 
 ## [5.1.3] - 2026-03-17
 

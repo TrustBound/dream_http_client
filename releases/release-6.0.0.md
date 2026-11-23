@@ -1,40 +1,56 @@
-# dream_http_client v6.0.0
+# dream_http_client 6.0.0 Release Notes
 
-**Release Date:** Unreleased
+**Release Date:** not released yet (draft)
 
-This release replaces the underlying HTTP backend from Erlang's `httpc` to
-[gun](https://github.com/ninenines/gun), enabling native HTTP/2 multiplexing
-for high-concurrency workloads. `stream_to()` sends typed stream messages to a
-`Subject`, for use in an OTP actor. Per-request settings (`connect_timeout`,
-`auto_redirect`, `protocols`, `certificate_authority_file`) are added to the
-`ClientRequest` builder. `protocols()` enables h2c (HTTP/2 over cleartext) and
-per-request protocol preference. Connection pool settings are managed through a
-redesigned `TransportConfig` type with 11 gun-native fields plus `log_level`
-for controlling log verbosity. All defaults are production-reasonable.
+This release moves `dream_http_client` from Erlang's `httpc` to [gun](https://github.com/ninenines/gun). Requests to one host now share HTTP/2 connections, and the number of streams on a connection follows what the server allows. Errors are typed values, a response body is bytes, and a stream can send typed messages to an OTP actor.
 
-This release was first prepared as 5.2.0 and never published. It changes four
-public types (`SendError.RequestError`, `StreamMessage.StreamError`, the
-`on_stream_error` callback, and `stream_yielder` errors) and removes
-`StreamMessage.DecodeError`, so it is a major version (5.1.3 → 6.0.0). See
-Structured Error Types and Removed below.
+It is a major version because four public types changed, `StreamMessage.DecodeError` is removed, and `HttpResponse.body` is a `BitArray`. Read the Migration Guide before you upgrade. This release was first prepared as 5.2.0 and never published, so it follows 5.1.3. The package also moved to its own repository.
 
-dream_http_client now lives in its own repository,
-[TrustBound/dream_http_client](https://github.com/TrustBound/dream_http_client).
+## Key Highlights
 
----
+- **gun is the HTTP backend**: HTTP/1.1 and HTTP/2, with connections that requests to one host share
+- **Typed errors (breaking)**: `TransportError` and `StreamFailure` take the place of error strings
+- **Response bodies are bytes (breaking)**: `HttpResponse.body` is a `BitArray`. Read text with `client.body_text(response)`
+- **`stream_to`**: a stream sends typed messages to a `Subject`, for use in an OTP actor
+- **A pool of your own**: `client.new_pool(max_connections:)` gives a group of requests its own connections
+- **Per-request settings**: `protocols` (with h2c), `connect_timeout`, `auto_redirect` and `certificate_authority_file`
+- **Global transport configuration**: `TransportConfig` with 11 gun settings and `log_level`
+- **Its own repository**: `dream_http_client` now lives at [TrustBound/dream_http_client](https://github.com/TrustBound/dream_http_client), with its own version and its own releases
 
-## Structured Error Types
+## What's New
+
+### The HTTP Backend Is gun
+
+The HTTP client backend has been replaced from Erlang's `httpc` to
+[gun](https://github.com/ninenines/gun). This brings:
+
+- **HTTP/2 support**: native multiplexing over a single TCP connection
+  when connecting to HTTP/2-capable servers
+- **Connection pooling**: managed by a new `dream_http_conn_manager`
+  gen_server with per-host multi-connection pools. An HTTP/1.1 connection
+  carries one request at a time, an HTTP/2 connection carries as many
+  streams as the server allows, and automatic dead-connection cleanup
+  removes connections that stopped
+- **Stale connection retry**: requests that hit a server-closed connection
+  are automatically retried once on a fresh connection
+- **Protocol negotiation**: TLS connections negotiate HTTP/2 via ALPN,
+  falling back to HTTP/1.1; plain TCP uses HTTP/1.1
+
+`send()`, `stream_yielder()`, and `start_stream()` keep their behaviour, apart
+from the error type changes in "Structured Error Types" below.
+
+### Structured Error Types
 
 All string-based error representations have been replaced with structured Gleam
 types that preserve the full detail gun provides.
 
-### Motivation
+#### Motivation
 
 String errors (`"econnrefused"`, `"timeout"`, `"HTTP 500 Internal Server Error: ..."`)
 hide production issues. Consumers cannot reliably pattern-match on error categories
 for retry logic, alerting, or circuit breakers without fragile string parsing.
 
-### New types
+#### New types
 
 **`TransportError`** has 8 variants that preserve all gun error details:
 `StreamReset(code, description)`, `Goaway(code, description)`,
@@ -45,7 +61,7 @@ The `code` of `StreamReset`, `Goaway` and `ConnectionError` is an
 `Http2ErrorCode`: one constructor for each HTTP/2 error code of RFC 9113,
 for example `RefusedStream`, and `UnknownErrorCode(name)` for any other code.
 
-#### Explain a transport error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_explain_transport_error.gleam#L1-L15"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+##### Explain a transport error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_explain_transport_error.gleam#L1-L15"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -68,7 +84,7 @@ pub fn explain(error: TransportError) -> String {
 **`StreamFailure`** distinguishes HTTP failures from transport errors:
 `HttpFailure(response: HttpResponse)` and `TransportFailure(error: TransportError)`.
 
-#### Explain a stream failure <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_explain_stream_failure.gleam#L1-L14"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+##### Explain a stream failure <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_explain_stream_failure.gleam#L1-L14"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -87,85 +103,7 @@ pub fn explain_failure(failure: StreamFailure) -> String {
 }
 ```
 
-### Breaking changes
-
-| Before | After |
-|--------|-------|
-| `RequestError(message: String)` | `RequestError(error: TransportError)` |
-| `StreamError(request_id, reason: String)` | `StreamError(request_id, error: StreamFailure)` |
-| `on_stream_error(fn(String) -> Nil)` | `on_stream_error(fn(StreamFailure) -> Nil)` |
-| `stream_yielder() -> Yielder(Result(BytesTree, String))` | `stream_yielder() -> Yielder(Result(BytesTree, StreamFailure))` |
-| `StreamMessage.DecodeError` | Removed |
-| `HttpResponse.body: String` | `HttpResponse.body: BitArray` (use `client.body_text(response)` for text) |
-| `recording.BlockingResponse.body: String` | `recording.BlockingResponse.body: BitArray` |
-| `recording.RecordedRequest.body: String` | `recording.RecordedRequest.body: BitArray` |
-| `client.get_body() -> String` | `client.get_body() -> BitArray` |
-
-### Migration guide
-
-**Quick migration.** Before 6.0.0, a failed request gave
-`Error(client.RequestError(message: msg))`, where `msg` was a string. Now it
-gives `Error(client.RequestError(error: err))`, where `err` is a
-`TransportError`. To keep the old string, call
-`client.transport_error_to_string(err)`, as the last branch below does:
-
-#### Send a request and describe the result <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_send_error.gleam#L1-L16"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
-
-```gleam
-import dream_http_client/client.{
-  ConnectFailed, RequestError, ResponseError, transport_error_to_string,
-}
-import gleam/int
-
-pub fn send_and_describe(request: client.ClientRequest) -> String {
-  case client.send(request) {
-    Ok(response) -> "Got " <> int.to_string(response.status)
-    Error(ResponseError(response: response)) ->
-      "HTTP " <> int.to_string(response.status)
-    Error(RequestError(error: ConnectFailed(reason: reason))) ->
-      "Cannot connect: " <> reason
-    Error(RequestError(error: error)) ->
-      "Failed: " <> transport_error_to_string(error)
-  }
-}
-```
-
-**Recommended.** Pattern match on the `TransportError` variants for structured
-handling, as `explain` in **Explain a transport error** above does.
-
-**Streaming errors.** Before 6.0.0, the `on_stream_error` callback got a
-string. Now it gets a `StreamFailure`, which distinguishes HTTP failures from
-transport errors:
-
-#### Report a stream failure <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_on_stream_error.gleam#L6-L26"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
-
-```gleam
-pub fn report_failure(
-  reply_to: Subject(String),
-) -> Result(client.StreamHandle, String) {
-  client.new()
-  |> client.scheme(http.Http)
-  |> client.host("localhost")
-  |> client.port(9876)
-  |> client.path("/status/500")
-  |> client.on_stream_error(fn(failure) {
-    case failure {
-      client.HttpFailure(response: response) ->
-        process.send(reply_to, "HTTP " <> int.to_string(response.status))
-      client.TransportFailure(error: error) ->
-        process.send(
-          reply_to,
-          "Transport: " <> client.transport_error_to_string(error),
-        )
-    }
-  })
-  |> client.start_stream()
-}
-```
-
----
-
-## Feature: Typed stream messages with `stream_to`
+### Typed Stream Messages With `stream_to`
 
 `stream_to(request, inbox)` starts a stream that sends typed `StreamMessage`
 values to a `Subject(StreamMessage)`: `StreamStart`, a `Chunk` for each part of
@@ -175,7 +113,7 @@ the actor selector with `process.select`. The stream stops when the process
 that called `stream_to()` stops. Record and playback work as with
 `start_stream()`.
 
-#### Stream a download into an actor <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/stream_to_actor.gleam#L33-L67"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+##### Stream a download into an actor <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/stream_to_actor.gleam#L33-L67"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 fn start_download(
@@ -221,7 +159,7 @@ the stream has stopped, so no message of the stream arrives after it returns. A
 cancel of a stream that has ended, or a second cancel of the same stream, does
 nothing and returns `Nil`.
 
-#### Cancel a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_cancel_stream.gleam#L6-L17"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+##### Cancel a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_cancel_stream.gleam#L6-L17"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 pub fn start_then_cancel() -> Result(Nil, String) {
@@ -238,37 +176,135 @@ pub fn start_then_cancel() -> Result(Nil, String) {
 }
 ```
 
----
+### Response Bodies Are Bytes
 
-## Backend change: httpc → gun
+`HttpResponse.body` is a `BitArray`: the exact bytes the server sent. Before,
+it was a `String`, and a body that was not UTF-8 (an image, a PDF, text in
+another encoding) was a `String` that was not valid text. On streams, the
+body of an error response was read as Latin-1, and its bytes were lost.
 
-The HTTP client backend has been replaced from Erlang's `httpc` to
-[gun](https://github.com/ninenines/gun). This brings:
+`client.body_text(response)` returns `Ok(text)` for a UTF-8 body and
+`Error(Nil)` for any other body.
 
-- **HTTP/2 support** — native multiplexing over a single TCP connection
-  when connecting to HTTP/2-capable servers
-- **Connection pooling** — managed by a new `dream_http_conn_manager`
-  gen_server with per-host multi-connection pools. An HTTP/1.1 connection
-  carries one request at a time, an HTTP/2 connection carries as many
-  streams as the server allows, and automatic dead-connection cleanup
-  removes connections that stopped
-- **Stale connection retry** — requests that hit a server-closed connection
-  are automatically retried once on a fresh connection
-- **Protocol negotiation** — TLS connections negotiate HTTP/2 via ALPN,
-  falling back to HTTP/1.1; plain TCP uses HTTP/1.1
+#### Read the body as text <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_body_text.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
-`send()`, `stream_yielder()`, and `start_stream()` keep their behaviour, apart
-from the error type changes above.
+```gleam
+import dream_http_client/client
 
----
+pub fn text_of(response: client.HttpResponse) -> String {
+  case client.body_text(response) {
+    Ok(text) -> text
+    Error(Nil) -> "The body is not text"
+  }
+}
+```
 
-## Feature: Per-request connection timeout
+A request body is bytes too. `client.body(String)` sets a text body, as
+before. `client.body_bits(BitArray)` sets a body that is not text.
+
+#### Upload a file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_body_bits.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```gleam
+import dream_http_client/client
+import gleam/http
+
+pub fn upload_request(file: BitArray) -> client.ClientRequest {
+  client.new()
+  |> client.method(http.Put)
+  |> client.host("files.example.com")
+  |> client.path("/reports/2026.pdf")
+  |> client.add_header("Content-Type", "application/pdf")
+  |> client.body_bits(file)
+}
+```
+
+### A Connection Pool of Its Own
+
+`client.new_pool(max_connections:)` makes a connection pool. Make it one
+time and keep the value. `client.pool(request, pool)` sends a request
+through it. Requests share connections only with requests that have the
+same pool, and the pool opens at most `max_connections` connections to each
+host. When the pool is full, a request waits for room up to its timeout, and
+then fails with `TimedOut`. Requests with no pool use the default pool.
+
+#### Give the model calls their own pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_pool.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```gleam
+import dream_http_client/client
+import gleam/option.{type Option}
+
+pub fn model_pool() -> client.ConnectionPool {
+  client.new_pool(max_connections: 3)
+}
+
+pub fn model_request(
+  pool: client.ConnectionPool,
+  prompt: String,
+) -> client.ClientRequest {
+  client.new()
+  |> client.host("api.llm.example")
+  |> client.path("/v1/chat")
+  |> client.body(prompt)
+  |> client.pool(pool)
+}
+
+pub fn pool_limit(request: client.ClientRequest) -> Option(Int) {
+  client.get_pool(request)
+  |> option.map(client.get_pool_max_connections)
+}
+```
+
+### Per-Request Protocol Preference
+
+Gun supports HTTP/2 over cleartext (h2c) but the connection manager previously
+hardcoded HTTP/1.1 for all TCP connections. The new `protocols()` builder on
+`ClientRequest` makes protocol preference configurable per-request.
+
+#### Usage
+
+h2c uses HTTP/2 over cleartext in "prior knowledge" mode (RFC 7540 Section
+3.4):
+
+##### Send an h2c request <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/protocols_config.gleam#L6-L14"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```gleam
+pub fn h2c_request() -> Result(HttpResponse, SendError) {
+  client.new()
+  |> client.scheme(http.Http)
+  |> client.host("localhost")
+  |> client.port(9876)
+  |> client.path("/text")
+  |> client.protocols(Http2Only)
+  |> client.send()
+}
+```
+
+#### Variants
+
+- `Http1Only`: forces HTTP/1.1 (`protocols => [http]`)
+- `Http2Only`: forces HTTP/2 (`protocols => [http2]`); enables h2c for TCP, h2-only ALPN for TLS
+- `Http2Preferred`: prefers HTTP/2 with fallback (`protocols => [http2, http]`)
+
+#### Defaults
+
+When `protocols()` is not called, existing defaults apply: HTTP/2 preferred
+(via ALPN) for HTTPS, HTTP/1.1 only for HTTP. No behavior change for
+existing code.
+
+#### Implementation
+
+ALPN advertisement is automatically aligned with the configured protocol
+preference: if you set `Http2Only`, only `h2` is advertised during the TLS
+handshake. Connections with different protocol preferences get separate pool
+entries to prevent protocol mismatch.
+
+### Per-Request Connection Timeout
 
 `connect_timeout(ms)` controls how long to wait for the TCP connection to be
 established. This is separate from `timeout()`, which controls the entire
 request/response cycle.
 
-#### Set a connection timeout <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_connect_timeout.gleam#L5-L14"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+##### Set a connection timeout <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_connect_timeout.gleam#L5-L14"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 pub fn fetch_with_connect_timeout() -> Result(BitArray, client.SendError) {
@@ -288,14 +324,12 @@ pub fn fetch_with_connect_timeout() -> Result(BitArray, client.SendError) {
 **Use case:** Fail fast against unreachable hosts without shortening the
 overall request timeout.
 
----
-
-## Feature: Per-request redirect control
+### Per-Request Redirect Control
 
 `auto_redirect(enabled)` controls whether 3xx redirects are followed
 automatically.
 
-#### Read a redirect status <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_auto_redirect.gleam#L5-L15"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+##### Read a redirect status <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_auto_redirect.gleam#L5-L15"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 pub fn redirect_status() -> Result(Int, client.SendError) {
@@ -318,9 +352,7 @@ the redirect status code and `Location` header visible. gun does not handle
 redirects natively; the shim implements manual redirect following (up to 5
 hops).
 
----
-
-## Feature: Private certificate authorities
+### Private Certificate Authorities
 
 `certificate_authority_file(request, path)` makes one request trust only the
 certificate authorities in a PEM file, in place of the system ones, the same as
@@ -332,7 +364,7 @@ request, through `configure_transport()`. A request's own setting wins.
 read the settings back. Requests that trust different certificate authorities
 do not share a pooled connection.
 
-#### Trust a private certificate authority <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_request_settings.gleam#L4-L10"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+##### Trust a private certificate authority <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_request_settings.gleam#L4-L10"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 pub fn internal_request() -> client.ClientRequest {
@@ -344,14 +376,12 @@ pub fn internal_request() -> client.ClientRequest {
 }
 ```
 
----
-
-## Feature: Global transport configuration
+### Global Transport Configuration
 
 `TransportConfig` is redesigned with 11 gun-native fields for full
 connection pool control.
 
-#### Configure the transport for many requests <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/transport_config_example.gleam#L7-L13"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+##### Configure the transport for many requests <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/transport_config_example.gleam#L7-L13"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 pub fn configure_high_concurrency() -> Nil {
@@ -363,7 +393,7 @@ pub fn configure_high_concurrency() -> Nil {
 }
 ```
 
-### Settings
+#### Settings
 
 | Builder | Default | What it controls |
 |---------|---------|-----------------|
@@ -379,7 +409,7 @@ pub fn configure_high_concurrency() -> Nil {
 | `initial_stream_window_size(bytes)` | 65535 | HTTP/2 stream flow control |
 | `closing_timeout(ms)` | 15000 | Graceful shutdown timeout |
 
-### How it works
+#### How it works
 
 `configure_transport()` writes the config to a named ETS table
 (`dream_http_client_transport_config`). The shim reads from this table
@@ -411,137 +441,7 @@ memory, and the rest of the response waits in the network.
 A recorded stream has the status that the server sent, and a stream that
 fails is not saved as a recording.
 
----
-
-## Feature: Response bodies are bytes
-
-`HttpResponse.body` is a `BitArray`: the exact bytes the server sent. Before,
-it was a `String`, and a body that was not UTF-8 (an image, a PDF, text in
-another encoding) was a `String` that was not valid text. On streams, the
-body of an error response was read as Latin-1, and its bytes were lost.
-
-`client.body_text(response)` returns `Ok(text)` for a UTF-8 body and
-`Error(Nil)` for any other body.
-
-### Read the body as text <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_body_text.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
-
-```gleam
-import dream_http_client/client
-
-pub fn text_of(response: client.HttpResponse) -> String {
-  case client.body_text(response) {
-    Ok(text) -> text
-    Error(Nil) -> "The body is not text"
-  }
-}
-```
-
-A request body is bytes too. `client.body(String)` sets a text body, as
-before. `client.body_bits(BitArray)` sets a body that is not text.
-
-### Upload a file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_body_bits.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
-
-```gleam
-import dream_http_client/client
-import gleam/http
-
-pub fn upload_request(file: BitArray) -> client.ClientRequest {
-  client.new()
-  |> client.method(http.Put)
-  |> client.host("files.example.com")
-  |> client.path("/reports/2026.pdf")
-  |> client.add_header("Content-Type", "application/pdf")
-  |> client.body_bits(file)
-}
-```
-
----
-
-## Feature: A connection pool of its own
-
-`client.new_pool(max_connections:)` makes a connection pool. Make it one
-time and keep the value. `client.pool(request, pool)` sends a request
-through it. Requests share connections only with requests that have the
-same pool, and the pool opens at most `max_connections` connections to each
-host. When the pool is full, a request waits for room up to its timeout, and
-then fails with `TimedOut`. Requests with no pool use the default pool.
-
-### Give the model calls their own pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_pool.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
-
-```gleam
-import dream_http_client/client
-import gleam/option.{type Option}
-
-pub fn model_pool() -> client.ConnectionPool {
-  client.new_pool(max_connections: 3)
-}
-
-pub fn model_request(
-  pool: client.ConnectionPool,
-  prompt: String,
-) -> client.ClientRequest {
-  client.new()
-  |> client.host("api.llm.example")
-  |> client.path("/v1/chat")
-  |> client.body(prompt)
-  |> client.pool(pool)
-}
-
-pub fn pool_limit(request: client.ClientRequest) -> Option(Int) {
-  client.get_pool(request)
-  |> option.map(client.get_pool_max_connections)
-}
-```
-
----
-
-## Feature: Per-request protocol preference
-
-Gun supports HTTP/2 over cleartext (h2c) but the connection manager previously
-hardcoded HTTP/1.1 for all TCP connections. The new `protocols()` builder on
-`ClientRequest` makes protocol preference configurable per-request.
-
-### Usage
-
-h2c uses HTTP/2 over cleartext in "prior knowledge" mode (RFC 7540 Section
-3.4):
-
-#### Send an h2c request <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/protocols_config.gleam#L6-L14"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
-
-```gleam
-pub fn h2c_request() -> Result(HttpResponse, SendError) {
-  client.new()
-  |> client.scheme(http.Http)
-  |> client.host("localhost")
-  |> client.port(9876)
-  |> client.path("/text")
-  |> client.protocols(Http2Only)
-  |> client.send()
-}
-```
-
-### Variants
-
-- `Http1Only` — forces HTTP/1.1 (`protocols => [http]`)
-- `Http2Only` — forces HTTP/2 (`protocols => [http2]`); enables h2c for TCP, h2-only ALPN for TLS
-- `Http2Preferred` — prefers HTTP/2 with fallback (`protocols => [http2, http]`)
-
-### Defaults
-
-When `protocols()` is not called, existing defaults apply: HTTP/2 preferred
-(via ALPN) for HTTPS, HTTP/1.1 only for HTTP. No behavior change for
-existing code.
-
-### Implementation
-
-ALPN advertisement is automatically aligned with the configured protocol
-preference — if you set `Http2Only`, only `h2` is advertised during the TLS
-handshake. Connections with different protocol preferences get separate pool
-entries to prevent protocol mismatch.
-
----
-
-## Logging migration: OTP `logger`
+### Logging Uses OTP `logger`
 
 Internal logging has been migrated from `error_logger` and raw `io:format` to
 OTP's `logger` module. Connection events (graceful closures at `info` level,
@@ -552,7 +452,7 @@ A new `log_level` field on `TransportConfig` controls the minimum severity for
 dream_http_client's log output. It uses `logger:set_module_level/2` to scope
 filtering to dream's own modules without affecting the rest of your application.
 
-#### Log warnings only <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_log_level.gleam#L1-L7"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+##### Log warnings only <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_log_level.gleam#L1-L7"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{LogWarning}
@@ -567,7 +467,36 @@ pub fn warnings_only() -> Nil {
 Defaults to `LogInfo`. Available levels: `LogDebug`, `LogInfo`, `LogWarning`,
 `LogError`, `LogNone`.
 
----
+### How It Works
+
+#### Connection lifecycle
+
+```text
+request -> ensure_connection (dream_http_conn_manager, a gen_server)
+  -> a connection to the host has room: use it
+  -> every connection is full, and the pool is below max_connections:
+     gun:open, gun:await_up, wait for the server's SETTINGS on HTTP/2
+  -> the pool is at max_connections: wait for room, up to the request timeout
+  -> the stream is refused, or the connection was stale or got a GOAWAY:
+     one more try on another connection
+```
+
+#### Message routing
+
+- **Sync requests:** `gun:await` / `gun:await_body` in the calling process
+- **Pull streaming:** Owner process receives `gun_data` messages directly
+- **Message streaming:** Translator process receives gun messages, forwards
+  as `{http, ...}` tuples to the stream process
+
+#### Auto-redirect
+
+gun does not handle HTTP redirects natively. The shim implements manual
+redirect following for all three request paths, supporting up to 5 hops
+with proper method/body handling for 301/302/303/307/308.
+
+### Its Own Repository
+
+`dream_http_client` moved out of the Dream repository. It has its own version, its own changelog and its own release workflow. The package name on Hex and the module names are the same as before.
 
 ## Removed
 
@@ -575,10 +504,60 @@ Defaults to `LogInfo`. Available levels: `LogDebug`, `LogInfo`, `LogWarning`,
   constructor had no use. Remove the `DecodeError` branch from each `case` on
   a `StreamMessage`.
 
----
+## Bug Fixes
 
-## Fixed
-
+- The connection pool now uses connections the way each protocol expects.
+  Before, it opened a new connection for every request until it held 50 for
+  a host, then picked one by round robin, so a request could wait behind a
+  long stream on the same HTTP/1.1 connection, and HTTP/2 never multiplexed.
+  Now:
+  - An HTTP/1.1 connection carries one request at a time.
+  - An HTTP/2 connection carries as many streams as the server allows with
+    `SETTINGS_MAX_CONCURRENT_STREAMS`. The pool waits for the server's first
+    SETTINGS frame before it uses a new connection, and follows every later
+    one. A server that never sends SETTINGS fails the connect with
+    `ConnectFailed("Connection timed out")`.
+  - The pool opens a new connection only when every connection to the host
+    is full. At `max_connections`, a request waits for room, up to its
+    timeout, and then gets `TimedOut`.
+  - A stream that the server refuses (`REFUSED_STREAM`, or gun's
+    `too_many_streams`) is sent once more on another connection.
+  - After a GOAWAY, the connection gets no new request, and the streams that
+    the server kept finish. Before, the retry closed the connection and
+    stopped them.
+- Streams now have flow control. The client reads the response from the
+  server only as fast as the caller takes chunks from `stream_yielder`, or
+  as fast as the `on_stream_chunk` callback returns. At most 16 chunks wait
+  in memory. Before, the client read the whole response as fast as the
+  server sent it, so a slow reader of a large response filled memory.
+- A stream that nobody reads any more (its caller stopped, or it timed out)
+  is now canceled at the server.
+- On HTTP/1.1, the connection of a stream of 16 chunks or more is closed
+  when the stream ends, because gun can have stopped reading it. A shorter
+  stream leaves its connection for the next request. HTTP/2 connections
+  are not closed.
+- A recorded stream now has the status that the server sent. Before, the
+  recorder wrote 206 for a response with `Content-Range` and 200 for every
+  other stream.
+- A stream that fails is no longer saved as a recording. Before, the chunks
+  that arrived were saved, and playback showed them as a whole response.
+- A connection in the pool no longer connects again by itself after it
+  loses its socket. The pool removes it, and the next request gets a new
+  connection. Before, gun connected again after a wait and held new requests
+  for that time, and a held request could get response headers and no body,
+  and then time out. A request that was sent on a connection that is gone is
+  sent once more on a new connection.
+- A 1xx response before the final response, for example 103 Early Hints, no
+  longer crashes `send` and the stream functions. The client skips it and
+  returns the final response.
+- An HTTP/2 GOAWAY now comes back as `Goaway(code, description)`. Before, it
+  was `Unexpected("{goaway,no_error,'The connection is going away.'}")`.
+  `Goaway` has no `last_stream_id` and no `debug_data`, because gun does not
+  give them.
+- The idle check no longer closes a connection that serves a long response.
+- A stream that stops before its end, for example after a cancel, now closes
+  its HTTP/1.1 connection, so the rest of that response never reaches the
+  next request. An HTTP/2 connection keeps running.
 - A streamed response with an empty body now ends at once: `stream_yielder`
   yields nothing and `start_stream` calls `on_stream_end([])`. Before, the
   stream waited until it timed out.
@@ -594,42 +573,14 @@ Defaults to `LogInfo`. Available levels: `LogDebug`, `LogInfo`, `LogWarning`,
   streaming the sixth response as a success.
 - A stream no longer leaves a process running after the process that started
   it stops, and each stream has one timeout, so no late reply arrives.
-- PUT, POST, and PATCH requests no longer hang when sent with an empty body.
+- Fixed PUT, POST, and PATCH requests hanging when sent with an empty body.
   The underlying gun dispatch now uses `gun:request/5` directly instead of
   method-specific functions that behave inconsistently for empty bodies.
 
----
+## Testing
 
-## Architecture
-
-### Connection lifecycle
-
-```text
-request → get_or_open_connection → ensure_connection (gen_server)
-  → if below max_connections: gun:open + gun:await_up → new connection
-  → if at max: round-robin from pool
-  → if stale connection error: close + retry once with new connection
-```
-
-### Message routing
-
-- **Sync requests:** `gun:await` / `gun:await_body` in the calling process
-- **Pull streaming:** Owner process receives `gun_data` messages directly
-- **Message streaming:** Translator process receives gun messages, forwards
-  as `{http, ...}` tuples to the stream process
-
-### Auto-redirect
-
-gun does not handle HTTP redirects natively. The shim implements manual
-redirect following for all three request paths, supporting up to 5 hops
-with proper method/body handling for 301/302/303/307/308.
-
----
-
-## Test coverage
-
-576 tests, 0 failed, 100% line coverage, in about 90 seconds (with the mock
-server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1,
+576 tests, 0 failed, 100% line coverage (1207 of 1207 lines), in about 85
+seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1,
 OTP 29, Gleam 1.19.2.
 
 The tests cover:
@@ -643,31 +594,9 @@ The tests cover:
 - `stream_to` message order, cancel, and stop with the owner process
 - Every tested snippet in the README, the release notes, and the doc comments
 
----
-
-## Files changed
-
-- `gleam.toml` — Added `gun >= 2.2.0` dependency
-- `src/dream_http_client/dream_http_shim.erl` — New file: gun-based FFI shim
-  replacing `dream_httpc_shim.erl`
-- `src/dream_http_client/dream_http_conn_manager.erl` — New file: connection
-  pool gen_server
-- `src/dream_http_client/dream_httpc_shim.erl` — Deleted
-- `src/dream_http_client/client.gleam` — Structured error types, `stream_to`,
-  per-request settings, redesigned `TransportConfig` with 11 gun-native fields
-- `src/dream_http_client/internal.gleam` — Updated external function
-  references from `dream_httpc_shim` to `dream_http_shim`
-- `src/dream_http_client/dream_http_client_app.erl` — Added
-  `dream_http_client_connections` ETS table creation
-- `src/dream_http_client/dream_http_client_sup.erl` — Added
-  `dream_http_conn_manager` as supervised child
-- `test/snippets/` — Tested snippets for every code block in the docs
-- `CHANGELOG.md` — 6.0.0 entry
-- `README.md` — Updated for gun backend and `stream_to`
-
 ## Upgrading
 
-Update your dependency:
+Update your dependencies:
 
 ```toml
 [dependencies]
@@ -677,13 +606,94 @@ dream_http_client = ">= 6.0.0 and < 7.0.0"
 Then run:
 
 ```bash
-gleam deps download
+gleam deps update dream_http_client
 ```
 
-Error types have changed (see Structured Error Types above),
-`StreamMessage.DecodeError` is removed, and `HttpResponse.body` is a
-`BitArray` (read text with `client.body_text(response)`). The HTTP backend has been swapped from
-`httpc` to `gun`. Use the migration guide above to update error handling code.
+### Migration Guide
+
+Step 1 applies to code that handles errors. Step 2 applies to code that reads a response body. Step 3 applies only to code that matches on `StreamMessage`.
+
+#### 1. Error types
+
+| Before | After |
+|--------|-------|
+| `RequestError(message: String)` | `RequestError(error: TransportError)` |
+| `StreamError(request_id, reason: String)` | `StreamError(request_id, error: StreamFailure)` |
+| `on_stream_error(fn(String) -> Nil)` | `on_stream_error(fn(StreamFailure) -> Nil)` |
+| `stream_yielder() -> Yielder(Result(BytesTree, String))` | `stream_yielder() -> Yielder(Result(BytesTree, StreamFailure))` |
+| `StreamMessage.DecodeError` | Removed |
+| `HttpResponse.body: String` | `HttpResponse.body: BitArray` (use `client.body_text(response)` for text) |
+| `recording.BlockingResponse.body: String` | `recording.BlockingResponse.body: BitArray` |
+| `recording.RecordedRequest.body: String` | `recording.RecordedRequest.body: BitArray` |
+| `client.get_body() -> String` | `client.get_body() -> BitArray` |
+
+**Quick migration.** Before 6.0.0, a failed request gave
+`Error(client.RequestError(message: msg))`, where `msg` was a string. Now it
+gives `Error(client.RequestError(error: err))`, where `err` is a
+`TransportError`. To keep the old string, call
+`client.transport_error_to_string(err)`, as the last branch below does:
+
+##### Send a request and describe the result <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_send_error.gleam#L1-L16"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```gleam
+import dream_http_client/client.{
+  ConnectFailed, RequestError, ResponseError, transport_error_to_string,
+}
+import gleam/int
+
+pub fn send_and_describe(request: client.ClientRequest) -> String {
+  case client.send(request) {
+    Ok(response) -> "Got " <> int.to_string(response.status)
+    Error(ResponseError(response: response)) ->
+      "HTTP " <> int.to_string(response.status)
+    Error(RequestError(error: ConnectFailed(reason: reason))) ->
+      "Cannot connect: " <> reason
+    Error(RequestError(error: error)) ->
+      "Failed: " <> transport_error_to_string(error)
+  }
+}
+```
+
+**Recommended.** Pattern match on the `TransportError` variants for structured
+handling, as `explain` in **Explain a transport error** above does.
+
+**Streaming errors.** Before 6.0.0, the `on_stream_error` callback got a
+string. Now it gets a `StreamFailure`, which distinguishes HTTP failures from
+transport errors:
+
+##### Report a stream failure <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_on_stream_error.gleam#L6-L26"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```gleam
+pub fn report_failure(
+  reply_to: Subject(String),
+) -> Result(client.StreamHandle, String) {
+  client.new()
+  |> client.scheme(http.Http)
+  |> client.host("localhost")
+  |> client.port(9876)
+  |> client.path("/status/500")
+  |> client.on_stream_error(fn(failure) {
+    case failure {
+      client.HttpFailure(response: response) ->
+        process.send(reply_to, "HTTP " <> int.to_string(response.status))
+      client.TransportFailure(error: error) ->
+        process.send(
+          reply_to,
+          "Transport: " <> client.transport_error_to_string(error),
+        )
+    }
+  })
+  |> client.start_stream()
+}
+```
+
+#### 2. Response bodies are bytes
+
+`HttpResponse.body` is a `BitArray`. Read text with `client.body_text(response)`, which returns `Error(Nil)` when the body is not UTF-8. `client.get_body(request)` and the recording types also hold bytes. See "Response Bodies Are Bytes" under "What's New".
+
+#### 3. `StreamMessage.DecodeError`
+
+The constructor is removed. Remove the `DecodeError` branch from each `case` on a `StreamMessage`.
 
 ## Documentation
 
@@ -697,7 +707,5 @@ Error types have changed (see Structured Error Types above),
 - [Discussions](https://github.com/TrustBound/dream/discussions)
 - [Report Issues](https://github.com/TrustBound/dream_http_client/issues)
 - [Contributing Guide](https://github.com/TrustBound/dream_http_client/blob/main/CONTRIBUTING.md)
-
----
 
 **Full Changelog:** [CHANGELOG.md](https://github.com/TrustBound/dream_http_client/blob/main/CHANGELOG.md)
