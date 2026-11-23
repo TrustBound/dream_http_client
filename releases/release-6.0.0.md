@@ -498,6 +498,10 @@ with proper method/body handling for 301/302/303/307/308.
 
 `dream_http_client` moved out of the Dream repository. It has its own version, its own changelog and its own release workflow. The package name on Hex and the module names are the same as before.
 
+### Guides
+
+The package has guides in [`docs/guides/`](https://github.com/TrustBound/dream_http_client/tree/main/docs/guides). The README is short and links to them, and HexDocs shows the guides.
+
 ## Removed
 
 - `StreamMessage.DecodeError`. A typed message cannot fail to decode, so the
@@ -699,6 +703,18 @@ The constructor is removed. Remove the `DecodeError` branch from each `case` on 
 
 - [dream_http_client hexdocs](https://hexdocs.pm/dream_http_client) -- v6.0.0
 - [README](https://github.com/TrustBound/dream_http_client/tree/main)
+- [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md)
+- [Requests and responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/requests-and-responses.md)
+- [Streaming](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming.md)
+- [Streaming to actors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md)
+- [Errors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/errors.md)
+- [Request settings](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-settings.md)
+- [Transport configuration](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/transport-configuration.md)
+- [Connection pools](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/connection-pools.md)
+- [TLS and certificate authorities](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/tls-and-certificate-authorities.md)
+- [Logging](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/logging.md)
+- [Recording and playback](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md)
+- [Request matching and scrubbing](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-matching-and-scrubbing.md)
 - [CHANGELOG](https://github.com/TrustBound/dream_http_client/blob/main/CHANGELOG.md)
 
 ## Community

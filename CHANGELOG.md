@@ -148,6 +148,8 @@ version.
   events and decompression warnings now go through OTP's logger, enabling
   level-based filtering. Use `log_level()` on `TransportConfig` to control
   verbosity — defaults to `LogInfo`.
+- The package has guides in `docs/guides/`. The README is short and links
+  to them, and HexDocs shows the guides.
 
 ### Added
 

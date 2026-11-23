@@ -8,6 +8,22 @@ links = [
     { title = "GitHub", href = "https://github.com/TrustBound/dream_http_client" },
 ]
 
+[documentation]
+pages = [
+    { title = "Getting started", path = "guides/getting-started.html", source = "./docs/guides/getting-started.md" },
+    { title = "Requests and responses", path = "guides/requests-and-responses.html", source = "./docs/guides/requests-and-responses.md" },
+    { title = "Streaming", path = "guides/streaming.html", source = "./docs/guides/streaming.md" },
+    { title = "Streaming to actors", path = "guides/streaming-to-actors.html", source = "./docs/guides/streaming-to-actors.md" },
+    { title = "Errors", path = "guides/errors.html", source = "./docs/guides/errors.md" },
+    { title = "Request settings", path = "guides/request-settings.html", source = "./docs/guides/request-settings.md" },
+    { title = "Transport configuration", path = "guides/transport-configuration.html", source = "./docs/guides/transport-configuration.md" },
+    { title = "Connection pools", path = "guides/connection-pools.html", source = "./docs/guides/connection-pools.md" },
+    { title = "TLS and certificate authorities", path = "guides/tls-and-certificate-authorities.html", source = "./docs/guides/tls-and-certificate-authorities.md" },
+    { title = "Logging", path = "guides/logging.html", source = "./docs/guides/logging.md" },
+    { title = "Recording and playback", path = "guides/recording-and-playback.html", source = "./docs/guides/recording-and-playback.md" },
+    { title = "Request matching and scrubbing", path = "guides/request-matching-and-scrubbing.html", source = "./docs/guides/request-matching-and-scrubbing.md" },
+]
+
 [dependencies]
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"
 gleam_erlang = ">= 1.1.0 and < 2.0.0"
@@ -29,7 +45,7 @@ dream_mock_server = { git = "https://github.com/TrustBound/dream_mock_server.git
 # Switched to a Hex version range once it is published.
 dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "1639959578a14ae3577f8e3ae5cac058f933aa53" }
 # Switched to a Hex version range once it is published.
-dream_snippets = { git = "https://github.com/TrustBound/dream_snippets.git", ref = "7a862a3e5b74f0a7f2e9c15170d4d6c772605cfb" }
+dream_snippets = { git = "https://github.com/TrustBound/dream_snippets.git", ref = "f116b072699ec33315980418036d962e22fab872" }
 
 [tools.dream_snippets]
 checked_from_version = "6.0.0"
