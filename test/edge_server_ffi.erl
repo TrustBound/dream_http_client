@@ -2,8 +2,8 @@
 
 %% A small HTTP server for the tests. It sends the exact bytes of server
 %% edge cases that the mock server cannot produce: trailers, stalled
-%% bodies, closed connections, redirect loops and HTTP/2 frames such as
-%% RST_STREAM and GOAWAY.
+%% bodies, empty bodies, chunks 100 ms apart, closed connections, redirect
+%% loops and HTTP/2 frames such as RST_STREAM and GOAWAY.
 %%
 %% start/1 returns {Port, Listener}. stop/1 stops the listener and every
 %% connection process, which are linked to it.
@@ -110,6 +110,17 @@ respond(<<"trailers">>, Socket) ->
                   <<"trailer: x-checksum\r\n\r\n">>,
                   <<"5\r\nhello\r\n">>,
                   <<"0\r\nx-checksum: abc\r\n\r\n">>]);
+respond(<<"chunks">>, Socket) ->
+    send(Socket, [<<"HTTP/1.1 200 OK\r\n">>,
+                  <<"transfer-encoding: chunked\r\n\r\n">>,
+                  <<"3\r\none\r\n">>]),
+    timer:sleep(100),
+    send(Socket, <<"3\r\ntwo\r\n">>),
+    timer:sleep(100),
+    send(Socket, <<"5\r\nthree\r\n0\r\n\r\n">>);
+respond(<<"empty">>, Socket) ->
+    send(Socket, [<<"HTTP/1.1 200 OK\r\n">>,
+                  <<"content-length: 0\r\n\r\n">>]);
 respond(<<"content_range">>, Socket) ->
     send(Socket, [<<"HTTP/1.1 200 OK\r\n">>,
                   <<"content-range: bytes 0-3/10\r\n">>,

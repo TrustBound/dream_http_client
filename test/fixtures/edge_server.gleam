@@ -1,6 +1,6 @@
 //// A test server that sends server edge cases: trailers, stalled bodies,
-//// closed connections, redirect loops, and HTTP/2 RST_STREAM, GOAWAY and
-//// connection errors. See `edge_server_ffi.erl` for the scenarios.
+//// empty bodies, closed connections, redirect loops, and HTTP/2
+//// RST_STREAM, GOAWAY and connection errors. See `edge_server_ffi.erl` for the scenarios.
 
 import dream_http_client/client
 import gleam/erlang/process

@@ -9,15 +9,13 @@
 %%   `{http_failure, {http_response, Status, [{header, Name, Value}], Body}}`;
 %% - a pull stream event is an `internal.StreamEvent`:
 %%   `{chunk, Data}`, `{done, Trailers}` or `{failed, StreamFailure}`;
-%% - a message stream message is a `client.StreamMessage` with a
-%%   `{request_id, Id}` request ID.
+%% - a translator message is a `client.TranslatorMessage`:
+%%   `{translator_start, Headers}`, `{translator_chunk, Data}`,
+%%   `{translator_end, Trailers}` or `{translator_error, StreamFailure}`.
 
 -export([request_sync/8, request_stream/8, fetch_next/1, fetch_start_headers/1,
-         request_stream_messages/8, cancel_stream_by_string/1,
-         decode_stream_message_for_selector/1, configure_transport/1,
-         ets_insert/7, ets_lookup/2, ets_delete/2]).
+         request_stream_messages/8, configure_transport/1]).
 
--define(REF_MAPPING_TABLE, dream_http_client_ref_mapping).
 -define(MAX_REDIRECTS, 5).
 
 %% The state of the process that owns a pull-based stream.
@@ -255,32 +253,34 @@ down_failure(Reason) -> {transport_failure, {process_down, inspect(Reason)}}.
 %% Message-based streaming
 %% ============================================================================
 
+%% Starts a translator process that sends the stream to the calling process
+%% (the stream process) as `{http, TranslatorMessage}` messages.
+%%
+%% The translator is linked to the stream process and traps exits. When the
+%% stream process stops, for example after a cancel, the translator cancels
+%% the gun stream and stops too. When the translator crashes, the link stops
+%% the stream process.
 request_stream_messages(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings) ->
     Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings),
-    CallerPid = self(),
-    %% The link stops the translator when the stream process stops.
-    TranslatorPid = spawn_link(fun() -> translator_init(Request, CallerPid) end),
-    StringId = pid_text(TranslatorPid),
-    store_ref_mapping(StringId, TranslatorPid),
-    StringId.
+    StreamPid = self(),
+    _TranslatorPid = spawn_link(fun() -> translator_init(Request, StreamPid) end),
+    nil.
 
-translator_init(Request = #{timeout := TimeoutMs}, CallerPid) ->
-    StringId = pid_text(self()),
-    RequestId = {request_id, StringId},
+translator_init(Request = #{timeout := TimeoutMs}, StreamPid) ->
+    process_flag(trap_exit, true),
     case open_streaming_response(Request) of
         {ok, ConnPid, StreamRef, IsFin, RespHeaders} ->
-            store_cancel_info(StringId, ConnPid, StreamRef),
-            CallerPid ! {http, {stream_start, RequestId, gleam_headers(RespHeaders)}},
-            Translator = {ConnPid, StreamRef, CallerPid, RequestId, TimeoutMs},
+            StreamPid ! {http, {translator_start, gleam_headers(RespHeaders)}},
+            Translator = {ConnPid, StreamRef, StreamPid, TimeoutMs},
             case IsFin of
                 fin -> send_events(Translator, [{done, []}]);
                 nofin -> translator_loop(Translator, stream_zlib(RespHeaders))
             end;
         {error, Failure} ->
-            CallerPid ! {http, {stream_error, RequestId, Failure}}
+            StreamPid ! {http, {translator_error, Failure}}
     end.
 
-translator_loop(Translator = {ConnPid, StreamRef, CallerPid, RequestId, TimeoutMs}, ZlibCtx) ->
+translator_loop(Translator = {ConnPid, StreamRef, StreamPid, TimeoutMs}, ZlibCtx) ->
     receive
         Message = {gun_data, ConnPid, StreamRef, _IsFin, _Data} ->
             translate(Translator, Message, ZlibCtx);
@@ -288,13 +288,12 @@ translator_loop(Translator = {ConnPid, StreamRef, CallerPid, RequestId, TimeoutM
             translate(Translator, Message, ZlibCtx);
         Message = {gun_error, ConnPid, _Reason} ->
             translate(Translator, Message, ZlibCtx);
-        cancel ->
+        {'EXIT', StreamPid, _Reason} ->
             close_zlib(ZlibCtx),
-            gun:cancel(ConnPid, StreamRef),
-            ok
+            gun:cancel(ConnPid, StreamRef)
     after TimeoutMs ->
         close_zlib(ZlibCtx),
-        CallerPid ! {http, {stream_error, RequestId, {transport_failure, {timed_out, TimeoutMs}}}}
+        StreamPid ! {http, {translator_error, {transport_failure, {timed_out, TimeoutMs}}}}
     end.
 
 translate(Translator, Message, ZlibCtx) ->
@@ -304,56 +303,14 @@ translate(Translator, Message, ZlibCtx) ->
         _ -> ok
     end.
 
-%% Sends the events to the caller and returns the last one.
-send_events({_ConnPid, _StreamRef, CallerPid, RequestId, _TimeoutMs}, Events) ->
-    lists:foreach(fun(Event) -> CallerPid ! {http, stream_message(RequestId, Event)} end, Events),
+%% Sends the events to the stream process and returns the last one.
+send_events({_ConnPid, _StreamRef, StreamPid, _TimeoutMs}, Events) ->
+    lists:foreach(fun(Event) -> StreamPid ! {http, translator_message(Event)} end, Events),
     lists:last(Events).
 
-stream_message(RequestId, {chunk, Data}) -> {chunk, RequestId, Data};
-stream_message(RequestId, {done, Trailers}) -> {stream_end, RequestId, gleam_headers(Trailers)};
-stream_message(RequestId, {failed, Failure}) -> {stream_error, RequestId, Failure}.
-
-pid_text(Pid) ->
-    list_to_binary(pid_to_list(Pid)).
-
-store_cancel_info(StringId, ConnPid, StreamRef) ->
-    ets:insert(?REF_MAPPING_TABLE, {{cancel, StringId}, {ConnPid, StreamRef}}).
-
-%% ============================================================================
-%% Cancellation
-%% ============================================================================
-
-cancel_stream_by_string(StringId) ->
-    case lookup_ref_by_string(StringId) of
-        {some, TranslatorPid} when is_pid(TranslatorPid) ->
-            TranslatorPid ! cancel,
-            remove_ref_mapping(StringId),
-            nil;
-        _ ->
-            %% Try direct cancel via stored info
-            case ets:lookup(?REF_MAPPING_TABLE, {cancel, StringId}) of
-                [{{cancel, _}, {ConnPid, StreamRef}}] ->
-                    gun:cancel(ConnPid, StreamRef),
-                    ets:delete(?REF_MAPPING_TABLE, {cancel, StringId}),
-                    remove_ref_mapping(StringId),
-                    nil;
-                [] ->
-                    nil
-            end
-    end.
-
-%% ============================================================================
-%% Message decoding for selectors
-%% ============================================================================
-
-%% The selector gives the whole `{http, StreamMessage}` tuple. The last
-%% message of a stream also removes the stream from the request ID table.
-decode_stream_message_for_selector({http, Message = {Tag, {request_id, StringId}, _Value}}) ->
-    case Tag =:= stream_end orelse Tag =:= stream_error of
-        true -> remove_ref_mapping(StringId);
-        false -> ok
-    end,
-    Message.
+translator_message({chunk, Data}) -> {translator_chunk, Data};
+translator_message({done, Trailers}) -> {translator_end, gleam_headers(Trailers)};
+translator_message({failed, Failure}) -> {translator_error, Failure}.
 
 %% ============================================================================
 %% Transport configuration
@@ -586,53 +543,4 @@ body_text(Body) ->
     case unicode:characters_to_binary(Body) of
         Text when is_binary(Text) -> Text;
         _ -> unicode:characters_to_binary(Body, latin1)
-    end.
-
-%% ============================================================================
-%% ETS Functions
-%% ============================================================================
-
-ets_insert(TableName, Key, Recorder, RecordedRequest, Headers, Chunks, LastChunkTime) ->
-    TableAtom = binary_to_atom(TableName, utf8),
-    Value = {Recorder, RecordedRequest, Headers, Chunks, LastChunkTime},
-    ets:insert(TableAtom, {Key, Value}),
-    nil.
-
-ets_lookup(TableName, Key) ->
-    TableAtom = binary_to_atom(TableName, utf8),
-    case ets:lookup(TableAtom, Key) of
-        [{Key, {Recorder, RecordedRequest, Headers, Chunks, LastChunkTime}}] ->
-            State = {message_stream_recorder_state,
-                     Recorder, RecordedRequest, Headers, Chunks, LastChunkTime},
-            {some, State};
-        [] -> none
-    end.
-
-ets_delete(TableName, Key) ->
-    ets:delete(binary_to_atom(TableName, utf8), Key).
-
-%% ============================================================================
-%% Request ID Mapping
-%% ============================================================================
-
-store_ref_mapping(StringId, Ref) ->
-    ets:insert(?REF_MAPPING_TABLE, {StringId, Ref}),
-    ets:insert(?REF_MAPPING_TABLE, {Ref, StringId}),
-    ok.
-
-lookup_ref_by_string(StringId) ->
-    case ets:lookup(?REF_MAPPING_TABLE, StringId) of
-        [{StringId, Ref}] -> {some, Ref};
-        [] -> none
-    end.
-
-remove_ref_mapping(StringId) ->
-    case lookup_ref_by_string(StringId) of
-        {some, Ref} ->
-            ets:delete(?REF_MAPPING_TABLE, StringId),
-            ets:delete(?REF_MAPPING_TABLE, Ref),
-            ets:delete(?REF_MAPPING_TABLE, {cancel, StringId}),
-            ok;
-        none ->
-            ok
     end.

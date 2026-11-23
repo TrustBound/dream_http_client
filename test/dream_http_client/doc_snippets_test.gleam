@@ -19,6 +19,7 @@ import snippets/doc_client_add_header
 import snippets/doc_client_auto_redirect
 import snippets/doc_client_body
 import snippets/doc_client_call_api
+import snippets/doc_client_cancel_stream
 import snippets/doc_client_cancel_stream_handle
 import snippets/doc_client_connect_timeout
 import snippets/doc_client_describe_response
@@ -56,6 +57,7 @@ import snippets/doc_client_port
 import snippets/doc_client_query
 import snippets/doc_client_record_call
 import snippets/doc_client_recorder
+import snippets/doc_client_request_id
 import snippets/doc_client_request_settings
 import snippets/doc_client_scheme
 import snippets/doc_client_send_error
@@ -257,6 +259,30 @@ pub fn tests() -> TestSuite(Nil) {
         |> should
         |> be_equal(Ok("Hello, World!"))
         |> or_fail_with("call_api returns the body")
+      }),
+    ]),
+    group("doc_client_cancel_stream", [
+      it("start_then_cancel returns Ok(Nil)", fn() {
+        // Act
+        let value = doc_client_cancel_stream.start_then_cancel()
+
+        // Assert
+        value
+        |> should
+        |> be_equal(Ok(Nil))
+        |> or_fail_with("start_then_cancel should cancel the stream")
+      }),
+    ]),
+    group("doc_client_request_id", [
+      it("first_message_is_ours returns Ok(True)", fn() {
+        // Act
+        let value = doc_client_request_id.first_message_is_ours()
+
+        // Assert
+        value
+        |> should
+        |> be_equal(Ok(True))
+        |> or_fail_with("The first message should carry the returned id")
       }),
     ]),
     group("doc_client_cancel_stream_handle", [

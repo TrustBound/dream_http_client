@@ -36,6 +36,11 @@ version.
 ### Changed
 
 - Moved to its own repository
+- `cancel_stream(request_id)` now works with the `RequestId` that
+  `stream_to()` returns. It stops the stream process, cancels the request, and
+  returns after the stream has stopped, so no message of the stream arrives
+  after it returns. A cancel of a stream that has ended, or a second cancel of
+  the same stream, does nothing and returns `Nil`.
 - Requests that trust different certificate authorities no longer share a
   pooled connection.
 - **HTTP backend replaced: `httpc` → `gun`.** The underlying HTTP client has
@@ -64,6 +69,13 @@ version.
 
 ### Added
 
+- `stream_to(request, inbox)` starts a stream that sends typed
+  `StreamMessage` values to a `Subject(StreamMessage)`: `StreamStart`, a
+  `Chunk` for each part of the body, then exactly one `StreamEnd` or
+  `StreamError`. It returns the `RequestId` that each message carries. Use it
+  in an OTP actor: add the inbox to the actor selector with `process.select`.
+  The stream stops when the process that called `stream_to()` stops. Record
+  and playback work as with `start_stream()`.
 - `certificate_authority_file(request, path)` makes one request trust only the
   certificate authorities in a PEM file, in place of the system ones, the same
   as `curl --cacert`. Use it for services with a private certificate authority
@@ -139,9 +151,14 @@ version.
   builder/getter round-trips, default values, edge cases, builder chaining,
   transport application, and concurrent streaming scenarios.
 
+### Removed
+
+- `StreamMessage.DecodeError`. A typed message cannot fail to decode, so the
+  constructor had no use.
+
 ### Testing
 
-- 288 tests, 0 failed, in about 100 seconds (with the mock server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.17.0.
+- 518 tests, 0 failed, 100% line coverage, in about 170 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
 
 ## 5.1.3 - 2026-03-17
 

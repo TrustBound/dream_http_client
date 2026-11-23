@@ -157,12 +157,15 @@ pub fn start_gun_stream(
 
 /// Start a message-based streaming HTTP request
 ///
-/// Starts a process that sends the request and sends the stream to the
-/// calling process as `{http, StreamMessage}` messages. The process stops
-/// when the calling process stops.
+/// Starts a translator process that sends the request and sends the stream
+/// to the calling process (the stream process) as
+/// `{http, TranslatorMessage}` messages: one start, zero or more chunks, then
+/// one end or one error. The translator is linked to the calling process.
+/// When the calling process stops, the translator cancels the request and
+/// stops too.
 ///
-/// **Note:** This is an internal function used by the public API. Most callers
-/// should use `client.start_stream()` instead.
+/// **Note:** This is an internal function used by the public API. Use
+/// `client.start_stream()` or `client.stream_to()` instead.
 ///
 /// ## Parameters
 ///
@@ -174,10 +177,6 @@ pub fn start_gun_stream(
 /// - `connect_timeout_ms`: Connection timeout in milliseconds
 /// - `autoredirect`: Whether to follow redirects
 /// - `connection_settings`: The protocols and certificate authorities to use
-///
-/// ## Returns
-///
-/// The request ID of the stream. Every message of the stream carries it.
 @external(erlang, "dream_http_shim", "request_stream_messages")
 pub fn start_stream_messages(
   method: atom.Atom,
@@ -188,14 +187,4 @@ pub fn start_stream_messages(
   connect_timeout_ms: Int,
   autoredirect: Bool,
   connection_settings: ConnectionSettings,
-) -> String
-
-/// Cancel a message-based stream by request ID string
-///
-/// **Note:** This is an internal function used by `client.cancel_stream()`.
-///
-/// ## Parameters
-///
-/// - `request_id_string`: The request ID as a string (from `RequestId.id`)
-@external(erlang, "dream_http_shim", "cancel_stream_by_string")
-pub fn cancel_stream_by_string(request_id_string: String) -> Nil
+) -> Nil

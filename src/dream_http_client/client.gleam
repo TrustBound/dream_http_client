@@ -28,25 +28,28 @@
 ////
 //// ## Execution modes
 ////
-//// You can execute the same `ClientRequest` in three ways:
+//// You can execute the same `ClientRequest` in four ways:
 ////
 //// - **Blocking**: `send()` returns the full response body.
 //// - **Pull streaming**: `stream_yielder()` returns a `yielder.Yielder` of chunks.
 //// - **Callback streaming**: `start_stream()` spawns a stream process and calls
 ////   your callbacks (`on_stream_*`) as events arrive.
+//// - **Message streaming**: `stream_to()` spawns a stream process that sends
+////   typed `StreamMessage` values to a subject, for OTP actors.
 ////
 //// The “right” choice is mostly about concurrency:
 ////
 //// - Use `send()` for normal JSON APIs.
 //// - Use `stream_yielder()` for scripts/one‑offs where blocking is fine.
 //// - Use `start_stream()` when you need non‑blocking streaming in OTP code.
+//// - Use `stream_to()` when an OTP actor must handle the stream as messages.
 ////
 //// ## Recording and playback
 ////
 //// Attach a recorder with `recorder()` to record real HTTP traffic to disk, or
-//// to play back recordings without network calls. All three execution modes
-//// (`send()`, `stream_yielder()`, `start_stream()`) fully support both
-//// recording and playback.
+//// to play back recordings without network calls. All four execution modes
+//// (`send()`, `stream_yielder()`, `start_stream()`, `stream_to()`) fully
+//// support both recording and playback.
 ////
 //// ### Record a call <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_record_call.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ////
@@ -2862,65 +2865,114 @@ pub fn get_recorder(
 // Message-Based Streaming Types
 // ============================================================================
 
-/// Opaque request identifier for internal streaming
+/// Identifies one stream that `stream_to()` started
 ///
-/// A unique identifier for an active HTTP stream. You will usually only see
-/// a `RequestId` inside `StreamMessage` values processed by the stream process
-/// created by `start_stream()`, or when using the low-level `cancel_stream()`.
-///
-/// ## Usage
-///
-/// Most users never need to construct or store `RequestId`. Prefer controlling
-/// streams via `StreamHandle` (`cancel_stream_handle`, `is_stream_active`,
-/// `await_stream`).
+/// `stream_to()` returns a `RequestId`, and every `StreamMessage` of that
+/// stream carries the same value in its `request_id` field. Compare the two
+/// with `==` to tell apart the messages of streams that send to one inbox.
+/// Give it to `cancel_stream()` to stop the stream.
 ///
 /// ## Notes
 ///
-/// - RequestId values are opaque - do not rely on their internal structure
-/// - RequestIds are unique per VM instance but not stable across restarts
-/// - Use pattern matching or equality comparison to identify streams
+/// - The type is opaque. Only `stream_to()` makes a `RequestId`, and its
+///   contents can change in any release.
+/// - Two streams never have the same `RequestId` in one VM. A `RequestId`
+///   means nothing in another VM or after a restart.
+///
+/// ## Example
+///
+/// ### Match a message to its stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_request_id.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/erlang/process
+/// import gleam/http
+/// import gleam/result
+///
+/// pub fn first_message_is_ours() -> Result(Bool, String) {
+///   let inbox = process.new_subject()
+///   let request =
+///     client.new()
+///     |> client.scheme(http.Http)
+///     |> client.host("localhost")
+///     |> client.port(9876)
+///     |> client.path("/stream/fast")
+///   use request_id <- result.try(client.stream_to(request, inbox))
+///   let first_message = process.receive(inbox, 5000)
+///   client.cancel_stream(request_id)
+///   case first_message {
+///     // Every message of the stream carries the id that stream_to returned
+///     Ok(message) -> Ok(message.request_id == request_id)
+///     Error(Nil) -> Error("No message within 5 seconds")
+///   }
+/// }
+/// ```
+///
+/// ## See Also
+///
+/// - `stream_to()`: starts a stream and returns its `RequestId`
+/// - `cancel_stream()`: stops the stream of a `RequestId`
 pub opaque type RequestId {
-  RequestId(id: String)
+  RequestId(stream: process.Pid)
 }
 
-/// Stream message types emitted by internal streaming machinery
+/// A message that a stream of `stream_to()` sends to its inbox
 ///
-/// `start_stream()` runs a stream loop in a dedicated process; that process
-/// receives and decodes gun messages into these variants.
+/// A stream sends its messages to the inbox in this order:
 ///
-/// ## Message Flow
+/// 1. `StreamStart`: once, when the response headers arrive
+/// 2. `Chunk`: zero or more times, one for each part of the body, in order
+/// 3. `StreamEnd` or `StreamError`: exactly one of them, as the last message
 ///
-/// 1. `StreamStart` - Headers received, body chunks coming
-/// 2. `Chunk` - Zero or more data chunks
-/// 3. `StreamEnd` or `StreamError` - Stream completed normally
-/// 4. `DecodeError` - FFI layer corruption (rare, should be reported as a bug)
+/// A stream that fails before the response headers arrive, for example
+/// because the connection is refused, sends only one `StreamError`. After
+/// the last message, or after `cancel_stream()` returns, the stream sends
+/// nothing more.
 ///
-/// ## DecodeError
+/// Every message carries the `RequestId` that `stream_to()` returned, so
+/// `message.request_id` works on each message.
 ///
-/// `DecodeError` indicates the Erlang→Gleam FFI boundary received a malformed
-/// message from `gun`. This is **not a normal HTTP error** - it means either:
+/// ## Example
 ///
-/// - Erlang/OTP version incompatibility with this library
-/// - Memory corruption or other serious runtime issue
-/// - A bug in this library's FFI code
+/// ### Handle stream messages in an actor <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/stream_to_actor.gleam#L50-L67"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// **What to do:** If you see a `DecodeError`, please report it as a bug at
-/// https://github.com/TrustBound/dream_http_client/issues with the full error message.
-/// The error message includes debug information to help diagnose the issue.
+/// ```gleam
+/// fn handle_stream_message(
+///   state: State,
+///   message: StreamMessage,
+/// ) -> actor.Next(State, StreamMessage) {
+///   case message {
+///     StreamStart(..) -> actor.continue(state)
+///     Chunk(data: data, ..) ->
+///       actor.continue(State(..state, body: bit_array.append(state.body, data)))
+///     StreamEnd(..) -> {
+///       process.send(state.done, Ok(state.body))
+///       actor.stop()
+///     }
+///     StreamError(error: error, ..) -> {
+///       process.send(state.done, Error(stream_failure_to_string(error)))
+///       actor.stop()
+///     }
+///   }
+/// }
+/// ```
 ///
-/// Unlike `StreamError` which has a `RequestId`, `DecodeError` does not because
-/// the request ID itself could not be decoded from the corrupted message.
+/// ## See Also
+///
+/// - `stream_to()`: starts a stream that sends these messages
+/// - `stream_failure_to_string()`: describes the failure of a `StreamError`
 pub type StreamMessage {
-  /// Stream started, headers received
+  /// The response headers arrived. Body chunks can follow.
   StreamStart(request_id: RequestId, headers: List(Header))
-  /// Data chunk received
+  /// The next part of the response body.
   Chunk(request_id: RequestId, data: BitArray)
-  /// Stream completed successfully
+  /// The body is complete. `headers` holds the trailing headers, and is
+  /// empty when the response has none.
   StreamEnd(request_id: RequestId, headers: List(Header))
-  /// Stream failed with error (connection drop, timeout, HTTP error, etc.)
+  /// The stream failed: a non-2xx response (`HttpFailure`), or a transport
+  /// failure such as a refused connection, a dropped connection or a
+  /// timeout (`TransportFailure`). No message follows it.
   StreamError(request_id: RequestId, error: StreamFailure)
-  /// Failed to decode stream message from Erlang FFI (indicates library bug)
-  DecodeError(reason: String)
 }
 
 /// Handle to a running HTTP stream
@@ -3717,15 +3769,26 @@ fn save_streaming_recording(
   state: RecordingYielderState,
   chunks: List(recording.Chunk),
 ) -> Nil {
-  // Reverse chunks to get correct order (we prepended them)
-  let ordered_chunks = list.reverse(chunks)
+  save_stream_recording(
+    state.recorder,
+    state.recorded_request,
+    state.start_headers,
+    chunks,
+  )
+}
 
+// Saves a streamed response. `reversed_chunks` holds the chunks newest
+// first.
+fn save_stream_recording(
+  recorder_instance: recorder.Recorder,
+  recorded_request: recording.RecordedRequest,
+  headers: List(#(String, String)),
+  reversed_chunks: List(recording.Chunk),
+) -> Nil {
   // gun only streams body chunks for successful responses (200/206). We
   // infer 206 if Content-Range is present; otherwise default to 200.
   let status = case
-    list.any(state.start_headers, fn(h) {
-      string.lowercase(h.0) == "content-range"
-    })
+    list.any(headers, fn(h) { string.lowercase(h.0) == "content-range" })
   {
     True -> 206
     False -> 200
@@ -3734,20 +3797,19 @@ fn save_streaming_recording(
   let response =
     recording.StreamingResponse(
       status: status,
-      headers: state.start_headers,
-      chunks: ordered_chunks,
+      headers: headers,
+      chunks: list.reverse(reversed_chunks),
     )
 
-  let rec =
-    recording.Recording(request: state.recorded_request, response: response)
-
-  recorder.add_recording(state.recorder, rec)
+  recorder.add_recording(
+    recorder_instance,
+    recording.Recording(request: recorded_request, response: response),
+  )
 }
 
-// Internal: Start a message-based streaming HTTP request
-// Used by start_stream() to start the low-level HTTP stream via gun, after
-// it found no recording to play back.
-fn start_stream_messages(client_request: ClientRequest) -> RequestId {
+// Starts the low-level HTTP stream via gun. A translator process sends the
+// stream to the calling process as `{http, TranslatorMessage}` messages.
+fn start_stream_messages(client_request: ClientRequest) -> Nil {
   let http_request = to_http_request(client_request)
   internal.start_stream_messages(
     internal.atomize_method(http_request.method),
@@ -3759,23 +3821,6 @@ fn start_stream_messages(client_request: ClientRequest) -> RequestId {
     resolve_auto_redirect(client_request),
     resolve_connection_settings(client_request),
   )
-  |> RequestId
-}
-
-fn record_message_stream_if_needed(
-  request_id: RequestId,
-  recorder_instance: recorder.Recorder,
-  recorded_request: recording.RecordedRequest,
-) -> Nil {
-  case recorder.is_record_mode(recorder_instance) {
-    True ->
-      store_message_stream_recorder(
-        request_id,
-        recorder_instance,
-        recorded_request,
-      )
-    False -> Nil
-  }
 }
 
 fn build_url(request: request.Request(String)) -> String {
@@ -3795,44 +3840,62 @@ fn build_url(request: request.Request(String)) -> String {
   <> query_string
 }
 
-// Internal: Add stream message handling to a selector
-// Used by start_stream() to receive HTTP messages in spawned process
-fn select_stream_messages(
-  selector: process.Selector(msg),
-  mapper: fn(StreamMessage) -> msg,
-) -> process.Selector(msg) {
-  selector
-  |> process.select_record(
-    tag: atom.create("http"),
-    fields: 1,
-    mapping: create_selector_mapper(mapper),
+// A message from the translator process of a stream. The Erlang shim builds
+// these values, for example `{translator_chunk, Data}`.
+type TranslatorMessage {
+  TranslatorStart(headers: List(Header))
+  TranslatorChunk(data: BitArray)
+  TranslatorEnd(headers: List(Header))
+  TranslatorError(failure: StreamFailure)
+}
+
+// A message that a stream process receives.
+type StreamProcessMessage {
+  FromTranslator(message: TranslatorMessage)
+  OwnerStopped
+}
+
+// What a stream process does with the stream: call the callbacks of
+// start_stream(), or send messages to the inbox of stream_to().
+type StreamHandlers {
+  StreamHandlers(
+    on_start: fn(List(Header)) -> Nil,
+    on_chunk: fn(BitArray) -> Nil,
+    on_end: fn(List(Header)) -> Nil,
+    on_error: fn(StreamFailure) -> Nil,
   )
 }
 
-fn create_selector_mapper(
-  mapper: fn(StreamMessage) -> msg,
-) -> fn(d.Dynamic) -> msg {
-  // process.select_record requires a callback of type fn(Dynamic) -> msg.
-  // This small helper exists to adapt that interface while keeping the
-  // higher-level mapper explicit and testable.
-  apply_mapper_to_dynamic(_, mapper)
+// A stream that a recorder in record mode saves when the stream ends.
+// `chunks` holds the chunks newest first.
+type StreamRecording {
+  StreamRecording(
+    recorder: recorder.Recorder,
+    recorded_request: recording.RecordedRequest,
+    headers: List(#(String, String)),
+    chunks: List(recording.Chunk),
+    last_chunk_time: Option(Int),
+  )
 }
 
-fn apply_mapper_to_dynamic(
-  dyn: d.Dynamic,
-  mapper: fn(StreamMessage) -> msg,
-) -> msg {
-  // The Erlang shim builds the StreamMessage value itself.
-  let stream_msg = stream_message_from_selector(dyn)
-
-  // Record the message if this stream has a recorder
-  record_stream_message(stream_msg)
-
-  mapper(stream_msg)
+fn select_translator_messages(
+  selector: process.Selector(StreamProcessMessage),
+) -> process.Selector(StreamProcessMessage) {
+  process.select_record(
+    selector,
+    tag: atom.create("http"),
+    fields: 1,
+    mapping: translator_message,
+  )
 }
 
-@external(erlang, "dream_http_shim", "decode_stream_message_for_selector")
-fn stream_message_from_selector(message: d.Dynamic) -> StreamMessage
+// The selector gives the whole `{http, TranslatorMessage}` record.
+fn translator_message(record: d.Dynamic) -> StreamProcessMessage {
+  FromTranslator(message: record_element(2, record))
+}
+
+@external(erlang, "erlang", "element")
+fn record_element(index: Int, record: d.Dynamic) -> TranslatorMessage
 
 /// Start an HTTP stream with callback handlers
 ///
@@ -3923,128 +3986,410 @@ fn stream_message_from_selector(message: d.Dynamic) -> StreamMessage
 /// }
 /// ```
 pub fn start_stream(request: ClientRequest) -> Result(StreamHandle, String) {
-  let stream_pid = process.spawn_unlinked(fn() { run_stream_process(request) })
+  let stream_pid =
+    process.spawn_unlinked(fn() {
+      run_stream_process(
+        request,
+        callback_handlers(request),
+        process.new_selector(),
+      )
+    })
 
   Ok(StreamHandle(pid: stream_pid))
 }
 
-fn run_stream_process(request: ClientRequest) -> Nil {
+/// Start an HTTP stream that sends typed messages to an inbox
+///
+/// Starts the stream in its own process and returns its `RequestId` at once
+/// (non-blocking). The stream sends `StreamMessage` values to `inbox`:
+/// `StreamStart`, then a `Chunk` for each part of the body, then exactly one
+/// `StreamEnd` or `StreamError`. Each message carries the returned
+/// `RequestId`. Only `inbox` gets messages: no untyped message reaches the
+/// mailbox of your process.
+///
+/// Use this in an OTP actor. Add `inbox` to the selector of the actor with
+/// `process.select`, and handle the stream messages like any other actor
+/// message. Use `start_stream()` when callbacks that run in the stream
+/// process are enough. `stream_to()` does not call the `on_stream_*`
+/// callbacks of `request`.
+///
+/// ## Ownership
+///
+/// The process that calls `stream_to()` owns the stream. When that process
+/// stops, the stream stops too and sends nothing more. A `start_stream()`
+/// stream is different: it keeps running after the process that started it
+/// stops.
+///
+/// ## Recording and Playback
+///
+/// When a recorder is attached (via `recorder()`), `stream_to()` works like
+/// `start_stream()`:
+///
+/// - **Record mode**: Streams from the real server, sends the messages, and
+///   saves the stream in the `StreamingResponse` fixture format that
+///   `start_stream()` and `stream_yielder()` use. The stream is saved before
+///   its `StreamEnd` or `StreamError` message is sent. A cancelled stream is
+///   not saved.
+/// - **Playback mode**: Sends `StreamStart` with the recorded headers, a
+///   `Chunk` for each recorded chunk, then `StreamEnd(request_id, [])`. A
+///   blocking recording is sent as one chunk. No network calls are made.
+///
+/// ## Parameters
+///
+/// - `request`: The configured HTTP request
+/// - `inbox`: The subject that gets the stream messages. The process that
+///   created it receives them.
+///
+/// ## Returns
+///
+/// - `Ok(RequestId)`: The stream started. Every message of the stream
+///   carries this `RequestId`.
+/// - `Error(String)`: The same shape as `start_stream()`. It is not returned
+///   today: a stream that cannot connect, or that gets an error response,
+///   sends a `StreamError` to `inbox`.
+///
+/// ## Example
+///
+/// ### Stream into an actor <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/stream_to_actor.gleam#L5-L75"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client.{
+///   type StreamMessage, Chunk, StreamEnd, StreamError, StreamStart, host, path,
+///   port, scheme, stream_failure_to_string, stream_to,
+/// }
+/// import gleam/bit_array
+/// import gleam/erlang/process.{type Subject}
+/// import gleam/http
+/// import gleam/otp/actor
+/// import gleam/result
+///
+/// pub type State {
+///   State(body: BitArray, done: Subject(Result(BitArray, String)))
+/// }
+///
+/// pub fn download_body() -> Result(BitArray, String) {
+///   let done = process.new_subject()
+///   use _started <- result.try(
+///     actor.new_with_initialiser(1000, fn(_self) { start_download(done) })
+///     |> actor.on_message(handle_stream_message)
+///     |> actor.start
+///     |> result.map_error(describe_start_error),
+///   )
+///   case process.receive(done, 10_000) {
+///     Ok(body_result) -> body_result
+///     Error(Nil) -> Error("The download did not end within 10 seconds")
+///   }
+/// }
+///
+/// fn start_download(
+///   done: Subject(Result(BitArray, String)),
+/// ) -> Result(actor.Initialised(State, StreamMessage, Nil), String) {
+///   let inbox = process.new_subject()
+///   let request =
+///     client.new()
+///     |> scheme(http.Http)
+///     |> host("localhost")
+///     |> port(9876)
+///     |> path("/stream/fast")
+///   // The actor owns the stream: the stream stops when the actor stops
+///   use _request_id <- result.map(stream_to(request, inbox))
+///   let selector = process.new_selector() |> process.select(inbox)
+///   actor.initialised(State(body: <<>>, done: done))
+///   |> actor.selecting(selector)
+/// }
+///
+/// fn handle_stream_message(
+///   state: State,
+///   message: StreamMessage,
+/// ) -> actor.Next(State, StreamMessage) {
+///   case message {
+///     StreamStart(..) -> actor.continue(state)
+///     Chunk(data: data, ..) ->
+///       actor.continue(State(..state, body: bit_array.append(state.body, data)))
+///     StreamEnd(..) -> {
+///       process.send(state.done, Ok(state.body))
+///       actor.stop()
+///     }
+///     StreamError(error: error, ..) -> {
+///       process.send(state.done, Error(stream_failure_to_string(error)))
+///       actor.stop()
+///     }
+///   }
+/// }
+///
+/// fn describe_start_error(error: actor.StartError) -> String {
+///   case error {
+///     actor.InitTimeout -> "The download actor did not start in time"
+///     actor.InitFailed(reason) -> reason
+///     actor.InitExited(_reason) -> "The download actor stopped while it started"
+///   }
+/// }
+/// ```
+///
+/// ## See Also
+///
+/// - `cancel_stream()`: stops the stream
+/// - `StreamMessage`: the messages and their order
+/// - `start_stream()`: a stream with callbacks
+pub fn stream_to(
+  request: ClientRequest,
+  inbox: process.Subject(StreamMessage),
+) -> Result(RequestId, String) {
+  let owner = process.self()
+  let stream_pid =
+    process.spawn_unlinked(fn() {
+      let owner_monitor = process.monitor(owner)
+      let owner_selector =
+        process.new_selector()
+        |> process.select_specific_monitor(owner_monitor, fn(_down) {
+          OwnerStopped
+        })
+      let handlers = inbox_handlers(inbox, RequestId(stream: process.self()))
+      run_stream_process(request, handlers, owner_selector)
+    })
+
+  Ok(RequestId(stream: stream_pid))
+}
+
+fn callback_handlers(request: ClientRequest) -> StreamHandlers {
+  StreamHandlers(
+    on_start: option.unwrap(request.on_stream_start, ignore_headers),
+    on_chunk: option.unwrap(request.on_stream_chunk, ignore_chunk),
+    on_end: option.unwrap(request.on_stream_end, ignore_headers),
+    on_error: option.unwrap(request.on_stream_error, ignore_failure),
+  )
+}
+
+fn ignore_headers(_headers: List(Header)) -> Nil {
+  Nil
+}
+
+fn ignore_chunk(_data: BitArray) -> Nil {
+  Nil
+}
+
+fn ignore_failure(_failure: StreamFailure) -> Nil {
+  Nil
+}
+
+fn inbox_handlers(
+  inbox: process.Subject(StreamMessage),
+  request_id: RequestId,
+) -> StreamHandlers {
+  StreamHandlers(
+    on_start: fn(headers) {
+      process.send(inbox, StreamStart(request_id: request_id, headers: headers))
+    },
+    on_chunk: fn(data) {
+      process.send(inbox, Chunk(request_id: request_id, data: data))
+    },
+    on_end: fn(headers) {
+      process.send(inbox, StreamEnd(request_id: request_id, headers: headers))
+    },
+    on_error: fn(error) {
+      process.send(inbox, StreamError(request_id: request_id, error: error))
+    },
+  )
+}
+
+// Runs one stream in the calling process. `stop_selector` selects the
+// messages that stop a live stream early.
+fn run_stream_process(
+  request: ClientRequest,
+  handlers: StreamHandlers,
+  stop_selector: process.Selector(StreamProcessMessage),
+) -> Nil {
   case request.recorder {
-    None -> stream_live(request)
-    Some(rec) -> {
-      let recorded_request = client_request_to_recorded_request(request)
-      case recorder.find_recording(rec, recorded_request) {
-        Ok(Some(recording.Recording(_, response))) ->
-          replay_recorded_stream(request, response)
-        Ok(None) -> {
-          let selector = stream_message_selector()
-          let request_id = start_stream_messages(request)
-          record_message_stream_if_needed(request_id, rec, recorded_request)
-          process_stream_loop(selector, request)
-        }
-        Error(reason) ->
-          report_stream_error(
-            request,
-            TransportFailure(error: Unexpected(raw: reason)),
-          )
-      }
-    }
+    None -> stream_live(request, handlers, stop_selector, None)
+    Some(recorder_instance) ->
+      stream_with_recorder(request, handlers, stop_selector, recorder_instance)
   }
 }
 
-fn stream_live(request: ClientRequest) -> Nil {
-  let selector = stream_message_selector()
+fn stream_with_recorder(
+  request: ClientRequest,
+  handlers: StreamHandlers,
+  stop_selector: process.Selector(StreamProcessMessage),
+  recorder_instance: recorder.Recorder,
+) -> Nil {
+  let recorded_request = client_request_to_recorded_request(request)
+  case recorder.find_recording(recorder_instance, recorded_request) {
+    Ok(Some(recording.Recording(_, response))) ->
+      replay_recorded_stream(handlers, response)
+    Ok(None) ->
+      stream_live(
+        request,
+        handlers,
+        stop_selector,
+        new_stream_recording(recorder_instance, recorded_request),
+      )
+    Error(reason) ->
+      handlers.on_error(TransportFailure(error: Unexpected(raw: reason)))
+  }
+}
+
+fn new_stream_recording(
+  recorder_instance: recorder.Recorder,
+  recorded_request: recording.RecordedRequest,
+) -> Option(StreamRecording) {
+  case recorder.is_record_mode(recorder_instance) {
+    True ->
+      Some(StreamRecording(
+        recorder: recorder_instance,
+        recorded_request: recorded_request,
+        headers: [],
+        chunks: [],
+        last_chunk_time: None,
+      ))
+    False -> None
+  }
+}
+
+fn stream_live(
+  request: ClientRequest,
+  handlers: StreamHandlers,
+  stop_selector: process.Selector(StreamProcessMessage),
+  stream_recording: Option(StreamRecording),
+) -> Nil {
+  let selector = select_translator_messages(stop_selector)
   start_stream_messages(request)
-  process_stream_loop(selector, request)
+  process_stream_loop(selector, handlers, stream_recording)
 }
 
-fn stream_message_selector() -> process.Selector(StreamMessage) {
-  process.new_selector()
-  |> select_stream_messages(fn(msg) { msg })
-}
-
-fn report_stream_error(request: ClientRequest, failure: StreamFailure) -> Nil {
-  case request.on_stream_error {
-    Some(on_error) -> on_error(failure)
-    None -> Nil
-  }
-}
-
-/// Replay a recorded response by directly invoking the stream callbacks.
+/// Replay a recorded response through the stream handlers.
 /// Handles both StreamingResponse (multiple chunks) and BlockingResponse
 /// (body delivered as a single chunk).
 fn replay_recorded_stream(
-  request: ClientRequest,
+  handlers: StreamHandlers,
   response: recording.RecordedResponse,
 ) -> Nil {
   case response {
     recording.StreamingResponse(_, headers, chunks) -> {
-      case request.on_stream_start {
-        Some(cb) -> cb(list.map(headers, fn(h) { Header(h.0, h.1) }))
-        None -> Nil
-      }
-      list.each(chunks, fn(chunk) {
-        case request.on_stream_chunk {
-          Some(cb) -> cb(chunk.data)
-          None -> Nil
-        }
-      })
-      case request.on_stream_end {
-        Some(cb) -> cb([])
-        None -> Nil
-      }
+      handlers.on_start(tuples_to_headers(headers))
+      list.each(chunks, fn(chunk) { handlers.on_chunk(chunk.data) })
+      handlers.on_end([])
     }
     recording.BlockingResponse(_, headers, body) -> {
-      case request.on_stream_start {
-        Some(cb) -> cb(list.map(headers, fn(h) { Header(h.0, h.1) }))
-        None -> Nil
-      }
-      case request.on_stream_chunk {
-        Some(cb) -> cb(<<body:utf8>>)
-        None -> Nil
-      }
-      case request.on_stream_end {
-        Some(cb) -> cb([])
-        None -> Nil
-      }
+      handlers.on_start(tuples_to_headers(headers))
+      handlers.on_chunk(<<body:utf8>>)
+      handlers.on_end([])
     }
   }
 }
 
-// The stream process has one stream, and the Erlang shim always ends it
-// with a StreamEnd or a StreamError message: after the timeout of the
-// request, the stream ends with a TimedOut failure.
+// The translator always ends the stream with a TranslatorEnd or a
+// TranslatorError message: after the timeout of the request, the stream
+// ends with a TimedOut failure. A stream of stream_to() also stops when its
+// owner stops. The recording is updated before the handler runs, so a
+// recording is saved before the end of the stream is reported.
 fn process_stream_loop(
-  selector: process.Selector(StreamMessage),
-  request: ClientRequest,
+  selector: process.Selector(StreamProcessMessage),
+  handlers: StreamHandlers,
+  stream_recording: Option(StreamRecording),
 ) -> Nil {
   case process.selector_receive_forever(selector) {
-    StreamStart(_, headers) -> {
-      case request.on_stream_start {
-        Some(on_start) -> on_start(headers)
-        None -> Nil
-      }
-      process_stream_loop(selector, request)
+    FromTranslator(TranslatorStart(headers)) -> {
+      let updated = record_stream_start(stream_recording, headers)
+      handlers.on_start(headers)
+      process_stream_loop(selector, handlers, updated)
     }
-    Chunk(_, data) -> {
-      case request.on_stream_chunk {
-        Some(on_chunk) -> on_chunk(data)
-        None -> Nil
-      }
-      process_stream_loop(selector, request)
+    FromTranslator(TranslatorChunk(data)) -> {
+      let updated = record_stream_chunk(stream_recording, data)
+      handlers.on_chunk(data)
+      process_stream_loop(selector, handlers, updated)
     }
-    StreamEnd(_, headers) -> {
-      case request.on_stream_end {
-        Some(on_end) -> on_end(headers)
-        None -> Nil
-      }
+    FromTranslator(TranslatorEnd(headers)) -> {
+      record_stream_end(stream_recording, headers)
+      handlers.on_end(headers)
     }
-    StreamError(_, failure) -> report_stream_error(request, failure)
-    DecodeError(reason) ->
-      report_stream_error(
-        request,
-        TransportFailure(error: Unexpected(raw: "DecodeError: " <> reason)),
+    FromTranslator(TranslatorError(failure)) -> {
+      record_stream_error(stream_recording, failure)
+      handlers.on_error(failure)
+    }
+    OwnerStopped -> Nil
+  }
+}
+
+fn record_stream_start(
+  stream_recording: Option(StreamRecording),
+  headers: List(Header),
+) -> Option(StreamRecording) {
+  option.map(stream_recording, fn(state) {
+    StreamRecording(..state, headers: headers_to_tuples(headers))
+  })
+}
+
+fn record_stream_chunk(
+  stream_recording: Option(StreamRecording),
+  data: BitArray,
+) -> Option(StreamRecording) {
+  option.map(stream_recording, fn(state) {
+    add_recorded_chunk(state, data, get_time_ms())
+  })
+}
+
+fn add_recorded_chunk(
+  state: StreamRecording,
+  data: BitArray,
+  now: Int,
+) -> StreamRecording {
+  let delay = case state.last_chunk_time {
+    Some(last_time) -> now - last_time
+    None -> 0
+  }
+  StreamRecording(
+    ..state,
+    chunks: [recording.Chunk(data: data, delay_ms: delay), ..state.chunks],
+    last_chunk_time: Some(now),
+  )
+}
+
+fn record_stream_end(
+  stream_recording: Option(StreamRecording),
+  trailers: List(Header),
+) -> Nil {
+  case stream_recording {
+    Some(state) ->
+      save_stream_recording(
+        state.recorder,
+        state.recorded_request,
+        recorded_end_headers(state.headers, trailers),
+        state.chunks,
       )
+    None -> Nil
+  }
+}
+
+// The saved headers are the trailing headers when the response has some,
+// and the response headers otherwise.
+fn recorded_end_headers(
+  headers: List(#(String, String)),
+  trailers: List(Header),
+) -> List(#(String, String)) {
+  case trailers {
+    [] -> headers
+    _ -> headers_to_tuples(trailers)
+  }
+}
+
+fn record_stream_error(
+  stream_recording: Option(StreamRecording),
+  failure: StreamFailure,
+) -> Nil {
+  case stream_recording {
+    Some(state) -> {
+      io.println_error(
+        "HTTP stream error while recording a stream: "
+        <> stream_failure_to_string(failure),
+      )
+      save_stream_recording(
+        state.recorder,
+        state.recorded_request,
+        state.headers,
+        state.chunks,
+      )
+    }
+    None -> Nil
   }
 }
 
@@ -4156,198 +4501,61 @@ pub fn await_stream(handle: StreamHandle) -> Nil {
   }
 }
 
-/// Cancel an active streaming request (low-level API)
+/// Stop a stream that `stream_to()` started
 ///
-/// Cancels an HTTP stream given its `RequestId`.
+/// Stops the stream process of `request_id` and waits until it has stopped.
+/// The request is cancelled: over HTTP/2 the server gets a stream reset,
+/// and over HTTP/1.1 the pooled connection reads and drops the rest of the
+/// body before it can serve another request. When `cancel_stream()`
+/// returns, the stream sends no more messages to its inbox. Messages that the stream sent before the cancel can still wait in
+/// the mailbox of the process that owns the inbox.
 ///
-/// **Note:** Most users should use `start_stream()` and `cancel_stream_handle()`
-/// instead. `cancel_stream()` exists primarily to support internal stream
-/// machinery and advanced integrations.
+/// A cancel of a stream that has already ended, or a second cancel of the
+/// same stream, does nothing and returns `Nil`. Any process can cancel a
+/// stream, not only its owner. In record mode, a cancelled stream is not
+/// saved.
 ///
 /// ## Parameters
 ///
-/// - `request_id`: The request ID for an active internal stream
+/// - `request_id`: The `RequestId` that `stream_to()` returned
+///
+/// ## Returns
+///
+/// `Nil`, after the stream has stopped.
 ///
 /// ## Example
 ///
-/// This is typically not called directly unless you already have a `RequestId`.
+/// ### Cancel a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_cancel_stream.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/erlang/process
+/// import gleam/http
+/// import gleam/result
+///
+/// pub fn start_then_cancel() -> Result(Nil, String) {
+///   let inbox = process.new_subject()
+///   let request =
+///     client.new()
+///     |> client.scheme(http.Http)
+///     |> client.host("localhost")
+///     |> client.port(9876)
+///     |> client.path("/stream/fast")
+///   use request_id <- result.map(client.stream_to(request, inbox))
+///   // Later: no message of this stream comes after the cancel
+///   client.cancel_stream(request_id)
+/// }
+/// ```
+///
+/// ## See Also
+///
+/// - `stream_to()`: starts a stream and returns its `RequestId`
+/// - `cancel_stream_handle()`: stops a stream of `start_stream()`
 pub fn cancel_stream(request_id: RequestId) -> Nil {
-  let RequestId(id) = request_id
-  internal.cancel_stream_by_string(id)
-}
-
-// ============================================================================
-// Message-Based Streaming Recorder (Internal - ETS Storage)
-// ============================================================================
-
-type MessageStreamRecorderState {
-  MessageStreamRecorderState(
-    recorder: recorder.Recorder,
-    recorded_request: recording.RecordedRequest,
-    headers: List(#(String, String)),
-    chunks: List(recording.Chunk),
-    last_chunk_time: Option(Int),
-  )
-}
-
-// ETS table name for recorder state
-const recorder_table_name = "dream_http_client_stream_recorders"
-
-@external(erlang, "dream_http_shim", "ets_insert")
-fn ets_insert(
-  table: String,
-  key: String,
-  recorder: recorder.Recorder,
-  recorded_request: recording.RecordedRequest,
-  headers: List(#(String, String)),
-  chunks: List(recording.Chunk),
-  last_chunk_time: Option(Int),
-) -> Nil
-
-@external(erlang, "dream_http_shim", "ets_lookup")
-fn ets_lookup(table: String, key: String) -> Option(MessageStreamRecorderState)
-
-@external(erlang, "dream_http_shim", "ets_delete")
-fn ets_delete(table: String, key: String) -> Bool
-
-fn store_message_stream_recorder(
-  request_id: RequestId,
-  rec: recorder.Recorder,
-  recorded_req: recording.RecordedRequest,
-) -> Nil {
-  let RequestId(id) = request_id
-  ets_insert(recorder_table_name, id, rec, recorded_req, [], [], None)
-}
-
-fn get_message_stream_recorder(
-  request_id: RequestId,
-) -> Option(MessageStreamRecorderState) {
-  let RequestId(id) = request_id
-  ets_lookup(recorder_table_name, id)
-}
-
-fn update_message_stream_recorder(
-  request_id: RequestId,
-  state: MessageStreamRecorderState,
-) -> Nil {
-  let RequestId(id) = request_id
-  ets_insert(
-    recorder_table_name,
-    id,
-    state.recorder,
-    state.recorded_request,
-    state.headers,
-    state.chunks,
-    state.last_chunk_time,
-  )
-}
-
-fn remove_message_stream_recorder(request_id: RequestId) -> Nil {
-  let RequestId(id) = request_id
-  ets_delete(recorder_table_name, id)
-  Nil
-}
-
-fn record_stream_message(message: StreamMessage) -> Nil {
-  case message {
-    Chunk(request_id, data) -> {
-      case get_message_stream_recorder(request_id) {
-        option.Some(state) -> {
-          let now = get_time_ms()
-          let delay = case state.last_chunk_time {
-            Some(last_time) -> now - last_time
-            None -> 0
-          }
-
-          let chunk = recording.Chunk(data: data, delay_ms: delay)
-          let new_state =
-            MessageStreamRecorderState(
-              recorder: state.recorder,
-              recorded_request: state.recorded_request,
-              headers: state.headers,
-              chunks: [chunk, ..state.chunks],
-              last_chunk_time: Some(now),
-            )
-          update_message_stream_recorder(request_id, new_state)
-        }
-        option.None -> Nil
-      }
-    }
-    StreamEnd(request_id, headers) -> {
-      case get_message_stream_recorder(request_id) {
-        option.Some(state) -> {
-          // Capture final (trailing) headers from stream_end when present.
-          let header_tuples = headers_to_tuples(headers)
-          let final_headers = case header_tuples == [] {
-            True -> state.headers
-            False -> header_tuples
-          }
-          let updated =
-            MessageStreamRecorderState(..state, headers: final_headers)
-          finish_message_stream_recording(request_id, updated)
-        }
-        option.None -> Nil
-      }
-    }
-    StreamError(request_id, failure) -> {
-      let RequestId(request_id_string) = request_id
-      io.println_error(
-        "HTTP stream error while recording messages for request "
-        <> request_id_string
-        <> ": "
-        <> stream_failure_to_string(failure),
-      )
-      case get_message_stream_recorder(request_id) {
-        option.Some(state) -> {
-          finish_message_stream_recording(request_id, state)
-        }
-        option.None -> Nil
-      }
-    }
-    StreamStart(request_id, headers) -> {
-      case get_message_stream_recorder(request_id) {
-        option.Some(state) -> {
-          let header_tuples = headers_to_tuples(headers)
-          let new_state =
-            MessageStreamRecorderState(..state, headers: header_tuples)
-          update_message_stream_recorder(request_id, new_state)
-        }
-        option.None -> Nil
-      }
-    }
-    DecodeError(error_reason) -> {
-      // DecodeError indicates a serious FFI problem at the FFI boundary.
-      io.println_error(
-        "Internal DecodeError in HTTP stream message recorder: " <> error_reason,
-      )
-      Nil
-    }
-  }
-}
-
-fn finish_message_stream_recording(
-  request_id: RequestId,
-  state: MessageStreamRecorderState,
-) -> Nil {
-  let ordered_chunks = list.reverse(state.chunks)
-
-  let status = case
-    list.any(state.headers, fn(h) { string.lowercase(h.0) == "content-range" })
-  {
-    True -> 206
-    False -> 200
-  }
-
-  let response =
-    recording.StreamingResponse(
-      status: status,
-      headers: state.headers,
-      chunks: ordered_chunks,
-    )
-
-  let rec =
-    recording.Recording(request: state.recorded_request, response: response)
-
-  recorder.add_recording(state.recorder, rec)
-  remove_message_stream_recorder(request_id)
+  let RequestId(stream: stream_pid) = request_id
+  let stream_monitor = process.monitor(stream_pid)
+  process.kill(stream_pid)
+  process.new_selector()
+  |> process.select_specific_monitor(stream_monitor, fn(_down) { Nil })
+  |> process.selector_receive_forever
 }

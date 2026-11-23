@@ -31,6 +31,7 @@ import snippets/recording_transformer
 import snippets/request_builder
 import snippets/stream_cancel
 import snippets/stream_messages_basic
+import snippets/stream_to_actor
 import snippets/stream_yielder_basic
 import snippets/timeout_config
 import snippets/transport_config_example
@@ -90,6 +91,21 @@ pub fn tests() -> TestSuite(Nil) {
         |> should
         |> be_equal(Ok(Nil))
         |> or_fail_with("stream_and_print should complete")
+      }),
+      it("Message streaming: download_body returns the whole body", fn() {
+        // Act
+        let value = stream_to_actor.download_body()
+
+        // Assert
+        value
+        |> should
+        |> be_equal(
+          Ok(<<
+            "Chunk 1\nChunk 2\nChunk 3\nChunk 4\nChunk 5\n",
+            "Chunk 6\nChunk 7\nChunk 8\nChunk 9\nChunk 10\n",
+          >>),
+        )
+        |> or_fail_with("The actor should collect the whole stream")
       }),
       it(
         "Per-request settings: fetch_with_connect_timeout returns the text endpoint",
