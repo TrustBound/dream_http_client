@@ -71,7 +71,7 @@ pub fn simple_get() -> Result(HttpResponse, SendError) {
 
 - [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md): install the package, send a first request, and choose an execution mode
 - [Requests and responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/requests-and-responses.md): build a request, send it, and read the response body
-- [Streaming](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming.md): read a response as chunks with a yielder or with callbacks
+- [Streaming a response](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming.md): read a long or endless response chunk by chunk, handle failures, and test it
 - [Streaming to actors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming-to-actors.md): handle a stream as typed messages in an OTP actor
 - [Errors](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/errors.md): handle HTTP errors and transport failures
 - [Request settings](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-settings.md): set timeouts, redirects, and the HTTP version for one request

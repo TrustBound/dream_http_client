@@ -12,7 +12,7 @@ links = [
 pages = [
     { title = "Getting started", path = "guides/getting-started.html", source = "./docs/guides/getting-started.md" },
     { title = "Requests and responses", path = "guides/requests-and-responses.html", source = "./docs/guides/requests-and-responses.md" },
-    { title = "Streaming", path = "guides/streaming.html", source = "./docs/guides/streaming.md" },
+    { title = "Streaming a response", path = "guides/streaming.html", source = "./docs/guides/streaming.md" },
     { title = "Streaming to actors", path = "guides/streaming-to-actors.html", source = "./docs/guides/streaming-to-actors.md" },
     { title = "Errors", path = "guides/errors.html", source = "./docs/guides/errors.md" },
     { title = "Request settings", path = "guides/request-settings.html", source = "./docs/guides/request-settings.md" },
