@@ -182,6 +182,54 @@ pub fn tests() -> TestSuite {
         |> be_equal(Ok(#(200, <<"ok">>)))
         |> or_fail_with("The second request should get a new connection")
       }),
+      it("skips 1xx responses and returns the final response", fn() {
+        // Arrange
+        use port <- edge_server.with("early_hints")
+
+        // Act
+        let result =
+          client.send(edge_server.request(port))
+          |> result.map(fn(response) { #(response.status, response.body) })
+
+        // Assert
+        result
+        |> should
+        |> be_equal(Ok(#(200, <<"ok">>)))
+        |> or_fail_with("send should return the response after the 1xx ones")
+      }),
+      it("skips a 1xx response over HTTP/2", fn() {
+        // Arrange
+        use port <- edge_server.with("h2s_early_hints")
+
+        // Act
+        let result =
+          edge_server.request(port)
+          |> client.protocols(client.Http2Only)
+          |> client.send()
+          |> result.map(fn(response) { #(response.status, response.body) })
+
+        // Assert
+        result
+        |> should
+        |> be_equal(Ok(#(200, <<"ok">>)))
+        |> or_fail_with("send should return the response after the 103")
+      }),
+      it("stream_yielder skips 1xx responses", fn() {
+        // Arrange
+        use port <- edge_server.with("early_hints")
+
+        // Act
+        let chunks =
+          client.stream_yielder(edge_server.request(port))
+          |> yielder.to_list
+          |> list.map(result.map(_, bytes_tree.to_bit_array))
+
+        // Assert
+        chunks
+        |> should
+        |> be_equal([Ok(<<"ok">>)])
+        |> or_fail_with("The stream should have the body of the final response")
+      }),
       it("reports an HTTP/2 stream reset", fn() {
         // Arrange
         use port <- edge_server.with("h2_rst")

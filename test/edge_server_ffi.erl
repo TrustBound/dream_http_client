@@ -236,6 +236,15 @@ respond(<<"close_after_response">>, Socket) ->
                   <<"ok">>]),
     gen_tcp:close(Socket),
     exit(normal);
+respond(<<"early_hints">>, Socket) ->
+    %% Two 1xx responses, then the final response.
+    send(Socket, [<<"HTTP/1.1 103 Early Hints\r\n">>,
+                  <<"link: </style.css>; rel=preload\r\n\r\n">>,
+                  <<"HTTP/1.1 103 Early Hints\r\n">>,
+                  <<"link: </app.js>; rel=preload\r\n\r\n">>,
+                  <<"HTTP/1.1 200 OK\r\n">>,
+                  <<"content-length: 2\r\n\r\n">>,
+                  <<"ok">>]);
 respond(<<"empty">>, Socket) ->
     send(Socket, [<<"HTTP/1.1 200 OK\r\n">>,
                   <<"content-length: 0\r\n\r\n">>]);
@@ -323,6 +332,7 @@ ok_headers(StreamId) ->
 %% and stream 3 gets a GOAWAY that keeps stream 1. Every stream on another
 %% connection gets a complete 200 response.
 %% h2s_sixteen_parts: each stream gets 16 DATA frames, 20 ms apart.
+%% h2s_early_hints: each stream gets a 103 response, then a complete 200.
 %% h2s_no_settings: the server never sends its SETTINGS frame.
 serve_h2_streams(<<"h2s_no_settings">>, Socket, _Number) ->
     {ok, <<"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n">>} = recv(Socket, 24),
@@ -383,6 +393,11 @@ respond_stream(<<"h2s_sixteen_parts">>, Socket, _Number, StreamId) ->
     end, lists:seq(1, 15)),
     timer:sleep(20),
     send_to(Socket, cow_http2:data(StreamId, fin, <<"x">>));
+respond_stream(<<"h2s_early_hints">>, Socket, _Number, StreamId) ->
+    {Hints, _State} = cow_hpack:encode([{<<":status">>, <<"103">>}]),
+    send_to(Socket, [cow_http2:headers(StreamId, nofin, Hints),
+                     ok_headers(StreamId),
+                     cow_http2:data(StreamId, fin, <<"ok">>)]);
 respond_stream(_Scenario, Socket, _Number, StreamId) ->
     send_to(Socket, ok_headers(StreamId)).
 

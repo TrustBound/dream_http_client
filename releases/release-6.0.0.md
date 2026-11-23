@@ -624,7 +624,7 @@ with proper method/body handling for 301/302/303/307/308.
 
 ## Test coverage
 
-568 tests, 0 failed, 100% line coverage, in about 85 seconds (with the mock
+571 tests, 0 failed, 100% line coverage, in about 85 seconds (with the mock
 server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1,
 OTP 29, Gleam 1.19.2.
 

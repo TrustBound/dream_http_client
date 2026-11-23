@@ -55,6 +55,9 @@ version.
   for that time, and a held request could get response headers and no body,
   and then time out. A request that was sent on a connection that is gone is
   sent once more on a new connection.
+- A 1xx response before the final response, for example 103 Early Hints, no
+  longer crashes `send` and the stream functions. The client skips it and
+  returns the final response.
 - The idle check no longer closes a connection that serves a long response.
 - A stream that stops before its end, for example after a cancel, now closes
   its HTTP/1.1 connection, so the rest of that response never reaches the

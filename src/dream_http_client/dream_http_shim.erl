@@ -97,7 +97,7 @@ open_stream(Request, RetriesLeft) ->
                 {ok, ConnPid, _Protocol, Lease} ->
                     StreamRef = gun:request(ConnPid, method_binary(Method), PathQs, Headers, Body,
                                             request_options(Flow)),
-                    case gun:await(ConnPid, StreamRef, TimeoutMs) of
+                    case await_final_response(ConnPid, StreamRef, TimeoutMs) of
                         {response, IsFin, Status, RespHeaders} ->
                             {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders};
                         {error, Reason} ->
@@ -115,6 +115,16 @@ open_stream(Request, RetriesLeft) ->
             end;
         {error, Reason} ->
             {error, transport_error(Reason, TimeoutMs)}
+    end.
+
+%% Waits for the final response of a request. A server can send one or
+%% more 1xx responses first, for example 103 Early Hints (RFC 9110, section
+%% 15.2). They are not the answer to the request, so the client skips them.
+%% The timeout starts again after each one.
+await_final_response(ConnPid, StreamRef, TimeoutMs) ->
+    case gun:await(ConnPid, StreamRef, TimeoutMs) of
+        {inform, _Status, _Headers} -> await_final_response(ConnPid, StreamRef, TimeoutMs);
+        Result -> Result
     end.
 
 %% Reads the whole body of a response.
