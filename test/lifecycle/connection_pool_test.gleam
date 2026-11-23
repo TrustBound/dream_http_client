@@ -297,7 +297,7 @@ pub fn tests() -> TestSuite {
       }),
     ]),
     group("HTTP/2 over TLS", [
-      it("shares one connection with a Dream server over TLS", fn() {
+      it("shares one connection with a mist server over TLS", fn() {
         // Arrange
         restart_application()
         use certificates <- tls_server.with(19_980)

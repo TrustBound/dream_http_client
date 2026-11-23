@@ -1,6 +1,6 @@
 //// Certificate authority settings over HTTPS
 ////
-//// Each test starts a Dream server with a test certificate signed by a test
+//// Each test starts a mist server with a test certificate signed by a test
 //// certificate authority, then checks which requests trust it. Covers the
 //// per-request setting, the client-wide default, and all three execution
 //// modes (send, stream_yielder, start_stream).
