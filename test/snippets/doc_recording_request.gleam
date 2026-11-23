@@ -11,6 +11,6 @@ pub fn user_request() -> recording.RecordedRequest {
     path: "/users/123",
     query: option.Some("fields=name,email"),
     headers: [#("Authorization", "Bearer token123")],
-    body: "",
+    body: <<>>,
   )
 }

@@ -87,7 +87,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Error(Ok(#(400, "{\"status\":400}"))))
+        |> be_equal(Error(Ok(#(400, <<"{\"status\":400}">>))))
         |> or_fail_with("Status 400 should be a ResponseError with its body")
       }),
       it("returns a ResponseError for status 401", fn() {
@@ -108,7 +108,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Error(Ok(#(401, "{\"status\":401}"))))
+        |> be_equal(Error(Ok(#(401, <<"{\"status\":401}">>))))
         |> or_fail_with("Status 401 should be a ResponseError with its body")
       }),
       it("returns a ResponseError for status 404", fn() {
@@ -129,7 +129,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Error(Ok(#(404, "{\"status\":404}"))))
+        |> be_equal(Error(Ok(#(404, <<"{\"status\":404}">>))))
         |> or_fail_with("Status 404 should be a ResponseError with its body")
       }),
       it("returns a ResponseError for status 500", fn() {
@@ -150,7 +150,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Error(Ok(#(500, "{\"status\":500}"))))
+        |> be_equal(Error(Ok(#(500, <<"{\"status\":500}">>))))
         |> or_fail_with("Status 500 should be a ResponseError with its body")
       }),
       it("returns a ResponseError for status 503", fn() {
@@ -171,7 +171,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Error(Ok(#(503, "{\"status\":503}"))))
+        |> be_equal(Error(Ok(#(503, <<"{\"status\":503}">>))))
         |> or_fail_with("Status 503 should be a ResponseError with its body")
       }),
     ]),
@@ -204,7 +204,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok("text/plain"))
+        |> be_equal(Ok(<<"text/plain">>))
         |> or_fail_with("The server should see text/plain")
       }),
       it("reads a large body", fn() {
@@ -218,10 +218,12 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok(string.repeat(
-            "This is a repeated line to create a large response body.\n",
-            20_000,
-          )),
+          Ok(<<
+            string.repeat(
+              "This is a repeated line to create a large response body.\n",
+              20_000,
+            ):utf8,
+          >>),
         )
         |> or_fail_with("The whole large body should arrive")
       }),
@@ -236,7 +238,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "")))
+        |> be_equal(Ok(#(200, <<>>)))
         |> or_fail_with("An empty body should be Ok")
       }),
       it("returns the status and body of a 200", fn() {
@@ -250,7 +252,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("The text endpoint should return 200 and its body")
       }),
       it("returns the response headers", fn() {
@@ -424,11 +426,11 @@ pub fn tests() -> TestSuite(Nil) {
       it("formats an HttpFailure with its status and body", fn() {
         // Arrange
         let failure =
-          client.HttpFailure(response: client.HttpResponse(
-            status: 404,
-            headers: [],
-            body: "not found",
-          ))
+          client.HttpFailure(
+            response: client.HttpResponse(status: 404, headers: [], body: <<
+              "not found",
+            >>),
+          )
 
         // Act
         let value = client.stream_failure_to_string(failure)

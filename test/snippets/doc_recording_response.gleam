@@ -4,7 +4,7 @@ pub fn blocking() -> recording.RecordedResponse {
   recording.BlockingResponse(
     status: 200,
     headers: [#("Content-Type", "application/json")],
-    body: "{\"users\": []}",
+    body: <<"{\"users\": []}">>,
   )
 }
 

@@ -2,7 +2,7 @@ import dream_http_client/client
 import gleam/http
 import gleam/result
 
-pub fn fetch_with_connect_timeout() -> Result(String, client.SendError) {
+pub fn fetch_with_connect_timeout() -> Result(BitArray, client.SendError) {
   client.new()
   |> client.scheme(http.Http)
   |> client.host("localhost")

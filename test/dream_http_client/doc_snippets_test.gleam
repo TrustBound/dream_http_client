@@ -18,6 +18,8 @@ import gleam/result
 import snippets/doc_client_add_header
 import snippets/doc_client_auto_redirect
 import snippets/doc_client_body
+import snippets/doc_client_body_bits
+import snippets/doc_client_body_text
 import snippets/doc_client_call_api
 import snippets/doc_client_cancel_stream
 import snippets/doc_client_cancel_stream_handle
@@ -53,6 +55,7 @@ import snippets/doc_client_on_stream_end
 import snippets/doc_client_on_stream_error
 import snippets/doc_client_on_stream_start
 import snippets/doc_client_path
+import snippets/doc_client_pool
 import snippets/doc_client_port
 import snippets/doc_client_query
 import snippets/doc_client_record_call
@@ -106,8 +109,8 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal([
-          100, 30_000, 5000, 2000, 5000, 1, 500, 10_000, 3, 200, 1_048_576,
-          262_144, 5000,
+          100, 30_000, 5000, 2000, 5000, 10_000, 3, 200, 1_048_576, 262_144,
+          5000,
         ])
         |> or_fail_with("Every setting should be read back")
       }),
@@ -135,6 +138,77 @@ pub fn tests() -> TestSuite(Nil) {
         |> should
         |> be_equal(None)
         |> or_fail_with("No file is set by default")
+      }),
+    ]),
+    group("doc_client_body_text", [
+      it("text_of gives the text of a UTF-8 body", fn() {
+        // Arrange
+        let response =
+          client.HttpResponse(status: 200, headers: [], body: <<"Hello">>)
+
+        // Act
+        let value = doc_client_body_text.text_of(response)
+
+        // Assert
+        value
+        |> should
+        |> be_equal("Hello")
+        |> or_fail_with("A UTF-8 body should be read as text")
+      }),
+      it("text_of says when the body is not text", fn() {
+        // Arrange
+        let response =
+          client.HttpResponse(status: 200, headers: [], body: <<255, 0>>)
+
+        // Act
+        let value = doc_client_body_text.text_of(response)
+
+        // Assert
+        value
+        |> should
+        |> be_equal("The body is not text")
+        |> or_fail_with("A body that is not UTF-8 has no text")
+      }),
+    ]),
+    group("doc_client_pool", [
+      it("pool_limit reads the limit of the pool of the request", fn() {
+        // Arrange
+        let pool = doc_client_pool.model_pool()
+
+        // Act
+        let value =
+          doc_client_pool.model_request(pool, "Hello")
+          |> doc_client_pool.pool_limit
+
+        // Assert
+        value
+        |> should
+        |> be_equal(Some(3))
+        |> or_fail_with("The limit of the pool should be read back")
+      }),
+      it("get_pool gives the pool of the request", fn() {
+        // Arrange
+        let pool = doc_client_pool.model_pool()
+
+        // Act
+        let value =
+          doc_client_pool.model_request(pool, "Hello") |> client.get_pool
+
+        // Assert
+        value
+        |> should
+        |> be_equal(Some(pool))
+        |> or_fail_with("The request should have the pool it was given")
+      }),
+      it("get_pool gives None for a request with no pool", fn() {
+        // Act
+        let value = client.new() |> client.get_pool
+
+        // Assert
+        value
+        |> should
+        |> be_equal(None)
+        |> or_fail_with("A new request should use the default pool")
       }),
     ]),
     group("doc_client_request_settings", [
@@ -245,8 +319,22 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal("{\"name\":\"Alice\",\"email\":\"alice@example.com\"}")
+        |> be_equal(<<"{\"name\":\"Alice\",\"email\":\"alice@example.com\"}">>)
         |> or_fail_with("create_user_request sets the JSON body")
+      }),
+    ]),
+    group("doc_client_body_bits", [
+      it("upload_request sets the exact bytes of the body", fn() {
+        // Act
+        let value =
+          doc_client_body_bits.upload_request(<<37, 80, 68, 70, 255, 0>>)
+          |> client.get_body
+
+        // Assert
+        value
+        |> should
+        |> be_equal(<<37, 80, 68, 70, 255, 0>>)
+        |> or_fail_with("The body should be the bytes of the file")
       }),
     ]),
     group("doc_client_call_api", [
@@ -257,7 +345,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok("Hello, World!"))
+        |> be_equal(Ok(<<"Hello, World!">>))
         |> or_fail_with("call_api returns the body")
       }),
     ]),
@@ -305,7 +393,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok("Hello, World!"))
+        |> be_equal(Ok(<<"Hello, World!">>))
         |> or_fail_with("fetch_with_connect_timeout returns the body")
       }),
     ]),
@@ -320,7 +408,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal("OK: Hello, World!")
+        |> be_equal("OK: 13 bytes")
         |> or_fail_with("describe_response reads a 200")
       }),
     ]),
@@ -389,7 +477,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal("{\"name\": \"Alice\"}")
+        |> be_equal(<<"{\"name\": \"Alice\"}">>)
         |> or_fail_with("request_body reads the value")
       }),
     ]),
@@ -769,7 +857,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok("Hello, World!"))
+        |> be_equal(Ok(<<"Hello, World!">>))
         |> or_fail_with("record_call returns the body")
       }),
     ]),
@@ -1154,11 +1242,13 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(recording.BlockingResponse(
-          status: 200,
-          headers: [#("Content-Type", "application/json")],
-          body: "{\"users\": []}",
-        ))
+        |> be_equal(
+          recording.BlockingResponse(
+            status: 200,
+            headers: [#("Content-Type", "application/json")],
+            body: <<"{\"users\": []}">>,
+          ),
+        )
         |> or_fail_with("blocking holds the body")
       }),
     ]),

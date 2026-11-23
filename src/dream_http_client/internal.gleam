@@ -10,6 +10,7 @@
 
 import gleam/erlang/atom
 import gleam/erlang/process
+import gleam/erlang/reference
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/int
@@ -27,6 +28,7 @@ pub type ConnectionSettings {
   ConnectionSettings(
     protocols: atom.Atom,
     certificate_authority_file: option.Option(String),
+    pool: option.Option(#(reference.Reference, Int)),
   )
 }
 
@@ -70,7 +72,7 @@ pub fn fetch_next(owner: process.Pid) -> StreamEvent(failure)
 @external(erlang, "dream_http_shim", "fetch_start_headers")
 pub fn fetch_start_headers(
   owner: process.Pid,
-) -> Result(List(#(String, String)), failure)
+) -> Result(#(Int, List(#(String, String))), failure)
 
 /// Convert an HTTP method to an Erlang atom
 ///
@@ -118,7 +120,7 @@ pub fn atomize_method(method: http.Method) -> atom.Atom {
 ///
 /// The PID of the stream owner process.
 pub fn start_gun_stream(
-  request: Request(String),
+  request: Request(BitArray),
   timeout_ms: Int,
   connect_timeout_ms: Int,
   autoredirect: Bool,
@@ -143,7 +145,7 @@ pub fn start_gun_stream(
     atomize_method(request.method),
     url,
     request.headers,
-    <<request.body:utf8>>,
+    request.body,
     timeout_ms,
     connect_timeout_ms,
     autoredirect,
@@ -187,4 +189,10 @@ pub fn start_stream_messages(
   connect_timeout_ms: Int,
   autoredirect: Bool,
   connection_settings: ConnectionSettings,
-) -> Nil
+) -> process.Pid
+
+/// Tell the translator of a message stream that the stream process handled
+/// a chunk. The translator then lets gun read the next chunk from the
+/// server.
+@external(erlang, "dream_http_shim", "grant_next")
+pub fn grant_next(translator: process.Pid) -> Nil

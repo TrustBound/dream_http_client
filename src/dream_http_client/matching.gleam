@@ -14,6 +14,7 @@
 //// normalized request.
 
 import dream_http_client/recording
+import gleam/bit_array
 import gleam/http
 import gleam/int
 import gleam/list
@@ -126,11 +127,20 @@ pub fn request_key(
     }
 
     let body_str = case body {
-      True -> request.body
+      True -> body_key(request.body)
       False -> ""
     }
 
     method_str <> url_str <> headers_str <> body_str
+  }
+}
+
+// The body as a part of a key: the text of a UTF-8 body, and "base64:"
+// with the base64 form of any other body.
+fn body_key(body: BitArray) -> String {
+  case bit_array.to_string(body) {
+    Ok(text) -> text
+    Error(Nil) -> "base64:" <> bit_array.base64_encode(body, True)
   }
 }
 

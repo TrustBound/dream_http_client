@@ -107,14 +107,23 @@ dream_http_client provides four execution modes. Choose based on your use case:
 
 **Best for:** JSON APIs, small responses
 
-#### Send and handle errors <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/blocking_send.gleam#L5-L25"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+`response.body` is a `BitArray`: the exact bytes the server sent. A body is
+not always text. `client.body_text(response)` returns the body as a
+`String` when it is valid UTF-8.
+
+A request body is bytes too. `client.body(text)` sets a text body, and
+`client.body_bits(bytes)` sets a body that is not text, such as a file.
+
+#### Send and handle errors <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/blocking_send.gleam#L5-L30"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
-  HttpResponse, RequestError, ResponseError, host, path, port, scheme, send,
+  RequestError, ResponseError, host, path, port, scheme, send,
   transport_error_to_string,
 }
 import gleam/http
+import gleam/int
+import gleam/result
 
 pub fn fetch_text() -> Result(String, String) {
   let result =
@@ -126,8 +135,11 @@ pub fn fetch_text() -> Result(String, String) {
     |> send()
 
   case result {
-    Ok(HttpResponse(body: body, ..)) -> Ok(body)
-    Error(ResponseError(response: response)) -> Error(response.body)
+    Ok(response) ->
+      client.body_text(response)
+      |> result.replace_error("The body is not text")
+    Error(ResponseError(response: response)) ->
+      Error("HTTP error " <> int.to_string(response.status))
     Error(RequestError(error: error)) -> Error(transport_error_to_string(error))
   }
 }
@@ -396,6 +408,52 @@ pub fn configure_high_concurrency() -> Nil {
 }
 ```
 
+### A Connection Pool of Its Own
+
+By default, every request uses one pool, and `max_connections` limits the
+connections to each host. Make a pool one time with `client.new_pool()` and
+give it to requests with `client.pool()`. Those requests share connections
+only with requests that have the same pool, and the pool has its own limit. A busy caller does not use up the connections of other callers, and
+a small limit holds one caller back with no change for the others. When the
+pool is full, a request waits for room up to its timeout.
+
+#### Give the model calls their own pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_pool.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```gleam
+import dream_http_client/client
+import gleam/option.{type Option}
+
+pub fn model_pool() -> client.ConnectionPool {
+  client.new_pool(max_connections: 3)
+}
+
+pub fn model_request(
+  pool: client.ConnectionPool,
+  prompt: String,
+) -> client.ClientRequest {
+  client.new()
+  |> client.host("api.llm.example")
+  |> client.path("/v1/chat")
+  |> client.body(prompt)
+  |> client.pool(pool)
+}
+
+pub fn pool_limit(request: client.ClientRequest) -> Option(Int) {
+  client.get_pool(request)
+  |> option.map(client.get_pool_max_connections)
+}
+```
+
+### How Connections Are Used
+
+- An HTTP/1.1 connection carries one request at a time.
+- An HTTP/2 connection carries as many requests as the server allows with
+  `SETTINGS_MAX_CONCURRENT_STREAMS`.
+- The pool opens a new connection only when every connection to the host is
+  full. At `max_connections`, a request waits for room up to its timeout.
+- Streams have flow control. The client reads from the server only as fast
+  as you take chunks, and at most 16 chunks wait in memory.
+
 ### Defaults
 
 | Setting                          | Default | Scope       |
@@ -408,8 +466,6 @@ pub fn configure_high_concurrency() -> Nil {
 | `default_connect_timeout`        | 15000ms | Global      |
 | `domain_lookup_timeout`          | 5000ms  | Global      |
 | `tls_handshake_timeout`          | 10000ms | Global      |
-| `retry`                          | 3       | Global      |
-| `retry_timeout`                  | 1000ms  | Global      |
 | `keepalive`                      | 30000ms | Global      |
 | `keepalive_tolerance`            | 3       | Global      |
 | `max_concurrent_streams`         | 100     | Global      |
@@ -623,7 +679,7 @@ pub fn scrub_auth_and_body(
     path: path,
     query: query,
     headers: scrubbed_headers,
-    body: "",
+    body: <<>>,
   )
 }
 
@@ -668,7 +724,7 @@ pub fn scrub_response(
       recording.BlockingResponse(
         status: status,
         headers: list.filter(headers, is_not_set_cookie),
-        body: "",
+        body: <<>>,
       )
 
     recording.StreamingResponse(status, headers, chunks) ->
@@ -826,16 +882,17 @@ pub fn send_post() -> Result(HttpResponse, SendError) {
 
 All modes use `Result` types for explicit error handling:
 
-#### Handle each kind of error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/timeout_config.gleam#L5-L37"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+#### Handle each kind of error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/timeout_config.gleam#L5-L38"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
-  HttpResponse, RequestError, ResponseError, host, path, port, scheme, send,
-  timeout, transport_error_to_string,
+  RequestError, ResponseError, host, path, port, scheme, send, timeout,
+  transport_error_to_string,
 }
 import gleam/http
 import gleam/int
 import gleam/io
+import gleam/result
 
 pub fn fetch_text_with_timeout() -> Result(String, String) {
   let request =
@@ -847,13 +904,13 @@ pub fn fetch_text_with_timeout() -> Result(String, String) {
     |> timeout(5000)
 
   case send(request) {
-    Ok(HttpResponse(body: body, ..)) -> {
-      io.println(body)
-      Ok(body)
-    }
+    Ok(response) ->
+      client.body_text(response)
+      |> result.replace_error("The body is not text")
     Error(ResponseError(response: response)) -> {
-      io.println_error("HTTP error " <> int.to_string(response.status))
-      Error(response.body)
+      let message = "HTTP error " <> int.to_string(response.status)
+      io.println_error(message)
+      Error(message)
     }
     Error(RequestError(error: error)) -> {
       let message = transport_error_to_string(error)

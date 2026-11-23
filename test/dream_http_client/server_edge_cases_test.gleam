@@ -84,7 +84,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         body
         |> should
-        |> be_equal(Ok("hello"))
+        |> be_equal(Ok(<<"hello">>))
         |> or_fail_with("The body before the trailers should be returned")
       }),
       it("times out when the server never answers", fn() {
@@ -145,6 +145,42 @@ pub fn tests() -> TestSuite(Nil) {
         |> should
         |> be_equal(#(1, Ok(Error(RequestError(ProcessDown("killed"))))))
         |> or_fail_with("A killed connection should give ProcessDown")
+      }),
+      it("sends again when the connection lost its socket", fn() {
+        // Arrange
+        use port <- edge_server.with("silent")
+        let results = process.new_subject()
+        let request = edge_server.request(port) |> client.timeout(600)
+        process.spawn(fn() { process.send(results, client.send(request)) })
+        let stopped = edge_server.stop_connections(port)
+
+        // Act
+        let result = process.receive(results, 5000)
+
+        // Assert
+        #(stopped, result)
+        |> should
+        |> be_equal(#(1, Ok(Error(RequestError(TimedOut(600))))))
+        |> or_fail_with(
+          "The request should go to a new connection and time out there",
+        )
+      }),
+      it("uses a new connection after the server closed the old one", fn() {
+        // Arrange
+        use port <- edge_server.with("close_after_response")
+        let request = edge_server.request(port)
+        let _ = client.send(request)
+
+        // Act
+        let result =
+          client.send(request)
+          |> result.map(fn(response) { #(response.status, response.body) })
+
+        // Assert
+        result
+        |> should
+        |> be_equal(Ok(#(200, <<"ok">>)))
+        |> or_fail_with("The second request should get a new connection")
       }),
       it("reports an HTTP/2 stream reset", fn() {
         // Arrange
@@ -343,11 +379,13 @@ pub fn tests() -> TestSuite(Nil) {
         |> be_equal(
           Ok(
             Error(
-              HttpFailure(HttpResponse(
-                status: 500,
-                headers: [Header("content-length", "10")],
-                body: "",
-              )),
+              HttpFailure(
+                HttpResponse(
+                  status: 500,
+                  headers: [Header("content-length", "10")],
+                  body: <<>>,
+                ),
+              ),
             ),
           ),
         )
@@ -377,7 +415,7 @@ pub fn tests() -> TestSuite(Nil) {
         )
         |> or_fail_with("A protocol error should give ConnectionError")
       }),
-      it("records 206 for a response with Content-Range", fn() {
+      it("records the status 206 of a partial response", fn() {
         // Arrange
         use port <- edge_server.with("content_range")
         let assert Ok(rec) =
@@ -398,7 +436,7 @@ pub fn tests() -> TestSuite(Nil) {
         statuses
         |> should
         |> be_equal([206])
-        |> or_fail_with("Content-Range should be recorded as 206")
+        |> or_fail_with("A 206 response should be recorded as 206")
       }),
       it("records an empty body with no chunks", fn() {
         // Arrange
@@ -503,7 +541,7 @@ pub fn tests() -> TestSuite(Nil) {
         |> be_equal([[#("x-checksum", "abc")]])
         |> or_fail_with("The trailers should be the recorded headers")
       }),
-      it("records 206 for a response with Content-Range", fn() {
+      it("records the status 206 of a partial response", fn() {
         // Arrange
         use port <- edge_server.with("content_range")
         let assert Ok(rec) =
@@ -529,7 +567,7 @@ pub fn tests() -> TestSuite(Nil) {
         statuses
         |> should
         |> be_equal([206])
-        |> or_fail_with("Content-Range should be recorded as 206")
+        |> or_fail_with("A 206 response should be recorded as 206")
       }),
     ]),
   ])

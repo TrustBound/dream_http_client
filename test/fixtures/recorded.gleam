@@ -1,8 +1,11 @@
 //// Recorded requests and responses that tests use as input.
 
 import dream_http_client/recording
+import dream_http_client/storage
 import gleam/http
+import gleam/list
 import gleam/option
+import gleam/result
 
 /// A recorded `GET http://localhost:9876/text` with no headers and no body.
 pub fn text_request() -> recording.RecordedRequest {
@@ -14,13 +17,13 @@ pub fn text_request() -> recording.RecordedRequest {
     path: "/text",
     query: option.None,
     headers: [],
-    body: "",
+    body: <<>>,
   )
 }
 
 /// A blocking 200 response with no headers and `body`.
 pub fn ok_response(body: String) -> recording.RecordedResponse {
-  recording.BlockingResponse(status: 200, headers: [], body: body)
+  recording.BlockingResponse(status: 200, headers: [], body: <<body:utf8>>)
 }
 
 /// A recorded POST to `/text` with an `Authorization` header and a JSON
@@ -31,7 +34,7 @@ pub fn secret_post_request(secret: String) -> recording.RecordedRequest {
     method: http.Post,
     port: option.None,
     headers: [#("Authorization", "Bearer " <> secret), #("X-Ok", "1")],
-    body: "{\"secret\":\"" <> secret <> "\"}",
+    body: <<{ "{\"secret\":\"" <> secret <> "\"}" }:utf8>>,
   )
 }
 
@@ -68,4 +71,17 @@ pub fn recording_at(
     ),
     response: ok_response(body),
   )
+}
+
+/// The status of each recording saved in `path`.
+pub fn saved_statuses(path: String) -> Result(List(Int), String) {
+  storage.load_recordings(path)
+  |> result.map(list.map(_, status_of))
+}
+
+fn status_of(entry: recording.Recording) -> Int {
+  case entry.response {
+    recording.StreamingResponse(status, _headers, _chunks) -> status
+    recording.BlockingResponse(status, _headers, _body) -> status
+  }
 }

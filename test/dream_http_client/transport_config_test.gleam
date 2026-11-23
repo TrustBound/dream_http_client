@@ -75,32 +75,6 @@ pub fn tests() -> TestSuite(Nil) {
         |> be_equal(10_000)
         |> or_fail_with("Default tls_handshake_timeout should be 10_000")
       }),
-      it("get_retry returns 3 by default", fn() {
-        // Arrange
-        let config = client.transport_config()
-
-        // Act
-        let value = client.get_retry(config)
-
-        // Assert
-        value
-        |> should
-        |> be_equal(3)
-        |> or_fail_with("Default retry should be 3")
-      }),
-      it("get_retry_timeout returns 1000 by default", fn() {
-        // Arrange
-        let config = client.transport_config()
-
-        // Act
-        let value = client.get_retry_timeout(config)
-
-        // Assert
-        value
-        |> should
-        |> be_equal(1000)
-        |> or_fail_with("Default retry_timeout should be 1000")
-      }),
       it("get_keepalive returns 30_000 by default", fn() {
         // Arrange
         let config = client.transport_config()
@@ -284,33 +258,6 @@ pub fn tests() -> TestSuite(Nil) {
         |> be_equal(20_000)
         |> or_fail_with("tls_handshake_timeout should store 20_000")
       }),
-      it("retry sets the value to 5", fn() {
-        // Arrange
-        let config = client.transport_config()
-
-        // Act
-        let value = client.retry(config, 5) |> client.get_retry
-
-        // Assert
-        value
-        |> should
-        |> be_equal(5)
-        |> or_fail_with("retry should store 5")
-      }),
-      it("retry_timeout sets the value to 5000", fn() {
-        // Arrange
-        let config = client.transport_config()
-
-        // Act
-        let value =
-          client.retry_timeout(config, 5000) |> client.get_retry_timeout
-
-        // Assert
-        value
-        |> should
-        |> be_equal(5000)
-        |> or_fail_with("retry_timeout should store 5000")
-      }),
       it("keepalive sets the value to 60_000", fn() {
         // Arrange
         let config = client.transport_config()
@@ -445,19 +392,6 @@ pub fn tests() -> TestSuite(Nil) {
         |> be_equal(1)
         |> or_fail_with("max_connections should store 1")
       }),
-      it("retry accepts 0", fn() {
-        // Arrange
-        let config = client.transport_config()
-
-        // Act
-        let value = client.retry(config, 0) |> client.get_retry
-
-        // Assert
-        value
-        |> should
-        |> be_equal(0)
-        |> or_fail_with("retry should store 0")
-      }),
       it("keepalive_tolerance accepts 0", fn() {
         // Arrange
         let config = client.transport_config()
@@ -538,8 +472,6 @@ pub fn tests() -> TestSuite(Nil) {
           |> client.default_connect_timeout(30_000)
           |> client.domain_lookup_timeout(10_000)
           |> client.tls_handshake_timeout(20_000)
-          |> client.retry(5)
-          |> client.retry_timeout(5000)
           |> client.keepalive(60_000)
           |> client.keepalive_tolerance(5)
           |> client.max_concurrent_streams(500)
@@ -556,8 +488,6 @@ pub fn tests() -> TestSuite(Nil) {
           string.inspect(client.get_default_connect_timeout(config)),
           string.inspect(client.get_domain_lookup_timeout(config)),
           string.inspect(client.get_tls_handshake_timeout(config)),
-          string.inspect(client.get_retry(config)),
-          string.inspect(client.get_retry_timeout(config)),
           string.inspect(client.get_keepalive(config)),
           string.inspect(client.get_keepalive_tolerance(config)),
           string.inspect(client.get_max_concurrent_streams(config)),
@@ -577,8 +507,6 @@ pub fn tests() -> TestSuite(Nil) {
           string.inspect(30_000),
           string.inspect(10_000),
           string.inspect(20_000),
-          string.inspect(5),
-          string.inspect(5000),
           string.inspect(60_000),
           string.inspect(5),
           string.inspect(500),

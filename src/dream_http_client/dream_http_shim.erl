@@ -6,33 +6,59 @@
 %%   `{timed_out, TimeoutMs}` or `remote_closed`;
 %% - a stream failure is a `client.StreamFailure`:
 %%   `{transport_failure, TransportError}` or
-%%   `{http_failure, {http_response, Status, [{header, Name, Value}], Body}}`;
+%%   `{http_failure, {http_response, Status, [{header, Name, Value}], Body}}`,
+%%   where Body is the exact bytes of the response body;
 %% - a pull stream event is an `internal.StreamEvent`:
 %%   `{chunk, Data}`, `{done, Trailers}` or `{failed, StreamFailure}`;
 %% - a translator message is a `client.TranslatorMessage`:
-%%   `{translator_start, Headers}`, `{translator_chunk, Data}`,
+%%   `{translator_start, Status, Headers}`, `{translator_chunk, Data}`,
 %%   `{translator_end, Trailers}` or `{translator_error, StreamFailure}`.
 
 -export([request_sync/8, request_stream/8, fetch_next/1, fetch_start_headers/1,
-         request_stream_messages/8, configure_transport/1]).
+         request_stream_messages/8, grant_next/1, configure_transport/1]).
 
 -define(MAX_REDIRECTS, 5).
+
+%% The number of data messages of a stream that gun reads ahead of the
+%% caller. See request/9.
+-define(STREAM_WINDOW, 16).
 
 %% The state of the process that owns a pull-based stream.
 %% `events` holds the stream events that no caller has fetched yet, and
 %% `waiter` is the caller that waits for the next event. `requester` is the
 %% process that started the stream: the owner stops when it stops.
 %% `lease` is the lease on the connection (see dream_http_conn_manager).
--record(owner, {requester, conn, ref, lease, headers, zlib, timeout, events = [], waiter = none}).
+%% `received` is the number of data messages that gun sent for the stream.
+-record(owner, {requester, conn, ref, lease, status, headers, zlib, timeout,
+                received = 0, events = [], waiter = none}).
 
 %% ============================================================================
 %% Requests and redirects
 %% ============================================================================
 
-request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings) ->
+%% `flow` is gun's flow control for the response body. `infinity`: gun reads
+%% the body as fast as the server sends it. A number: gun reads that many
+%% data messages, then stops reading from the server until
+%% gun:update_flow/3 allows more. A stream uses ?STREAM_WINDOW and allows
+%% one more message for each chunk the caller takes. So at most that many
+%% messages wait in memory, and the rest of the response waits in the
+%% network until the caller takes the next chunk.
+%%
+%% On HTTP/1.1, gun stops reading the socket when the flow is 0, and does
+%% not start again when the stream ends at that moment: the connection
+%% cannot carry another request. The flow can only reach 0 when gun sent
+%% ?STREAM_WINDOW data messages or more, and nobody outside gun can know
+%% if it did (an update_flow can arrive after the end of the stream). So a
+%% stream that got that many data messages gives its lease back with
+%% release_paused/1, and the pool does not use that HTTP/1.1 connection
+%% again. A shorter stream leaves the connection for the next request.
+request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings, Flow) ->
     #{method => Method, url => Url, headers => maybe_add_accept_encoding(Headers),
       body => Body, timeout => TimeoutMs, connect_timeout => ConnectTimeoutMs,
-      auto_redirect => AutoRedirect, settings => Settings}.
+      auto_redirect => AutoRedirect, settings => Settings, flow => Flow}.
+
+request_options(infinity) -> #{};
+request_options(Flow) -> #{flow => Flow}.
 
 %% Sends the request and follows redirects. Returns the response head of the
 %% last response and the lease on its connection, or {error, TransportError}.
@@ -40,12 +66,12 @@ open_response(_Request, Redirects) when Redirects >= ?MAX_REDIRECTS ->
     {error, {unexpected, <<"Too many redirects (max 5)">>}};
 open_response(Request, Redirects) ->
     #{method := Method, url := Url, body := Body, timeout := TimeoutMs,
-      auto_redirect := AutoRedirect} = Request,
+      auto_redirect := AutoRedirect, flow := Flow} = Request,
     case open_stream(Request, 1) of
         {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders} = Response ->
             case AutoRedirect andalso redirect_location(Status, RespHeaders) of
                 {ok, Location} ->
-                    _ = finish_body(Lease, await_body(ConnPid, StreamRef, IsFin, TimeoutMs)),
+                    _ = finish_body(Lease, await_body(ConnPid, StreamRef, IsFin, TimeoutMs, Flow)),
                     Next = Request#{url := uri_string:resolve(Location, Url),
                                     method := redirect_method(Status, Method),
                                     body := redirect_body(Status, Body)},
@@ -57,26 +83,28 @@ open_response(Request, Redirects) ->
             Error
     end.
 
-%% Sends one request. A request on a connection that the server closed
-%% while it was idle is sent once more on a new connection.
+%% Sends one request. A request on a connection that the server closed or
+%% sent a GOAWAY on, or a stream that was refused, is sent once more on
+%% another connection. The server did not process it in these cases.
 open_stream(Request, RetriesLeft) ->
     #{method := Method, url := Url, headers := Headers, body := Body,
       timeout := TimeoutMs, connect_timeout := ConnectTimeoutMs,
-      settings := Settings} = Request,
+      settings := Settings, flow := Flow} = Request,
     case parse_url(Url) of
         {ok, Scheme, Host, Port, PathQs} ->
-            GunOpts = build_gun_opts(ConnectTimeoutMs, Settings),
+            GunOpts = build_gun_opts(TimeoutMs, ConnectTimeoutMs, Settings),
             case get_or_open_connection(Scheme, Host, Port, GunOpts) of
                 {ok, ConnPid, _Protocol, Lease} ->
-                    StreamRef = gun:request(ConnPid, method_binary(Method), PathQs, Headers, Body),
+                    StreamRef = gun:request(ConnPid, method_binary(Method), PathQs, Headers, Body,
+                                            request_options(Flow)),
                     case gun:await(ConnPid, StreamRef, TimeoutMs) of
                         {response, IsFin, Status, RespHeaders} ->
                             {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders};
                         {error, Reason} ->
-                            dream_http_conn_manager:abandon(Lease),
-                            case RetriesLeft > 0 andalso is_stale_connection_error(Reason) of
+                            Kind = error_kind(Reason),
+                            give_back(Kind, Lease),
+                            case RetriesLeft > 0 andalso Kind =/= other of
                                 true ->
-                                    gun:close(ConnPid),
                                     open_stream(Request, RetriesLeft - 1);
                                 false ->
                                     {error, transport_error(Reason, TimeoutMs)}
@@ -90,12 +118,29 @@ open_stream(Request, RetriesLeft) ->
     end.
 
 %% Reads the whole body of a response.
-await_body(_ConnPid, _StreamRef, fin, _TimeoutMs) ->
+await_body(_ConnPid, _StreamRef, fin, _TimeoutMs, _Flow) ->
     {ok, <<>>};
-await_body(ConnPid, StreamRef, nofin, TimeoutMs) ->
+await_body(ConnPid, StreamRef, nofin, TimeoutMs, infinity) ->
     case gun:await_body(ConnPid, StreamRef, TimeoutMs) of
         {ok, Body, _Trailers} -> {ok, Body};
         Result -> Result
+    end;
+await_body(ConnPid, StreamRef, nofin, TimeoutMs, _Flow) ->
+    await_flow_body(ConnPid, StreamRef, TimeoutMs, <<>>).
+
+%% Reads the whole body of a response that has flow control: each data
+%% message allows the next one.
+await_flow_body(ConnPid, StreamRef, TimeoutMs, Acc) ->
+    case gun:await(ConnPid, StreamRef, TimeoutMs) of
+        {data, nofin, Data} ->
+            gun:update_flow(ConnPid, StreamRef, 1),
+            await_flow_body(ConnPid, StreamRef, TimeoutMs, <<Acc/binary, Data/binary>>);
+        {data, fin, Data} ->
+            {ok, <<Acc/binary, Data/binary>>};
+        {trailers, _Trailers} ->
+            {ok, Acc};
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 %% Gives the lease back after a body read: released when the body is
@@ -107,10 +152,13 @@ finish_body(Lease, Result) ->
     dream_http_conn_manager:abandon(Lease),
     Result.
 
-%% Gives the lease back after the last event of a stream.
-finish_stream(Lease, {done, _Trailers}) ->
+%% Gives the lease back after the last event of a stream. Received is the
+%% number of data messages gun sent for the stream. See request/9.
+finish_stream(Lease, {done, _Trailers}, Received) when Received >= ?STREAM_WINDOW ->
+    dream_http_conn_manager:release_paused(Lease);
+finish_stream(Lease, {done, _Trailers}, _Received) ->
     dream_http_conn_manager:release(Lease);
-finish_stream(Lease, {failed, _Failure}) ->
+finish_stream(Lease, {failed, _Failure}, _Received) ->
     dream_http_conn_manager:abandon(Lease).
 
 redirect_location(Status, Headers)
@@ -133,10 +181,11 @@ redirect_body(_Status, Body) -> Body.
 %% ============================================================================
 
 request_sync(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings) ->
-    Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings),
+    Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings,
+                      infinity),
     case open_response(Request, 0) of
         {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders} ->
-            case finish_body(Lease, await_body(ConnPid, StreamRef, IsFin, TimeoutMs)) of
+            case finish_body(Lease, await_body(ConnPid, StreamRef, IsFin, TimeoutMs, infinity)) of
                 {ok, RespBody} ->
                     {DecompBody, CleanHeaders} = maybe_decompress_response(RespBody, RespHeaders),
                     {ok, {Status, CleanHeaders, DecompBody}};
@@ -153,13 +202,14 @@ request_sync(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedire
 
 %% Returns the head of a 2xx response and the lease on its connection, or
 %% {error, StreamFailure}.
-open_streaming_response(Request = #{timeout := TimeoutMs}) ->
+open_streaming_response(Request = #{timeout := TimeoutMs, flow := Flow}) ->
     case open_response(Request, 0) of
-        {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders} when Status >= 200, Status < 300 ->
-            {ok, ConnPid, StreamRef, Lease, IsFin, RespHeaders};
+        {ok, _ConnPid, _StreamRef, _Lease, _IsFin, Status, _RespHeaders} = Response
+                when Status >= 200, Status < 300 ->
+            Response;
         {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders} ->
-            Body = case finish_body(Lease, await_body(ConnPid, StreamRef, IsFin, TimeoutMs)) of
-                {ok, FullBody} -> body_text(FullBody);
+            Body = case finish_body(Lease, await_body(ConnPid, StreamRef, IsFin, TimeoutMs, Flow)) of
+                {ok, FullBody} -> FullBody;
                 {error, _Reason} -> <<>>
             end,
             {error, {http_failure, {http_response, Status, gleam_headers(RespHeaders), Body}}};
@@ -189,44 +239,50 @@ stream_events({gun_error, _ConnPid, Reason}, ZlibCtx) ->
 %% ============================================================================
 
 request_stream(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings) ->
-    Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings),
+    Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings,
+                      ?STREAM_WINDOW),
     Requester = self(),
     spawn(fun() -> stream_owner_init(Request, Requester) end).
 
 stream_owner_init(Request = #{timeout := TimeoutMs}, Requester) ->
     erlang:monitor(process, Requester),
     case open_streaming_response(Request) of
-        {ok, ConnPid, StreamRef, Lease, IsFin, RespHeaders} ->
+        {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders} ->
             Owner = #owner{requester = Requester, conn = ConnPid, ref = StreamRef,
-                           lease = Lease, headers = RespHeaders, zlib = stream_zlib(RespHeaders),
+                           lease = Lease, status = Status, headers = RespHeaders, zlib = stream_zlib(RespHeaders),
                            timeout = TimeoutMs},
             stream_owner_loop(Owner#owner{events = [{done, []} || IsFin =:= fin]});
         {error, Failure} ->
             exit({stream_start_failed, Failure})
     end.
 
-%% Gives each fetched event to its caller, and collects the gun messages of
-%% the stream until a caller fetches them. The owner gives the lease back
+%% Gives each fetched event to its caller. gun reads at most ?STREAM_WINDOW
+%% data messages of the stream ahead (flow control), and one more for each
+%% chunk a caller takes, so the owner never holds more than that. The owner gives the lease back
 %% and stops after it gives the last event of the stream. When the owner
 %% stops before that, the connection manager sees the lease abandoned.
 stream_owner_loop(Owner = #owner{waiter = Waiter, events = [Event | Events]}) when Waiter =/= none ->
     Waiter ! {stream_event, self(), Event},
     case Event of
-        {chunk, _Data} -> stream_owner_loop(Owner#owner{waiter = none, events = Events});
-        _ -> finish_stream(Owner#owner.lease, Event)
+        {chunk, _Data} ->
+            gun:update_flow(Owner#owner.conn, Owner#owner.ref, 1),
+            stream_owner_loop(Owner#owner{waiter = none, events = Events});
+        _ ->
+            finish_stream(Owner#owner.lease, Event, Owner#owner.received)
     end;
 stream_owner_loop(Owner = #owner{requester = Requester, conn = ConnPid, ref = StreamRef,
                                  waiter = Waiter, timeout = TimeoutMs}) ->
     receive
         {'DOWN', _MonitorRef, process, Requester, _Reason} ->
-            ok;
+            %% Nobody reads the stream any more. The server can stop it.
+            gun:cancel(ConnPid, StreamRef);
         {fetch_next, From} ->
             stream_owner_loop(Owner#owner{waiter = From});
         {fetch_start_headers, From} ->
-            From ! {stream_start_headers, self(), Owner#owner.headers},
+            From ! {stream_start_headers, self(), {Owner#owner.status, Owner#owner.headers}},
             stream_owner_loop(Owner);
         Message = {gun_data, ConnPid, StreamRef, _IsFin, _Data} ->
-            stream_owner_loop(add_events(Owner, Message));
+            stream_owner_loop(add_events(Owner#owner{received = Owner#owner.received + 1}, Message));
         Message = {Tag, ConnPid, StreamRef, _Value} when Tag =:= gun_trailers; Tag =:= gun_error ->
             stream_owner_loop(add_events(Owner, Message));
         Message = {gun_error, ConnPid, _Reason} ->
@@ -240,8 +296,10 @@ add_events(Owner = #owner{events = Events, zlib = ZlibCtx}, Message) ->
     {NewEvents, NewZlibCtx} = stream_events(Message, ZlibCtx),
     Owner#owner{events = Events ++ NewEvents, zlib = NewZlibCtx}.
 
+%% No waiting caller, or no credit: nothing to time.
 wait_timeout(none, _TimeoutMs) -> infinity;
-wait_timeout(_Waiter, TimeoutMs) -> TimeoutMs.
+wait_timeout(Credit, _TimeoutMs) when is_integer(Credit), Credit =< 0 -> infinity;
+wait_timeout(_WaiterOrCredit, TimeoutMs) -> TimeoutMs.
 
 fetch_next(Owner) ->
     MonitorRef = erlang:monitor(process, Owner),
@@ -258,9 +316,9 @@ fetch_start_headers(Owner) ->
     MonitorRef = erlang:monitor(process, Owner),
     Owner ! {fetch_start_headers, self()},
     receive
-        {stream_start_headers, Owner, Headers} ->
+        {stream_start_headers, Owner, StatusAndHeaders} ->
             erlang:demonitor(MonitorRef, [flush]),
-            {ok, Headers};
+            {ok, StatusAndHeaders};
         {'DOWN', MonitorRef, process, Owner, Reason} ->
             {error, down_failure(Reason)}
     end.
@@ -281,47 +339,68 @@ down_failure(Reason) -> {transport_failure, {process_down, inspect(Reason)}}.
 %% the stream process. The translator gives the lease on the connection back
 %% after the last event. When it stops before that, the connection manager
 %% sees the lease abandoned.
+%%
+%% gun reads at most ?STREAM_WINDOW data messages of the stream ahead (flow
+%% control). The stream process calls grant_next/1 after it handled a
+%% chunk, and gun then reads one more. A slow handler slows the server
+%% down, and chunks do not collect in memory. Returns the translator.
 request_stream_messages(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings) ->
-    Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings),
+    Request = request(Method, Url, Headers, Body, TimeoutMs, ConnectTimeoutMs, AutoRedirect, Settings,
+                      ?STREAM_WINDOW),
     StreamPid = self(),
-    _TranslatorPid = spawn_link(fun() -> translator_init(Request, StreamPid) end),
+    spawn_link(fun() -> translator_init(Request, StreamPid) end).
+
+%% The stream process handled a chunk. The translator lets gun read the
+%% next data message.
+grant_next(Translator) ->
+    Translator ! grant_next,
     nil.
 
 translator_init(Request = #{timeout := TimeoutMs}, StreamPid) ->
     process_flag(trap_exit, true),
     case open_streaming_response(Request) of
-        {ok, ConnPid, StreamRef, Lease, IsFin, RespHeaders} ->
-            StreamPid ! {http, {translator_start, gleam_headers(RespHeaders)}},
+        {ok, ConnPid, StreamRef, Lease, IsFin, Status, RespHeaders} ->
+            StreamPid ! {http, {translator_start, Status, gleam_headers(RespHeaders)}},
             Translator = {ConnPid, StreamRef, Lease, StreamPid, TimeoutMs},
             case IsFin of
-                fin -> finish_stream(Lease, send_events(Translator, [{done, []}]));
-                nofin -> translator_loop(Translator, stream_zlib(RespHeaders))
+                fin -> finish_stream(Lease, send_events(Translator, [{done, []}]), 0);
+                nofin -> translator_loop(Translator, stream_zlib(RespHeaders), {?STREAM_WINDOW, 0})
             end;
         {error, Failure} ->
             StreamPid ! {http, {translator_error, Failure}}
     end.
 
-translator_loop(Translator = {ConnPid, StreamRef, _Lease, StreamPid, TimeoutMs}, ZlibCtx) ->
+%% Credit is the number of data messages the translator allowed and did not
+%% get yet. Received is the number of data messages it got. The request
+%% timeout runs only while credit is left: with no credit, the translator
+%% waits for the stream process, not for the server.
+translator_loop(Translator = {ConnPid, StreamRef, _Lease, StreamPid, TimeoutMs}, ZlibCtx,
+                Counts = {Credit, Received}) ->
     receive
+        grant_next ->
+            gun:update_flow(ConnPid, StreamRef, 1),
+            translator_loop(Translator, ZlibCtx, {Credit + 1, Received});
         Message = {gun_data, ConnPid, StreamRef, _IsFin, _Data} ->
-            translate(Translator, Message, ZlibCtx);
+            translate(Translator, Message, ZlibCtx, {Credit - 1, Received + 1});
         Message = {Tag, ConnPid, StreamRef, _Value} when Tag =:= gun_trailers; Tag =:= gun_error ->
-            translate(Translator, Message, ZlibCtx);
+            translate(Translator, Message, ZlibCtx, Counts);
         Message = {gun_error, ConnPid, _Reason} ->
-            translate(Translator, Message, ZlibCtx);
+            translate(Translator, Message, ZlibCtx, Counts);
         {'EXIT', StreamPid, _Reason} ->
             close_zlib(ZlibCtx),
             gun:cancel(ConnPid, StreamRef)
-    after TimeoutMs ->
+    after wait_timeout(Credit, TimeoutMs) ->
         close_zlib(ZlibCtx),
+        gun:cancel(ConnPid, StreamRef),
         StreamPid ! {http, {translator_error, {transport_failure, {timed_out, TimeoutMs}}}}
     end.
 
-translate(Translator = {_ConnPid, _StreamRef, Lease, _StreamPid, _TimeoutMs}, Message, ZlibCtx) ->
+translate(Translator = {_ConnPid, _StreamRef, Lease, _StreamPid, _TimeoutMs}, Message, ZlibCtx,
+          Counts = {_Credit, Received}) ->
     {Events, NewZlibCtx} = stream_events(Message, ZlibCtx),
     case send_events(Translator, Events) of
-        {chunk, _Data} -> translator_loop(Translator, NewZlibCtx);
-        LastEvent -> finish_stream(Lease, LastEvent)
+        {chunk, _Data} -> translator_loop(Translator, NewZlibCtx, Counts);
+        LastEvent -> finish_stream(Lease, LastEvent, Received)
     end.
 
 %% Sends the events to the stream process and returns the last one.
@@ -340,7 +419,7 @@ translator_message({failed, Failure}) -> {translator_error, Failure}.
 configure_transport(Config) ->
     %% Config is a Gleam opaque type = Erlang tuple {transport_config, F1, F2, ...}
     ets:insert(dream_http_client_transport_config, {config, Config}),
-    LogLevel = map_log_level(element(15, Config)),
+    LogLevel = map_log_level(element(13, Config)),
     logger:set_module_level([dream_http_conn_manager, dream_http_shim], LogLevel),
     nil.
 
@@ -354,7 +433,7 @@ get_transport_config() ->
     case ets:lookup(dream_http_client_transport_config, config) of
         [{config, Config}] ->
             %% Gleam TransportConfig tuple: {transport_config, MaxConn, IdleTimeout, DefaultConnTimeout,
-            %%   DomainLookupTimeout, TlsHandshakeTimeout, Retry, RetryTimeout, Keepalive,
+            %%   DomainLookupTimeout, TlsHandshakeTimeout, Keepalive,
             %%   KeepaliveTolerance, MaxConcurrentStreams, InitConnWindowSize, InitStreamWindowSize,
             %%   ClosingTimeout, LogLevel, DefaultCertificateAuthorityFile}
             #{max_connections => element(2, Config),
@@ -362,23 +441,19 @@ get_transport_config() ->
               connect_timeout => element(4, Config),
               domain_lookup_timeout => element(5, Config),
               tls_handshake_timeout => element(6, Config),
-              retry => element(7, Config),
-              retry_timeout => element(8, Config),
-              keepalive => element(9, Config),
-              keepalive_tolerance => element(10, Config),
-              max_concurrent_streams => element(11, Config),
-              initial_connection_window_size => element(12, Config),
-              initial_stream_window_size => element(13, Config),
-              closing_timeout => element(14, Config),
-              certificate_authority_file => element(16, Config)};
+              keepalive => element(7, Config),
+              keepalive_tolerance => element(8, Config),
+              max_concurrent_streams => element(9, Config),
+              initial_connection_window_size => element(10, Config),
+              initial_stream_window_size => element(11, Config),
+              closing_timeout => element(12, Config),
+              certificate_authority_file => element(14, Config)};
         [] ->
             #{max_connections => 50,
               idle_timeout => 60000,
               connect_timeout => 15000,
               domain_lookup_timeout => 5000,
               tls_handshake_timeout => 10000,
-              retry => 3,
-              retry_timeout => 1000,
               keepalive => 30000,
               keepalive_tolerance => 3,
               max_concurrent_streams => 100,
@@ -404,16 +479,25 @@ get_or_open_connection(Scheme, Host, Port, GunOpts) ->
     dream_http_conn_manager:ensure_connection(Scheme, Host, Port, FullOpts).
 
 %% Settings is the Gleam `internal.ConnectionSettings` record:
-%% {connection_settings, Protocols, CertificateAuthorityFile}.
-build_gun_opts(ConnectTimeoutMs, {connection_settings, Protocols, CertificateAuthorityFile}) ->
-    Opts = #{connect_timeout => ConnectTimeoutMs},
+%% {connection_settings, Protocols, CertificateAuthorityFile, Pool}.
+%% `request_timeout` is how long the request may wait for room in the pool.
+%% A request with a pool of its own carries the reference and the
+%% connection limit of that pool. The limit wins over the one of the transport config.
+build_gun_opts(TimeoutMs, ConnectTimeoutMs,
+               {connection_settings, Protocols, CertificateAuthorityFile, Pool}) ->
+    Opts = #{connect_timeout => ConnectTimeoutMs, request_timeout => TimeoutMs},
     WithProtocols = case Protocols of
         default -> Opts;
         _ -> Opts#{protocols => Protocols}
     end,
-    case CertificateAuthorityFile of
+    WithAuthority = case CertificateAuthorityFile of
         none -> WithProtocols;
         {some, File} -> WithProtocols#{certificate_authority_file => File}
+    end,
+    case Pool of
+        none -> WithAuthority;
+        {some, {PoolId, MaxConnections}} ->
+            WithAuthority#{pool => PoolId, max_connections => MaxConnections}
     end.
 
 method_binary(Method) ->
@@ -530,9 +614,24 @@ close_zlib(ZlibCtx) -> zlib:close(ZlibCtx).
 %% the connection when a request reuses a connection that the server closed
 %% while it was idle. A GOAWAY frame refuses a stream that the server did not
 %% start to process. In both cases a new connection can send the request.
-is_stale_connection_error({stream_error, closed}) -> true;
-is_stale_connection_error({stream_error, {goaway, _Code, _HumanReadable}}) -> true;
-is_stale_connection_error(_Reason) -> false.
+%% `stale`: the server closed the connection, or sent a GOAWAY, or the
+%% connection process stopped because it lost its socket (with `normal` or
+%% a shutdown reason, or it was gone before the request: `noproc`). The
+%% server did not process the request in these cases.
+%% `refused`: gun refused the stream at the server's stream limit
+%% (`too_many_streams`, never sent), or the server reset it with
+%% REFUSED_STREAM (RFC 9113, section 8.7: not processed).
+error_kind({stream_error, closed}) -> stale;
+error_kind({stream_error, {goaway, _Code, _HumanReadable}}) -> stale;
+error_kind({down, Reason}) when Reason =:= normal; Reason =:= shutdown; Reason =:= noproc; element(1, Reason) =:= shutdown -> stale;
+error_kind({stream_error, {stream_error, Code, _HumanReadable}})
+        when Code =:= refused_stream; Code =:= too_many_streams -> refused;
+error_kind(_Reason) -> other.
+
+%% Gives the lease of a failed request back to the pool.
+give_back(stale, Lease) -> dream_http_conn_manager:retire(Lease);
+give_back(refused, Lease) -> dream_http_conn_manager:refuse(Lease);
+give_back(other, Lease) -> dream_http_conn_manager:abandon(Lease).
 
 %% Turns a gun error into a `client.TransportError`. gun:await/3 and
 %% gun:await_body/3 wrap the reason of the gun_error message in
@@ -551,6 +650,7 @@ transport_error({Code, HumanReadable}, _TimeoutMs) when is_atom(Code), is_atom(H
 transport_error(Reason, _TimeoutMs) ->
     {unexpected, inspect(Reason)}.
 
+connect_error({pool_timeout, TimeoutMs}) -> {timed_out, TimeoutMs};
 connect_error(econnrefused) -> {connect_failed, <<"Connection refused">>};
 connect_error(timeout) -> {connect_failed, <<"Connection timed out">>};
 connect_error(nxdomain) -> {connect_failed, <<"DNS resolution failed (NXDOMAIN)">>};
@@ -558,10 +658,3 @@ connect_error(Reason) -> {connect_failed, inspect(Reason)}.
 
 inspect(Term) ->
     unicode:characters_to_binary(io_lib:format("~p", [Term])).
-
-%% A Gleam String must be UTF-8. A body that is not UTF-8 is read as Latin-1.
-body_text(Body) ->
-    case unicode:characters_to_binary(Body) of
-        Text when is_binary(Text) -> Text;
-        _ -> unicode:characters_to_binary(Body, latin1)
-    end.

@@ -2,12 +2,13 @@ import dream_http_client/recording
 import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/types.{type TestSuite}
 import dream_test/unit.{describe, group, it}
-import gleam/bit_array
+import fixtures/recorded
 import gleam/http
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
+import gleam/string
 
 pub fn tests() -> TestSuite(Nil) {
   describe("dream_http_client/recording", [
@@ -25,12 +26,12 @@ pub fn tests() -> TestSuite(Nil) {
                 path: "/users",
                 query: None,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
               response: recording.BlockingResponse(
                 status: 200,
                 headers: [#("Content-Type", "application/json")],
-                body: "{\"users\": []}",
+                body: <<"{\"users\": []}">>,
               ),
             ),
           ])
@@ -59,7 +60,7 @@ pub fn tests() -> TestSuite(Nil) {
                 path: "/stream",
                 query: Some("a=1"),
                 headers: [#("Accept", "text/event-stream")],
-                body: "",
+                body: <<>>,
               ),
               response: recording.StreamingResponse(
                 status: 200,
@@ -121,12 +122,12 @@ pub fn tests() -> TestSuite(Nil) {
                   path: "/users",
                   query: None,
                   headers: [],
-                  body: "",
+                  body: <<>>,
                 ),
                 response: recording.BlockingResponse(
                   status: 200,
                   headers: [],
-                  body: "{\"users\": []}",
+                  body: <<"{\"users\": []}">>,
                 ),
               ),
             ]),
@@ -157,7 +158,7 @@ pub fn tests() -> TestSuite(Nil) {
                   path: "/stream",
                   query: None,
                   headers: [],
-                  body: "",
+                  body: <<>>,
                 ),
                 response: recording.StreamingResponse(
                   status: 200,
@@ -279,12 +280,12 @@ pub fn tests() -> TestSuite(Nil) {
                 path: "/",
                 query: None,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
               response: recording.BlockingResponse(
                 status: 200,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
             ),
           ])
@@ -313,12 +314,12 @@ pub fn tests() -> TestSuite(Nil) {
                 path: "/",
                 query: None,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
               response: recording.BlockingResponse(
                 status: 200,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
             ),
           ])
@@ -347,12 +348,12 @@ pub fn tests() -> TestSuite(Nil) {
                 path: "/",
                 query: None,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
               response: recording.BlockingResponse(
                 status: 200,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
             ),
           ])
@@ -381,12 +382,12 @@ pub fn tests() -> TestSuite(Nil) {
                 path: "/",
                 query: None,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
               response: recording.BlockingResponse(
                 status: 200,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
             ),
           ])
@@ -415,12 +416,12 @@ pub fn tests() -> TestSuite(Nil) {
                 path: "/",
                 query: None,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
               response: recording.BlockingResponse(
                 status: 200,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
             ),
           ])
@@ -449,12 +450,12 @@ pub fn tests() -> TestSuite(Nil) {
                 path: "/",
                 query: None,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
               response: recording.BlockingResponse(
                 status: 200,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
             ),
           ])
@@ -483,12 +484,12 @@ pub fn tests() -> TestSuite(Nil) {
                 path: "/",
                 query: None,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
               response: recording.BlockingResponse(
                 status: 200,
                 headers: [],
-                body: "",
+                body: <<>>,
               ),
             ),
           ])
@@ -718,9 +719,60 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok([recording.BlockingResponse(status: 201, headers: [], body: "b")]),
+          Ok([
+            recording.BlockingResponse(status: 201, headers: [], body: <<"b">>),
+          ]),
         )
         |> or_fail_with("An unknown mode should decode as blocking")
+      }),
+      it("encodes a response body that is not UTF-8 as base64", fn() {
+        // Arrange
+        let file =
+          recording.RecordingFile(version: "1.0", entries: [
+            recording.Recording(
+              request: recorded.text_request(),
+              response: recording.BlockingResponse(
+                status: 200,
+                headers: [],
+                body: <<255, 0>>,
+              ),
+            ),
+          ])
+
+        // Act
+        let value =
+          recording.encode_recording_file(file)
+          |> json.to_string
+          |> string.contains("\"body\":\"/wA=\",\"body_encoding\":\"base64\"")
+
+        // Assert
+        value
+        |> should
+        |> be_equal(True)
+        |> or_fail_with("A response body that is not UTF-8 should be base64")
+      }),
+      it("decodes a base64 response body to its bytes", fn() {
+        // Arrange
+        let text =
+          "{\"version\":\"1.0\",\"entries\":[{\"request\":{\"method\":\"GET\",\"scheme\":\"https\",\"host\":\"h\",\"port\":null,\"path\":\"/\",\"query\":null,\"headers\":[],\"body\":\"\"},\"response\":{\"mode\":\"blocking\",\"status\":200,\"headers\":[],\"body\":\"/wA=\",\"body_encoding\":\"base64\"}}]}"
+
+        // Act
+        let value =
+          recording.decode_recording_file(text)
+          |> result.map(fn(file) {
+            list.map(file.entries, fn(e) {
+              case e.response {
+                recording.BlockingResponse(_status, _headers, body) -> body
+                recording.StreamingResponse(_status, _headers, _chunks) -> <<>>
+              }
+            })
+          })
+
+        // Assert
+        value
+        |> should
+        |> be_equal(Ok([<<255, 0>>]))
+        |> or_fail_with("The base64 body should decode to its bytes")
       }),
       it("decodes a base64 request body to its bytes", fn() {
         // Arrange
@@ -731,9 +783,7 @@ pub fn tests() -> TestSuite(Nil) {
         let value =
           recording.decode_recording_file(text)
           |> result.map(fn(file) {
-            list.map(file.entries, fn(e) {
-              bit_array.from_string(e.request.body)
-            })
+            list.map(file.entries, fn(e) { e.request.body })
           })
 
         // Assert
@@ -757,7 +807,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(["!!!"]))
+        |> be_equal(Ok([<<"!!!">>]))
         |> or_fail_with("An invalid base64 body should be kept as it is")
       }),
       it("keeps chunk data that is not valid base64", fn() {
@@ -832,12 +882,12 @@ pub fn tests() -> TestSuite(Nil) {
                 path: "/api/data",
                 query: Some("key=value"),
                 headers: [#("Authorization", "Bearer token")],
-                body: "{\"data\": \"test\"}",
+                body: <<"{\"data\": \"test\"}">>,
               ),
               response: recording.BlockingResponse(
                 status: 201,
                 headers: [#("Content-Type", "application/json")],
-                body: "{\"id\": 123}",
+                body: <<"{\"id\": 123}">>,
               ),
             ),
           ])

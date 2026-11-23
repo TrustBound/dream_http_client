@@ -14,16 +14,51 @@ version.
 
 ### Fixed
 
-- The connection pool now gives each request a free connection. Before, it
-  opened a new connection for every request until it held 50 for a host, and
-  then picked one by round robin, so a request could wait behind a long
-  stream on the same HTTP/1.1 connection. Now a request uses a connection
-  that serves no other request, opens a new one only when every connection
-  is busy, and shares a busy connection only at `max_connections`.
+- The connection pool now uses connections the way each protocol expects.
+  Before, it opened a new connection for every request until it held 50 for
+  a host, then picked one by round robin, so a request could wait behind a
+  long stream on the same HTTP/1.1 connection, and HTTP/2 never multiplexed.
+  Now:
+  - An HTTP/1.1 connection carries one request at a time.
+  - An HTTP/2 connection carries as many streams as the server allows with
+    `SETTINGS_MAX_CONCURRENT_STREAMS`. The pool waits for the server's first
+    SETTINGS frame before it uses a new connection, and follows every later
+    one. A server that never sends SETTINGS fails the connect with
+    `ConnectFailed("Connection timed out")`.
+  - The pool opens a new connection only when every connection to the host
+    is full. At `max_connections`, a request waits for room, up to its
+    timeout, and then gets `TimedOut`.
+  - A stream that the server refuses (`REFUSED_STREAM`, or gun's
+    `too_many_streams`) is sent once more on another connection.
+  - After a GOAWAY, the connection gets no new request, and the streams that
+    the server kept finish. Before, the retry closed the connection and
+    stopped them.
+- Streams now have flow control. The client reads the response from the
+  server only as fast as the caller takes chunks from `stream_yielder`, or
+  as fast as the `on_stream_chunk` callback returns. At most 16 chunks wait
+  in memory. Before, the client read the whole response as fast as the
+  server sent it, so a slow reader of a large response filled memory.
+- A stream that nobody reads any more (its caller stopped, or it timed out)
+  is now canceled at the server.
+- On HTTP/1.1, the connection of a stream of 16 chunks or more is closed
+  when the stream ends, because gun can have stopped reading it. A shorter
+  stream leaves its connection for the next request. HTTP/2 connections
+  are not closed.
+- A recorded stream now has the status that the server sent. Before, the
+  recorder wrote 206 for a response with `Content-Range` and 200 for every
+  other stream.
+- A stream that fails is no longer saved as a recording. Before, the chunks
+  that arrived were saved, and playback showed them as a whole response.
+- A connection in the pool no longer connects again by itself after it
+  loses its socket. The pool removes it, and the next request gets a new
+  connection. Before, gun connected again after a wait and held new requests
+  for that time, and a held request could get response headers and no body,
+  and then time out. A request that was sent on a connection that is gone is
+  sent once more on a new connection.
 - The idle check no longer closes a connection that serves a long response.
 - A stream that stops before its end, for example after a cancel, now closes
   its HTTP/1.1 connection, so the rest of that response never reaches the
-  next request. An HTTP/2 connection is used again.
+  next request. An HTTP/2 connection keeps running.
 - A streamed response with an empty body now ends at once: `stream_yielder`
   yields nothing and `start_stream` calls `on_stream_end([])`. Before, the
   stream waited until it timed out.
@@ -43,8 +78,33 @@ version.
   The underlying gun dispatch now uses `gun:request/5` directly instead of
   method-specific functions that behave inconsistently for empty bodies.
 
+### Added
+
+- `client.new_pool(max_connections:)` makes a connection pool, and
+  `client.pool(request, pool)` sends a request through it. Requests share
+  connections only with requests that have the same pool, and the pool
+  opens at most `max_connections` connections to each host.
+  `client.get_pool()` and `client.get_pool_max_connections()` read the
+  settings, and `ConnectionPool` is the opaque type of a pool.
+- `client.body_text(response)` reads a response body as a UTF-8 string.
+- `client.body_bits(request, bytes)` sets a request body that is not text,
+  such as a file.
+
 ### Changed
 
+- **BREAKING:** `HttpResponse.body` is a `BitArray`, the exact bytes the
+  server sent. Before, it was a `String` that could hold bytes that are not
+  UTF-8. Use `client.body_text(response)` for text. The body of an
+  `HttpFailure` of a stream now has the exact bytes too. Before, a body that
+  was not UTF-8 was read as Latin-1, and its bytes were lost.
+  `stream_failure_to_string` shows such a body as `<11 bytes, not UTF-8>`.
+- **BREAKING:** `recording.BlockingResponse.body` and
+  `recording.RecordedRequest.body` are `BitArray`. The fixture files do not
+  change: a UTF-8 body is stored as text, and any other body as base64.
+- **BREAKING:** `client.get_body(request)` returns a `BitArray`. A body set
+  with `client.body(String)` is the UTF-8 bytes of its string.
+- A `MatchKey` with `body: True` has `base64:` and the base64 form of a
+  request body that is not UTF-8.
 - Moved to its own repository
 - `cancel_stream(request_id)` now works with the `RequestId` that
   `stream_to()` returns. It stops the stream process, cancels the request, and
@@ -56,8 +116,8 @@ version.
 - **HTTP backend replaced: `httpc` → `gun`.** The underlying HTTP client has
   been swapped from Erlang's `httpc` to [gun](https://github.com/ninenines/gun),
   a production-grade HTTP/1.1 and HTTP/2 client. This enables native HTTP/2
-  multiplexing for high-concurrency workloads (10k+ concurrent requests over
-  a single TCP connection to HTTP/2 servers). `send()`, `stream_yielder()`,
+  multiplexing for high-concurrency workloads (as many concurrent requests
+  over one TCP connection as the HTTP/2 server allows). `send()`, `stream_yielder()`,
   and `start_stream()` keep their behaviour, apart from the error type
   changes below.
 - **`SendError.RequestError` from `message: String` to `error: TransportError`**
@@ -111,14 +171,12 @@ version.
   previous behavior). Note: gun does not handle redirects natively; the shim
   implements manual redirect following (up to 5 hops).
 - **Global transport configuration.** `TransportConfig` opaque type with builder
-  functions for gun connection pool tuning (13 fields):
+  functions for gun connection pool tuning (11 fields):
   - `max_connections(count)` — TCP connections per host (default: 50)
   - `idle_timeout(ms)` — idle connection lifetime (default: 60000ms)
   - `default_connect_timeout(ms)` — TCP connect timeout (default: 15000ms)
   - `domain_lookup_timeout(ms)` — DNS resolution timeout (default: 5000ms)
   - `tls_handshake_timeout(ms)` — TLS negotiation timeout (default: 10000ms)
-  - `retry(count)` — connection retry attempts (default: 3)
-  - `retry_timeout(ms)` — delay between retries (default: 1000ms)
   - `keepalive(ms)` — HTTP/2 PING interval (default: 30000ms)
   - `keepalive_tolerance(count)` — missed PINGs before close (default: 3)
   - `max_concurrent_streams(count)` — HTTP/2 streams per connection (default: 100)
@@ -155,7 +213,7 @@ version.
 - **`gun_down` connection events now logged.** The connection manager logs
   `gun_down` events with connection PID, protocol, reason, and killed/unprocessed
   stream counts via `error_logger:warning_msg`.
-- **Getter functions** for all 13 `TransportConfig` fields.
+- **Getter functions** for all 11 `TransportConfig` fields.
 - **24 new tests** covering structured error types, HttpFailure headers/body
   preservation, ConnectFailed variant checks, helper function output, plus
   builder/getter round-trips, default values, edge cases, builder chaining,

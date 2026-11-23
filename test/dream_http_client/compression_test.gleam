@@ -26,7 +26,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("gzip should be decompressed")
       }),
       it("decompresses a deflate body", fn() {
@@ -40,7 +40,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("deflate should be decompressed")
       }),
       it("passes an identity body through", fn() {
@@ -54,7 +54,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("identity should pass through")
       }),
       it("passes a body with an unknown encoding through", fn() {
@@ -68,7 +68,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "raw-uncompressed-bytes")))
+        |> be_equal(Ok(#(200, <<"raw-uncompressed-bytes">>)))
         |> or_fail_with("An unknown encoding should pass through")
       }),
       it("returns the raw body when gzip data is corrupted", fn() {
@@ -82,7 +82,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "this is not valid gzip data at all")))
+        |> be_equal(Ok(#(200, <<"this is not valid gzip data at all">>)))
         |> or_fail_with("Corrupted gzip should come back as the raw body")
       }),
       it("sends Accept-Encoding gzip, deflate by default", fn() {
@@ -96,7 +96,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "gzip, deflate")))
+        |> be_equal(Ok(#(200, <<"gzip, deflate">>)))
         |> or_fail_with("The default Accept-Encoding should be sent")
       }),
       it("keeps the Accept-Encoding of the caller", fn() {
@@ -112,7 +112,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "zstd")))
+        |> be_equal(Ok(#(200, <<"zstd">>)))
         |> or_fail_with("The caller Accept-Encoding should be kept")
       }),
     ]),

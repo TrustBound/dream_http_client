@@ -6,6 +6,7 @@
 import dream_http_client/matching
 import dream_http_client/recording
 import dream_http_client/storage
+import gleam/bit_array
 import gleam/dict
 import gleam/erlang/process
 import gleam/int
@@ -205,7 +206,7 @@ pub type RecorderBuilder {
 /// ) -> recording.RecordedResponse {
 ///   case response {
 ///     recording.BlockingResponse(status, headers, _body) ->
-///       recording.BlockingResponse(status: status, headers: headers, body: "")
+///       recording.BlockingResponse(status: status, headers: headers, body: <<>>)
 ///     recording.StreamingResponse(..) -> response
 ///   }
 /// }
@@ -267,7 +268,7 @@ pub fn new() -> RecorderBuilder {
 /// ) -> recording.RecordedResponse {
 ///   case response {
 ///     recording.BlockingResponse(status, headers, _body) ->
-///       recording.BlockingResponse(status: status, headers: headers, body: "")
+///       recording.BlockingResponse(status: status, headers: headers, body: <<>>)
 ///     recording.StreamingResponse(..) -> response
 ///   }
 /// }
@@ -325,7 +326,7 @@ pub fn directory(
 /// ) -> recording.RecordedResponse {
 ///   case response {
 ///     recording.BlockingResponse(status, headers, _body) ->
-///       recording.BlockingResponse(status: status, headers: headers, body: "")
+///       recording.BlockingResponse(status: status, headers: headers, body: <<>>)
 ///     recording.StreamingResponse(..) -> response
 ///   }
 /// }
@@ -379,7 +380,7 @@ pub fn mode(builder: RecorderBuilder, mode: String) -> RecorderBuilder {
 /// ) -> recording.RecordedResponse {
 ///   case response {
 ///     recording.BlockingResponse(status, headers, _body) ->
-///       recording.BlockingResponse(status: status, headers: headers, body: "")
+///       recording.BlockingResponse(status: status, headers: headers, body: <<>>)
 ///     recording.StreamingResponse(..) -> response
 ///   }
 /// }
@@ -433,7 +434,7 @@ pub fn key(
 /// ) -> recording.RecordedResponse {
 ///   case response {
 ///     recording.BlockingResponse(status, headers, _body) ->
-///       recording.BlockingResponse(status: status, headers: headers, body: "")
+///       recording.BlockingResponse(status: status, headers: headers, body: <<>>)
 ///     recording.StreamingResponse(..) -> response
 ///   }
 /// }
@@ -487,7 +488,7 @@ pub fn request_transformer(
 /// ) -> recording.RecordedResponse {
 ///   case response {
 ///     recording.BlockingResponse(status, headers, _body) ->
-///       recording.BlockingResponse(status: status, headers: headers, body: "")
+///       recording.BlockingResponse(status: status, headers: headers, body: <<>>)
 ///     recording.StreamingResponse(..) -> response
 ///   }
 /// }
@@ -934,7 +935,15 @@ fn responses_equal(
   }
 }
 
-fn normalize_body_for_compare(body: String) -> String {
+// A body that is not text is compared as it is.
+fn normalize_body_for_compare(body: BitArray) -> BitArray {
+  case bit_array.to_string(body) {
+    Ok(text) -> bit_array.from_string(normalize_text_for_compare(text))
+    Error(Nil) -> body
+  }
+}
+
+fn normalize_text_for_compare(body: String) -> String {
   case response_kind(body) {
     "auth_result" -> normalize_auth_result_body(body)
     _ -> body
@@ -1020,9 +1029,11 @@ fn replace_json_string_value(
 ///         path: "/users",
 ///         query: option.None,
 ///         headers: [],
-///         body: "",
+///         body: <<>>,
 ///       ),
-///       response: recording.BlockingResponse(status: 200, headers: [], body: "[]"),
+///       response: recording.BlockingResponse(status: 200, headers: [], body: <<
+///         "[]",
+///       >>),
 ///     )
 ///   recorder.add_recording(rec, manual_recording)
 ///   list.length(recorder.get_recordings(rec))
@@ -1113,7 +1124,7 @@ pub fn is_record_mode(recorder: Recorder) -> Bool {
 /// ) -> recording.RecordedResponse {
 ///   case response {
 ///     recording.BlockingResponse(status, headers, _body) ->
-///       recording.BlockingResponse(status: status, headers: headers, body: "")
+///       recording.BlockingResponse(status: status, headers: headers, body: <<>>)
 ///     recording.StreamingResponse(..) -> response
 ///   }
 /// }
@@ -1199,7 +1210,7 @@ pub fn transform_response(
 ///       path: "/text",
 ///       query: option.None,
 ///       headers: [],
-///       body: "",
+///       body: <<>>,
 ///     )
 ///
 ///   case recorder.find_recording(rec, request) {

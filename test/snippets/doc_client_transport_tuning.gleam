@@ -7,8 +7,6 @@ pub fn tuned_transport() -> client.TransportConfig {
   |> client.default_connect_timeout(5000)
   |> client.domain_lookup_timeout(2000)
   |> client.tls_handshake_timeout(5000)
-  |> client.retry(1)
-  |> client.retry_timeout(500)
   |> client.keepalive(10_000)
   |> client.keepalive_tolerance(3)
   |> client.max_concurrent_streams(200)

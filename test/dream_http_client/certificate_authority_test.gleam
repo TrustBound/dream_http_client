@@ -31,7 +31,7 @@ pub fn tests() -> TestSuite(Nil) {
       // Assert
       body
       |> should
-      |> be_equal(Ok("hello over tls"))
+      |> be_equal(Ok(<<"hello over tls">>))
       |> or_fail_with("The server should be trusted")
     }),
     it("send rejects a server from an unknown certificate authority", fn() {
@@ -80,7 +80,7 @@ pub fn tests() -> TestSuite(Nil) {
       // Assert
       body
       |> should
-      |> be_equal(Ok("hello over tls"))
+      |> be_equal(Ok(<<"hello over tls">>))
       |> or_fail_with("The default authority file should be used")
     }),
     it("the request file wins over the default file", fn() {
@@ -99,7 +99,7 @@ pub fn tests() -> TestSuite(Nil) {
       // Assert
       body
       |> should
-      |> be_equal(Ok("hello over tls"))
+      |> be_equal(Ok(<<"hello over tls">>))
       |> or_fail_with("The request authority file should win")
     }),
     it("send fails when the certificate authority file is missing", fn() {
@@ -132,7 +132,7 @@ pub fn tests() -> TestSuite(Nil) {
       // Assert
       body
       |> should
-      |> be_equal(Ok("hello over tls"))
+      |> be_equal(Ok(<<"hello over tls">>))
       |> or_fail_with("HTTP/2 over TLS should trust the server")
     }),
     it("stream_yielder trusts the certificate authority file", fn() {

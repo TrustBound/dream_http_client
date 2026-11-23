@@ -29,7 +29,7 @@ pub fn tests() -> TestSuite(Nil) {
               response: recording.BlockingResponse(
                 status: 200,
                 headers: [#("X-Recorded", "yes")],
-                body: "recorded",
+                body: <<"recorded">>,
               ),
             ),
             "edge",

@@ -18,7 +18,7 @@ pub fn scrub_response(
       recording.BlockingResponse(
         status: status,
         headers: list.filter(headers, is_not_set_cookie),
-        body: "",
+        body: <<>>,
       )
 
     recording.StreamingResponse(status, headers, chunks) ->

@@ -108,7 +108,7 @@ pub fn tests() -> TestSuite(Nil) {
       // Assert
       value
       |> should
-      |> be_equal("")
+      |> be_equal(<<>>)
       |> or_fail_with("new uses an empty body")
     }),
     it("new sets no timeout", fn() {
@@ -292,7 +292,7 @@ pub fn tests() -> TestSuite(Nil) {
       // Assert
       value
       |> should
-      |> be_equal("{\"key\":\"value\"}")
+      |> be_equal(<<"{\"key\":\"value\"}">>)
       |> or_fail_with("body sets the body")
     }),
     it("timeout sets the timeout", fn() {

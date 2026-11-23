@@ -48,7 +48,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("simple_get should return the text endpoint")
       }),
       it("Protocols: h2c_request returns the body over HTTP/2", fn() {
@@ -59,7 +59,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok("Hello, World!"))
+        |> be_equal(Ok(<<"Hello, World!">>))
         |> or_fail_with("h2c_request should return the body")
       }),
       it("Blocking: fetch_text returns the body", fn() {
@@ -118,7 +118,7 @@ pub fn tests() -> TestSuite(Nil) {
           // Assert
           value
           |> should
-          |> be_equal(Ok(#(200, "Hello, World!")))
+          |> be_equal(Ok(#(200, <<"Hello, World!">>)))
           |> or_fail_with("The text endpoint should answer")
         },
       ),
@@ -157,7 +157,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("record_text should return the real response")
       }),
       it("Recording: play_back_text returns the recorded response", fn() {
@@ -173,7 +173,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("play_back_text should return the recording")
       }),
       it("Testing: fetch_recorded_text returns the fixture response", fn() {
@@ -189,7 +189,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Recorded text from the fixture")))
+        |> be_equal(Ok(#(200, <<"Recorded text from the fixture">>)))
         |> or_fail_with("The fixture response should come back")
       }),
       it("Request matching: method_and_url_key ignores headers and body", fn() {
@@ -199,13 +199,13 @@ pub fn tests() -> TestSuite(Nil) {
           recording.RecordedRequest(
             ..recorded.text_request(),
             headers: [#("Authorization", "Bearer one")],
-            body: "a",
+            body: <<"a">>,
           )
         let second =
           recording.RecordedRequest(
             ..recorded.text_request(),
             headers: [#("Authorization", "Bearer two")],
-            body: "b",
+            body: <<"b">>,
           )
 
         // Act
@@ -230,7 +230,7 @@ pub fn tests() -> TestSuite(Nil) {
               request: recording.RecordedRequest(
                 ..recorded.text_request(),
                 headers: [#("Authorization", "Bearer one")],
-                body: "a",
+                body: <<"a">>,
               ),
               response: recorded.ok_response("ok"),
             )
@@ -245,7 +245,7 @@ pub fn tests() -> TestSuite(Nil) {
               recording.RecordedRequest(
                 ..recorded.text_request(),
                 headers: [#("Authorization", "Bearer two")],
-                body: "b",
+                body: <<"b">>,
               ),
             )
           let assert Ok(Nil) = recorder.stop(playback)
@@ -259,7 +259,7 @@ pub fn tests() -> TestSuite(Nil) {
                 request: recording.RecordedRequest(
                   ..recorded.text_request(),
                   headers: [#("Authorization", "Bearer one")],
-                  body: "a",
+                  body: <<"a">>,
                 ),
                 response: recorded.ok_response("ok"),
               )),
@@ -274,7 +274,7 @@ pub fn tests() -> TestSuite(Nil) {
           recording.RecordedRequest(
             ..recorded.text_request(),
             headers: [#("Authorization", "Bearer secret"), #("X-Ok", "1")],
-            body: "body",
+            body: <<"body">>,
           )
 
         // Act
@@ -301,7 +301,7 @@ pub fn tests() -> TestSuite(Nil) {
             recording.RecordedRequest(
               ..recorded.text_request(),
               headers: [#("Authorization", "Bearer secret"), #("X-Ok", "1")],
-              body: "{\"secret\":\"value\"}",
+              body: <<"{\"secret\":\"value\"}">>,
             )
 
           // Act
@@ -338,7 +338,7 @@ pub fn tests() -> TestSuite(Nil) {
           recording.BlockingResponse(
             status: 200,
             headers: [#("set-cookie", "secret_cookie=abc123"), #("X-Ok", "1")],
-            body: "SECRET_BODY",
+            body: <<"SECRET_BODY">>,
           )
 
         // Act
@@ -351,11 +351,13 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(recording.BlockingResponse(
-          status: 200,
-          headers: [#("X-Ok", "1")],
-          body: "",
-        ))
+        |> be_equal(
+          recording.BlockingResponse(
+            status: 200,
+            headers: [#("X-Ok", "1")],
+            body: <<>>,
+          ),
+        )
         |> or_fail_with("Cookies and body should be removed")
       }),
       it(
@@ -369,7 +371,7 @@ pub fn tests() -> TestSuite(Nil) {
             recording.BlockingResponse(
               status: 200,
               headers: [#("set-cookie", "secret_cookie=abc123")],
-              body: "SECRET_BODY",
+              body: <<"SECRET_BODY">>,
             )
 
           // Act
@@ -443,10 +445,11 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok(#(
-            201,
-            "{\"method\":\"POST\",\"url\":\"/post\",\"data\":\"{\\\"hello\\\":\\\"world\\\"}\"}",
-          )),
+          Ok(
+            #(201, <<
+              "{\"method\":\"POST\",\"url\":\"/post\",\"data\":\"{\\\"hello\\\":\\\"world\\\"}\"}",
+            >>),
+          ),
         )
         |> or_fail_with("send_post should get the echo")
       }),
@@ -471,10 +474,11 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok(#(
-            201,
-            "{\"method\":\"POST\",\"url\":\"/post\",\"data\":\"{\\\"name\\\":\\\"Alice\\\",\\\"email\\\":\\\"alice@example.com\\\"}\"}",
-          )),
+          Ok(
+            #(201, <<
+              "{\"method\":\"POST\",\"url\":\"/post\",\"data\":\"{\\\"name\\\":\\\"Alice\\\",\\\"email\\\":\\\"alice@example.com\\\"}\"}",
+            >>),
+          ),
         )
         |> or_fail_with("post_user should get the echo")
       }),

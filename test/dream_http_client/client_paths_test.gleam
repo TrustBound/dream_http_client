@@ -37,7 +37,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(404, "")))
+        |> be_equal(Ok(#(404, <<>>)))
         |> or_fail_with("The method should reach the server and get its 404")
       }),
       it("sends the Options method", fn() {
@@ -54,7 +54,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(404, "Route not found")))
+        |> be_equal(Ok(#(404, <<"Route not found">>)))
         |> or_fail_with("The method should reach the server and get its 404")
       }),
       it("sends the Trace method", fn() {
@@ -71,7 +71,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(404, "Route not found")))
+        |> be_equal(Ok(#(404, <<"Route not found">>)))
         |> or_fail_with("The method should reach the server and get its 404")
       }),
       it("sends the Connect method", fn() {
@@ -88,7 +88,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(404, "Route not found")))
+        |> be_equal(Ok(#(404, <<"Route not found">>)))
         |> or_fail_with("The method should reach the server and get its 404")
       }),
       it("sends the Other(PURGE) method", fn() {
@@ -105,7 +105,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(404, "Route not found")))
+        |> be_equal(Ok(#(404, <<"Route not found">>)))
         |> or_fail_with("The method should reach the server and get its 404")
       }),
     ]),
@@ -126,7 +126,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok("hello over tls"))
+        |> be_equal(Ok(<<"hello over tls">>))
         |> or_fail_with("Http2Preferred should work over TLS")
       }),
       it("send with no port uses the default port", fn() {
@@ -415,83 +415,93 @@ pub fn tests() -> TestSuite(Nil) {
         )
         |> or_fail_with("The record path should yield the start failure")
       }),
-      it("stream_yielder in record mode saves the chunks before a drop", fn() {
-        // Arrange
-        let path = temp_directory.path("cp_yield_record_drop")
-        let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+      it(
+        "stream_yielder in record mode saves no recording of a dropped stream",
+        fn() {
+          // Arrange
+          let path = temp_directory.path("cp_yield_record_drop")
+          let assert Ok(rec) =
+            recorder.new() |> directory(path) |> mode("record") |> start()
 
-        // Act
-        let _items =
-          mock_server.get("/stream/drop")
-          |> client.recorder(rec)
-          |> client.stream_yielder
-          |> yielder.take(10)
-          |> yielder.to_list
-        let assert Ok(Nil) = recorder.stop(rec)
-        let value =
-          storage.load_recordings(path)
-          |> result.map(
-            list.map(_, fn(entry) {
-              case entry.response {
-                recording.StreamingResponse(status, _headers, chunks) -> #(
-                  status,
-                  list.map(chunks, fn(chunk) { chunk.data }) |> bit_array.concat,
-                )
-                recording.BlockingResponse(status, _headers, _body) -> #(
-                  status,
-                  <<>>,
-                )
-              }
-            }),
-          )
+          // Act
+          let _items =
+            mock_server.get("/stream/drop")
+            |> client.recorder(rec)
+            |> client.stream_yielder
+            |> yielder.take(10)
+            |> yielder.to_list
+          let assert Ok(Nil) = recorder.stop(rec)
+          let value =
+            storage.load_recordings(path)
+            |> result.map(
+              list.map(_, fn(entry) {
+                case entry.response {
+                  recording.StreamingResponse(status, _headers, chunks) -> #(
+                    status,
+                    list.map(chunks, fn(chunk) { chunk.data })
+                      |> bit_array.concat,
+                  )
+                  recording.BlockingResponse(status, _headers, _body) -> #(
+                    status,
+                    <<>>,
+                  )
+                }
+              }),
+            )
 
-        // Assert
-        value
-        |> should
-        |> be_equal(Ok([#(200, <<"Drop chunk 1\nDrop chunk 2\n">>)]))
-        |> or_fail_with("The chunks before the drop should be saved")
-      }),
-      it("start_stream in record mode saves the chunks before a drop", fn() {
-        // Arrange
-        let path = temp_directory.path("cp_start_record_drop")
-        let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
-        let ended = process.new_subject()
-        let request =
-          mock_server.get("/stream/drop")
-          |> client.recorder(rec)
-          |> client.on_stream_end(fn(_headers) { process.send(ended, True) })
-          |> client.on_stream_error(fn(_failure) { process.send(ended, False) })
+          // Assert
+          value
+          |> should
+          |> be_equal(Ok([]))
+          |> or_fail_with("A stream that dropped should not be saved")
+        },
+      ),
+      it(
+        "start_stream in record mode saves no recording of a dropped stream",
+        fn() {
+          // Arrange
+          let path = temp_directory.path("cp_start_record_drop")
+          let assert Ok(rec) =
+            recorder.new() |> directory(path) |> mode("record") |> start()
+          let ended = process.new_subject()
+          let request =
+            mock_server.get("/stream/drop")
+            |> client.recorder(rec)
+            |> client.on_stream_end(fn(_headers) { process.send(ended, True) })
+            |> client.on_stream_error(fn(_failure) {
+              process.send(ended, False)
+            })
 
-        // Act
-        let assert Ok(_handle) = client.start_stream(request)
-        let assert Ok(False) = process.receive(ended, 10_000)
-        process.sleep(100)
-        let assert Ok(Nil) = recorder.stop(rec)
-        let value =
-          storage.load_recordings(path)
-          |> result.map(
-            list.map(_, fn(entry) {
-              case entry.response {
-                recording.StreamingResponse(status, _headers, chunks) -> #(
-                  status,
-                  list.map(chunks, fn(chunk) { chunk.data }) |> bit_array.concat,
-                )
-                recording.BlockingResponse(status, _headers, _body) -> #(
-                  status,
-                  <<>>,
-                )
-              }
-            }),
-          )
+          // Act
+          let assert Ok(_handle) = client.start_stream(request)
+          let assert Ok(False) = process.receive(ended, 10_000)
+          process.sleep(100)
+          let assert Ok(Nil) = recorder.stop(rec)
+          let value =
+            storage.load_recordings(path)
+            |> result.map(
+              list.map(_, fn(entry) {
+                case entry.response {
+                  recording.StreamingResponse(status, _headers, chunks) -> #(
+                    status,
+                    list.map(chunks, fn(chunk) { chunk.data })
+                      |> bit_array.concat,
+                  )
+                  recording.BlockingResponse(status, _headers, _body) -> #(
+                    status,
+                    <<>>,
+                  )
+                }
+              }),
+            )
 
-        // Assert
-        value
-        |> should
-        |> be_equal(Ok([#(200, <<"Drop chunk 1\nDrop chunk 2\n">>)]))
-        |> or_fail_with("The chunks before the drop should be saved")
-      }),
+          // Assert
+          value
+          |> should
+          |> be_equal(Ok([]))
+          |> or_fail_with("A stream that dropped should not be saved")
+        },
+      ),
     ]),
   ])
 }

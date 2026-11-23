@@ -19,7 +19,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let key =
         matching.request_key(
@@ -49,7 +49,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let key =
         matching.request_key(
@@ -79,7 +79,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let key =
         matching.request_key(
@@ -109,7 +109,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let key =
         matching.request_key(
@@ -128,6 +128,36 @@ pub fn tests() -> TestSuite(Nil) {
       |> be_equal("Authorization:Bearer token")
       |> or_fail_with("The key should be Authorization:Bearer token")
     }),
+    it("builds a key from a body that is not UTF-8", fn() {
+      // Arrange
+      let request =
+        recording.RecordedRequest(
+          method: http.Put,
+          scheme: http.Https,
+          host: "files.example.com",
+          port: None,
+          path: "/report.pdf",
+          query: None,
+          headers: [],
+          body: <<255, 0>>,
+        )
+      let key =
+        matching.request_key(
+          method: False,
+          url: False,
+          headers: False,
+          body: True,
+        )
+
+      // Act
+      let value = key(request)
+
+      // Assert
+      value
+      |> should
+      |> be_equal("base64:/wA=")
+      |> or_fail_with("A binary body should be in the key as base64")
+    }),
     it("builds a key from only the body", fn() {
       // Arrange
       let request =
@@ -139,7 +169,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let key =
         matching.request_key(
@@ -169,7 +199,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let key =
         matching.request_key(
@@ -199,7 +229,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let key =
         matching.request_key(method: True, url: True, headers: True, body: True)
@@ -228,7 +258,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request = recording.RecordedRequest(..request_base, scheme: http.Http)
       let key =
@@ -259,7 +289,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request = recording.RecordedRequest(..request_base, port: Some(8443))
       let key =
@@ -290,7 +320,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request =
         recording.RecordedRequest(..request_base, query: Some("page=2"))
@@ -322,7 +352,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request =
         recording.RecordedRequest(..request_base, headers: [
@@ -357,7 +387,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request = recording.RecordedRequest(..request_base, method: http.Post)
       let key =
@@ -388,7 +418,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request = recording.RecordedRequest(..request_base, method: http.Put)
       let key =
@@ -419,7 +449,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request =
         recording.RecordedRequest(..request_base, method: http.Delete)
@@ -451,7 +481,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request =
         recording.RecordedRequest(..request_base, method: http.Patch)
@@ -483,7 +513,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request = recording.RecordedRequest(..request_base, method: http.Head)
       let key =
@@ -514,7 +544,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request =
         recording.RecordedRequest(..request_base, method: http.Options)
@@ -546,7 +576,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request =
         recording.RecordedRequest(..request_base, method: http.Trace)
@@ -578,7 +608,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request =
         recording.RecordedRequest(..request_base, method: http.Connect)
@@ -610,7 +640,7 @@ pub fn tests() -> TestSuite(Nil) {
           path: "/users",
           query: None,
           headers: [#("Authorization", "Bearer token")],
-          body: "{}",
+          body: <<"{}">>,
         )
       let request =
         recording.RecordedRequest(..request_base, method: http.Other("purge"))

@@ -11,7 +11,6 @@ import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/types.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/mock_server
-import gleam/bit_array
 import gleam/erlang/process
 import gleam/list
 import gleam/result
@@ -138,7 +137,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         reason
         |> should
-        |> be_equal(Ok("HTTP 400: Error: ÀÁþÿ"))
+        |> be_equal(Ok("HTTP 400: <11 bytes, not UTF-8>"))
         |> or_fail_with("on_stream_error should get the 400 response")
       }),
       it("stream_yielder yields the 400 response", fn() {
@@ -156,8 +155,59 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         first
         |> should
-        |> be_equal(Ok(Error("HTTP 400: Error: ÀÁþÿ")))
+        |> be_equal(Ok(Error("HTTP 400: <11 bytes, not UTF-8>")))
         |> or_fail_with("The yielder should yield the 400 response")
+      }),
+      it("start_stream gives on_stream_error the exact body bytes", fn() {
+        // Arrange
+        let errors = process.new_subject()
+        let request =
+          mock_server.get("/non-utf8-error")
+          |> client.on_stream_error(fn(failure) {
+            case failure {
+              client.HttpFailure(response) ->
+                process.send(errors, #(response.status, response.body))
+              client.TransportFailure(_error) ->
+                process.send(errors, #(0, <<>>))
+            }
+          })
+
+        // Act
+        let assert Ok(_handle) = client.start_stream(request)
+        let failure = process.receive(errors, 5000)
+
+        // Assert
+        failure
+        |> should
+        |> be_equal(Ok(#(400, <<"Error: ", 192, 193, 254, 255>>)))
+        |> or_fail_with("on_stream_error should get the exact bytes")
+      }),
+      it("stream_yielder yields the exact body bytes of the 400", fn() {
+        // Arrange
+        let request = mock_server.get("/non-utf8-error")
+
+        // Act
+        let first =
+          client.stream_yielder(request)
+          |> yielder.first
+          |> result.map(fn(item) {
+            result.map_error(item, fn(failure) {
+              case failure {
+                client.HttpFailure(response) -> #(
+                  response.status,
+                  response.body,
+                )
+                client.TransportFailure(_error) -> #(0, <<>>)
+              }
+            })
+            |> result.replace(Nil)
+          })
+
+        // Assert
+        first
+        |> should
+        |> be_equal(Ok(Error(#(400, <<"Error: ", 192, 193, 254, 255>>))))
+        |> or_fail_with("The yielder should yield the exact bytes")
       }),
       it("send returns a ResponseError with the raw 400 body", fn() {
         // Arrange
@@ -169,7 +219,7 @@ pub fn tests() -> TestSuite(Nil) {
           |> result.map_error(fn(error) {
             case error {
               client.ResponseError(response) ->
-                Ok(#(response.status, bit_array.from_string(response.body)))
+                Ok(#(response.status, response.body))
               client.RequestError(transport) -> Error(transport)
             }
           })

@@ -16,7 +16,7 @@ pub fn drop_body(
 ) -> recording.RecordedResponse {
   case response {
     recording.BlockingResponse(status, headers, _body) ->
-      recording.BlockingResponse(status: status, headers: headers, body: "")
+      recording.BlockingResponse(status: status, headers: headers, body: <<>>)
     recording.StreamingResponse(..) -> response
   }
 }

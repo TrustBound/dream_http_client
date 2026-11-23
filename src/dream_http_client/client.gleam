@@ -14,7 +14,7 @@
 //// import gleam/http
 //// import gleam/result
 ////
-//// pub fn call_api(token: String) -> Result(String, client.SendError) {
+//// pub fn call_api(token: String) -> Result(BitArray, client.SendError) {
 ////   client.new()
 ////   |> scheme(http.Http)
 ////   |> host("localhost")
@@ -60,7 +60,7 @@
 //// import gleam/result
 //// import gleam/string
 ////
-//// pub fn record_call(mocks_directory: String) -> Result(String, String) {
+//// pub fn record_call(mocks_directory: String) -> Result(BitArray, String) {
 ////   use rec <- result.try(
 ////     recorder.new()
 ////     |> directory(mocks_directory)
@@ -98,10 +98,12 @@
 import dream_http_client/internal
 import dream_http_client/recorder
 import dream_http_client/recording
+import gleam/bit_array
 import gleam/bytes_tree
 import gleam/dynamic/decode as d
 import gleam/erlang/atom
 import gleam/erlang/process
+import gleam/erlang/reference
 import gleam/http
 import gleam/http/request
 import gleam/int
@@ -109,7 +111,6 @@ import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
-import gleam/string
 import gleam/yielder
 
 /// HTTP header
@@ -159,7 +160,9 @@ pub type Header {
 /// - `status`: HTTP status code (e.g. 200, 301, 404, 500)
 /// - `headers`: Response headers as `List(Header)` — includes Content-Type,
 ///   Content-Length, Set-Cookie, and any other headers the server sent
-/// - `body`: Complete response body as a UTF-8 string
+/// - `body`: The complete response body, as the exact bytes the server sent.
+///   A body is not always text: it can be an image, a PDF, or text in
+///   another encoding. Use `body_text()` to read it as a UTF-8 string.
 ///
 /// ## Example
 ///
@@ -167,18 +170,50 @@ pub type Header {
 ///
 /// ```gleam
 /// import dream_http_client/client.{HttpResponse}
+/// import gleam/bit_array
 /// import gleam/int
 ///
 /// pub fn describe_response(request: client.ClientRequest) -> String {
 ///   case client.send(request) {
-///     Ok(HttpResponse(status: 200, body: body, ..)) -> "OK: " <> body
+///     Ok(HttpResponse(status: 200, body: body, ..)) ->
+///       "OK: " <> int.to_string(bit_array.byte_size(body)) <> " bytes"
 ///     Ok(HttpResponse(status: status, ..)) -> "Status " <> int.to_string(status)
 ///     Error(_) -> "Request failed"
 ///   }
 /// }
 /// ```
 pub type HttpResponse {
-  HttpResponse(status: Int, headers: List(Header), body: String)
+  HttpResponse(status: Int, headers: List(Header), body: BitArray)
+}
+
+/// Read the body of a response as text
+///
+/// ## Parameters
+///
+/// - `response`: The response to read
+///
+/// ## Returns
+///
+/// - `Ok(String)`: The body, when it is valid UTF-8
+/// - `Error(Nil)`: The body is not valid UTF-8. Read `response.body` for
+///   the bytes.
+///
+/// ## Example
+///
+/// ### Read the body as text <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_body_text.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+///
+/// pub fn text_of(response: client.HttpResponse) -> String {
+///   case client.body_text(response) {
+///     Ok(text) -> text
+///     Error(Nil) -> "The body is not text"
+///   }
+/// }
+/// ```
+pub fn body_text(response: HttpResponse) -> Result(String, Nil) {
+  bit_array.to_string(response.body)
 }
 
 /// Transport-level error from the underlying gun HTTP client.
@@ -348,8 +383,21 @@ pub fn transport_error_to_string(error: TransportError) -> String {
 pub fn stream_failure_to_string(failure: StreamFailure) -> String {
   case failure {
     HttpFailure(response: response) ->
-      "HTTP " <> int.to_string(response.status) <> ": " <> response.body
+      "HTTP "
+      <> int.to_string(response.status)
+      <> ": "
+      <> body_for_display(response.body)
     TransportFailure(error: error) -> transport_error_to_string(error)
+  }
+}
+
+// A body as text for a message. A body that is not UTF-8 has no text form,
+// so the message gives its size.
+fn body_for_display(body: BitArray) -> String {
+  case bit_array.to_string(body) {
+    Ok(text) -> text
+    Error(Nil) ->
+      "<" <> int.to_string(bit_array.byte_size(body)) <> " bytes, not UTF-8>"
   }
 }
 
@@ -506,7 +554,7 @@ pub opaque type ClientRequest {
     path: String,
     query: Option(String),
     headers: List(Header),
-    body: String,
+    body: BitArray,
     timeout: Option(Int),
     connect_timeout: Option(Int),
     auto_redirect: Option(Bool),
@@ -517,7 +565,140 @@ pub opaque type ClientRequest {
     on_stream_error: Option(fn(StreamFailure) -> Nil),
     protocols: Option(Protocols),
     certificate_authority_file: Option(String),
+    pool: Option(ConnectionPool),
   )
+}
+
+/// A connection pool of its own for some requests.
+///
+/// Make one with `new_pool()`, keep it, and give it to requests with
+/// `pool()`. Requests share connections only with requests that have the
+/// same pool. The pool opens at most its `max_connections` connections to
+/// each host.
+///
+/// The value is opaque. A pool has one limit, set when it is made, so two
+/// requests cannot give the same pool different limits.
+///
+/// ## Example
+///
+/// ### Give the model calls their own pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_pool.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn model_pool() -> client.ConnectionPool {
+///   client.new_pool(max_connections: 3)
+/// }
+///
+/// pub fn model_request(
+///   pool: client.ConnectionPool,
+///   prompt: String,
+/// ) -> client.ClientRequest {
+///   client.new()
+///   |> client.host("api.llm.example")
+///   |> client.path("/v1/chat")
+///   |> client.body(prompt)
+///   |> client.pool(pool)
+/// }
+///
+/// pub fn pool_limit(request: client.ClientRequest) -> Option(Int) {
+///   client.get_pool(request)
+///   |> option.map(client.get_pool_max_connections)
+/// }
+/// ```
+pub opaque type ConnectionPool {
+  ConnectionPool(id: reference.Reference, max_connections: Int)
+}
+
+/// Make a connection pool
+///
+/// Make a pool one time, for example when the application starts, and keep
+/// the value with the other services of the application. Each call makes a
+/// new pool with its own connections, so a pool made for each request would
+/// never use a connection again.
+///
+/// ## Parameters
+///
+/// - `max_connections`: The most connections the pool opens to one host
+///
+/// ## Returns
+///
+/// A new pool with no connections. The pool opens a connection when a
+/// request needs one.
+///
+/// ## Example
+///
+/// ### Give the model calls their own pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_pool.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn model_pool() -> client.ConnectionPool {
+///   client.new_pool(max_connections: 3)
+/// }
+///
+/// pub fn model_request(
+///   pool: client.ConnectionPool,
+///   prompt: String,
+/// ) -> client.ClientRequest {
+///   client.new()
+///   |> client.host("api.llm.example")
+///   |> client.path("/v1/chat")
+///   |> client.body(prompt)
+///   |> client.pool(pool)
+/// }
+///
+/// pub fn pool_limit(request: client.ClientRequest) -> Option(Int) {
+///   client.get_pool(request)
+///   |> option.map(client.get_pool_max_connections)
+/// }
+/// ```
+pub fn new_pool(max_connections max_connections: Int) -> ConnectionPool {
+  ConnectionPool(id: reference.new(), max_connections:)
+}
+
+/// Get the connection limit of a pool
+///
+/// ## Parameters
+///
+/// - `pool`: The pool to read
+///
+/// ## Returns
+///
+/// The most connections the pool opens to one host.
+///
+/// ## Example
+///
+/// ### Give the model calls their own pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_pool.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn model_pool() -> client.ConnectionPool {
+///   client.new_pool(max_connections: 3)
+/// }
+///
+/// pub fn model_request(
+///   pool: client.ConnectionPool,
+///   prompt: String,
+/// ) -> client.ClientRequest {
+///   client.new()
+///   |> client.host("api.llm.example")
+///   |> client.path("/v1/chat")
+///   |> client.body(prompt)
+///   |> client.pool(pool)
+/// }
+///
+/// pub fn pool_limit(request: client.ClientRequest) -> Option(Int) {
+///   client.get_pool(request)
+///   |> option.map(client.get_pool_max_connections)
+/// }
+/// ```
+pub fn get_pool_max_connections(pool: ConnectionPool) -> Int {
+  pool.max_connections
 }
 
 /// Default client request configuration
@@ -559,7 +740,7 @@ pub fn new() -> ClientRequest {
     path: "",
     query: None,
     headers: [],
-    body: "",
+    body: <<>>,
     timeout: None,
     connect_timeout: None,
     auto_redirect: None,
@@ -570,6 +751,7 @@ pub fn new() -> ClientRequest {
     on_stream_error: None,
     protocols: None,
     certificate_authority_file: None,
+    pool: None,
   )
 }
 
@@ -806,7 +988,8 @@ pub fn headers(
 /// Set the body for the request
 ///
 /// Sets the request body as a string. Typically used for POST, PUT, and PATCH
-/// requests. For JSON, serialize your data first.
+/// requests. For JSON, serialize your data first. For a body that is not
+/// text, such as a file, use `body_bits()`.
 ///
 /// ## Parameters
 ///
@@ -841,6 +1024,45 @@ pub fn headers(
 pub fn body(
   client_request: ClientRequest,
   body_value: String,
+) -> ClientRequest {
+  ClientRequest(..client_request, body: <<body_value:utf8>>)
+}
+
+/// Set the body for the request as bytes
+///
+/// Sets the request body to the exact bytes of `body_value`. Use it for a
+/// body that is not text: a file, an image, or text in an encoding that is
+/// not UTF-8. For text, `body()` is shorter.
+///
+/// ## Parameters
+///
+/// - `client_request`: The request to modify
+/// - `body_value`: The request body as bytes
+///
+/// ## Returns
+///
+/// A new `ClientRequest` with the body updated.
+///
+/// ## Example
+///
+/// ### Upload a file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_body_bits.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/http
+///
+/// pub fn upload_request(file: BitArray) -> client.ClientRequest {
+///   client.new()
+///   |> client.method(http.Put)
+///   |> client.host("files.example.com")
+///   |> client.path("/reports/2026.pdf")
+///   |> client.add_header("Content-Type", "application/pdf")
+///   |> client.body_bits(file)
+/// }
+/// ```
+pub fn body_bits(
+  client_request: ClientRequest,
+  body_value: BitArray,
 ) -> ClientRequest {
   ClientRequest(..client_request, body: body_value)
 }
@@ -936,7 +1158,7 @@ pub fn timeout(
 /// import gleam/http
 /// import gleam/result
 ///
-/// pub fn fetch_with_connect_timeout() -> Result(String, client.SendError) {
+/// pub fn fetch_with_connect_timeout() -> Result(BitArray, client.SendError) {
 ///   client.new()
 ///   |> client.scheme(http.Http)
 ///   |> client.host("localhost")
@@ -1069,6 +1291,65 @@ pub fn certificate_authority_file(
   ClientRequest(..client_request, certificate_authority_file: option.Some(path))
 }
 
+/// Send this request through a connection pool of its own
+///
+/// Without this setting, every request uses the default pool, and
+/// `max_connections()` of the transport config limits the connections to
+/// each host. With it, the request shares connections only with requests
+/// that have the same pool, and that pool opens at most its own
+/// `max_connections` connections to each host. A busy caller with a pool of
+/// its own does not use up the connections of other callers, and a small
+/// limit holds one caller back without a change for the others.
+///
+/// When every connection of the pool is full, the request waits for room up
+/// to its timeout, and then fails with `TimedOut`. On HTTP/2, one
+/// connection carries as many requests as the server allows, so the limit
+/// is on connections, not on requests.
+///
+/// ## Parameters
+///
+/// - `client_request`: The request to modify
+/// - `pool`: A pool from `new_pool()`
+///
+/// ## Returns
+///
+/// The request with the pool set.
+///
+/// ## Example
+///
+/// ### Give the model calls their own pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_pool.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn model_pool() -> client.ConnectionPool {
+///   client.new_pool(max_connections: 3)
+/// }
+///
+/// pub fn model_request(
+///   pool: client.ConnectionPool,
+///   prompt: String,
+/// ) -> client.ClientRequest {
+///   client.new()
+///   |> client.host("api.llm.example")
+///   |> client.path("/v1/chat")
+///   |> client.body(prompt)
+///   |> client.pool(pool)
+/// }
+///
+/// pub fn pool_limit(request: client.ClientRequest) -> Option(Int) {
+///   client.get_pool(request)
+///   |> option.map(client.get_pool_max_connections)
+/// }
+/// ```
+pub fn pool(
+  client_request: ClientRequest,
+  pool: ConnectionPool,
+) -> ClientRequest {
+  ClientRequest(..client_request, pool: option.Some(pool))
+}
+
 // ============================================================================
 // Transport Configuration
 // ============================================================================
@@ -1106,8 +1387,6 @@ pub opaque type TransportConfig {
     default_connect_timeout: Int,
     domain_lookup_timeout: Int,
     tls_handshake_timeout: Int,
-    retry: Int,
-    retry_timeout: Int,
     keepalive: Int,
     keepalive_tolerance: Int,
     max_concurrent_streams: Int,
@@ -1127,8 +1406,6 @@ pub opaque type TransportConfig {
 /// - default_connect_timeout: 15_000ms (TCP connection timeout)
 /// - domain_lookup_timeout: 5_000ms (DNS resolution timeout)
 /// - tls_handshake_timeout: 10_000ms (TLS negotiation timeout)
-/// - retry: 3 (reconnection attempts)
-/// - retry_timeout: 1_000ms (between retries)
 /// - keepalive: 30_000ms (HTTP/2 ping interval)
 /// - keepalive_tolerance: 3 (unack'd pings before disconnect)
 /// - max_concurrent_streams: 100 (HTTP/2 streams per connection)
@@ -1153,8 +1430,6 @@ pub opaque type TransportConfig {
 ///   |> client.default_connect_timeout(5000)
 ///   |> client.domain_lookup_timeout(2000)
 ///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
 ///   |> client.keepalive(10_000)
 ///   |> client.keepalive_tolerance(3)
 ///   |> client.max_concurrent_streams(200)
@@ -1171,8 +1446,6 @@ pub fn transport_config() -> TransportConfig {
     default_connect_timeout: 15_000,
     domain_lookup_timeout: 5000,
     tls_handshake_timeout: 10_000,
-    retry: 3,
-    retry_timeout: 1000,
     keepalive: 30_000,
     keepalive_tolerance: 3,
     max_concurrent_streams: 100,
@@ -1190,11 +1463,12 @@ pub fn transport_config() -> TransportConfig {
 /// host. With HTTP/2, a single connection supports multiplexed streams,
 /// so fewer connections are needed than with HTTP/1.1.
 ///
-/// Each request gets a connection that serves no other request. The pool
-/// opens a new connection only when every connection to the host is busy.
-/// When `count` connections are busy, a new request shares the connection
-/// with the fewest requests. On HTTP/1.1 it then waits until the responses
-/// before it are complete.
+/// An HTTP/1.1 connection carries one request at a time. An HTTP/2
+/// connection carries as many streams as the server allows with
+/// `SETTINGS_MAX_CONCURRENT_STREAMS`. The pool opens a new connection only
+/// when every connection to the host is full. When `count` connections are
+/// full, a new request waits for room up to its timeout, and then fails
+/// with `TimedOut`.
 ///
 /// ## Parameters
 ///
@@ -1271,8 +1545,6 @@ pub fn idle_timeout(config: TransportConfig, ms: Int) -> TransportConfig {
 ///   |> client.default_connect_timeout(5000)
 ///   |> client.domain_lookup_timeout(2000)
 ///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
 ///   |> client.keepalive(10_000)
 ///   |> client.keepalive_tolerance(3)
 ///   |> client.max_concurrent_streams(200)
@@ -1310,8 +1582,6 @@ pub fn default_connect_timeout(
 ///   |> client.default_connect_timeout(5000)
 ///   |> client.domain_lookup_timeout(2000)
 ///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
 ///   |> client.keepalive(10_000)
 ///   |> client.keepalive_tolerance(3)
 ///   |> client.max_concurrent_streams(200)
@@ -1349,8 +1619,6 @@ pub fn domain_lookup_timeout(
 ///   |> client.default_connect_timeout(5000)
 ///   |> client.domain_lookup_timeout(2000)
 ///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
 ///   |> client.keepalive(10_000)
 ///   |> client.keepalive_tolerance(3)
 ///   |> client.max_concurrent_streams(200)
@@ -1365,80 +1633,6 @@ pub fn tls_handshake_timeout(
   ms: Int,
 ) -> TransportConfig {
   TransportConfig(..config, tls_handshake_timeout: ms)
-}
-
-/// Set number of reconnection attempts
-///
-/// How many times gun will attempt to reconnect after a connection is lost.
-///
-/// ## Parameters
-///
-/// - `config`: The transport config to modify
-/// - `count`: Number of retry attempts (default: 3)
-///
-/// ## Example
-///
-/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
-///
-/// ```gleam
-/// import dream_http_client/client
-///
-/// pub fn tuned_transport() -> client.TransportConfig {
-///   client.transport_config()
-///   |> client.max_connections(100)
-///   |> client.idle_timeout(30_000)
-///   |> client.default_connect_timeout(5000)
-///   |> client.domain_lookup_timeout(2000)
-///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
-///   |> client.keepalive(10_000)
-///   |> client.keepalive_tolerance(3)
-///   |> client.max_concurrent_streams(200)
-///   |> client.initial_connection_window_size(1_048_576)
-///   |> client.initial_stream_window_size(262_144)
-///   |> client.closing_timeout(5000)
-///   |> client.default_certificate_authority_file("certs/ca.pem")
-/// }
-/// ```
-pub fn retry(config: TransportConfig, count: Int) -> TransportConfig {
-  TransportConfig(..config, retry: count)
-}
-
-/// Set delay between reconnection attempts in milliseconds
-///
-/// ## Parameters
-///
-/// - `config`: The transport config to modify
-/// - `ms`: Delay between retries in milliseconds (default: 1_000)
-///
-/// ## Example
-///
-/// ### Tune the transport <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_tuning.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
-///
-/// ```gleam
-/// import dream_http_client/client
-///
-/// pub fn tuned_transport() -> client.TransportConfig {
-///   client.transport_config()
-///   |> client.max_connections(100)
-///   |> client.idle_timeout(30_000)
-///   |> client.default_connect_timeout(5000)
-///   |> client.domain_lookup_timeout(2000)
-///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
-///   |> client.keepalive(10_000)
-///   |> client.keepalive_tolerance(3)
-///   |> client.max_concurrent_streams(200)
-///   |> client.initial_connection_window_size(1_048_576)
-///   |> client.initial_stream_window_size(262_144)
-///   |> client.closing_timeout(5000)
-///   |> client.default_certificate_authority_file("certs/ca.pem")
-/// }
-/// ```
-pub fn retry_timeout(config: TransportConfig, ms: Int) -> TransportConfig {
-  TransportConfig(..config, retry_timeout: ms)
 }
 
 /// Set HTTP/2 keepalive ping interval in milliseconds
@@ -1465,8 +1659,6 @@ pub fn retry_timeout(config: TransportConfig, ms: Int) -> TransportConfig {
 ///   |> client.default_connect_timeout(5000)
 ///   |> client.domain_lookup_timeout(2000)
 ///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
 ///   |> client.keepalive(10_000)
 ///   |> client.keepalive_tolerance(3)
 ///   |> client.max_concurrent_streams(200)
@@ -1504,8 +1696,6 @@ pub fn keepalive(config: TransportConfig, ms: Int) -> TransportConfig {
 ///   |> client.default_connect_timeout(5000)
 ///   |> client.domain_lookup_timeout(2000)
 ///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
 ///   |> client.keepalive(10_000)
 ///   |> client.keepalive_tolerance(3)
 ///   |> client.max_concurrent_streams(200)
@@ -1546,8 +1736,6 @@ pub fn keepalive_tolerance(
 ///   |> client.default_connect_timeout(5000)
 ///   |> client.domain_lookup_timeout(2000)
 ///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
 ///   |> client.keepalive(10_000)
 ///   |> client.keepalive_tolerance(3)
 ///   |> client.max_concurrent_streams(200)
@@ -1585,8 +1773,6 @@ pub fn max_concurrent_streams(
 ///   |> client.default_connect_timeout(5000)
 ///   |> client.domain_lookup_timeout(2000)
 ///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
 ///   |> client.keepalive(10_000)
 ///   |> client.keepalive_tolerance(3)
 ///   |> client.max_concurrent_streams(200)
@@ -1624,8 +1810,6 @@ pub fn initial_connection_window_size(
 ///   |> client.default_connect_timeout(5000)
 ///   |> client.domain_lookup_timeout(2000)
 ///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
 ///   |> client.keepalive(10_000)
 ///   |> client.keepalive_tolerance(3)
 ///   |> client.max_concurrent_streams(200)
@@ -1666,8 +1850,6 @@ pub fn initial_stream_window_size(
 ///   |> client.default_connect_timeout(5000)
 ///   |> client.domain_lookup_timeout(2000)
 ///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
 ///   |> client.keepalive(10_000)
 ///   |> client.keepalive_tolerance(3)
 ///   |> client.max_concurrent_streams(200)
@@ -1726,8 +1908,6 @@ pub fn log_level(config: TransportConfig, level: LogLevel) -> TransportConfig {
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -1762,8 +1942,6 @@ pub fn get_max_connections(config: TransportConfig) -> Int {
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -1798,8 +1976,6 @@ pub fn get_idle_timeout(config: TransportConfig) -> Int {
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -1834,8 +2010,6 @@ pub fn get_default_connect_timeout(config: TransportConfig) -> Int {
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -1870,8 +2044,6 @@ pub fn get_domain_lookup_timeout(config: TransportConfig) -> Int {
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -1887,78 +2059,6 @@ pub fn get_domain_lookup_timeout(config: TransportConfig) -> Int {
 /// ```
 pub fn get_tls_handshake_timeout(config: TransportConfig) -> Int {
   config.tls_handshake_timeout
-}
-
-/// Get the configured number of reconnection attempts
-///
-/// ## Example
-///
-/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
-///
-/// ```gleam
-/// import dream_http_client/client
-/// import gleam/option.{type Option}
-///
-/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
-///   [
-///     client.get_max_connections(config),
-///     client.get_idle_timeout(config),
-///     client.get_default_connect_timeout(config),
-///     client.get_domain_lookup_timeout(config),
-///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
-///     client.get_keepalive(config),
-///     client.get_keepalive_tolerance(config),
-///     client.get_max_concurrent_streams(config),
-///     client.get_initial_connection_window_size(config),
-///     client.get_initial_stream_window_size(config),
-///     client.get_closing_timeout(config),
-///   ]
-/// }
-///
-/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
-///   client.get_default_certificate_authority_file(config)
-/// }
-/// ```
-pub fn get_retry(config: TransportConfig) -> Int {
-  config.retry
-}
-
-/// Get the configured delay between reconnection attempts in milliseconds
-///
-/// ## Example
-///
-/// ### Read the transport settings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_getters.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
-///
-/// ```gleam
-/// import dream_http_client/client
-/// import gleam/option.{type Option}
-///
-/// pub fn pool_settings(config: client.TransportConfig) -> List(Int) {
-///   [
-///     client.get_max_connections(config),
-///     client.get_idle_timeout(config),
-///     client.get_default_connect_timeout(config),
-///     client.get_domain_lookup_timeout(config),
-///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
-///     client.get_keepalive(config),
-///     client.get_keepalive_tolerance(config),
-///     client.get_max_concurrent_streams(config),
-///     client.get_initial_connection_window_size(config),
-///     client.get_initial_stream_window_size(config),
-///     client.get_closing_timeout(config),
-///   ]
-/// }
-///
-/// pub fn trusted_file(config: client.TransportConfig) -> Option(String) {
-///   client.get_default_certificate_authority_file(config)
-/// }
-/// ```
-pub fn get_retry_timeout(config: TransportConfig) -> Int {
-  config.retry_timeout
 }
 
 /// Get the configured HTTP/2 keepalive ping interval in milliseconds
@@ -1978,8 +2078,6 @@ pub fn get_retry_timeout(config: TransportConfig) -> Int {
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -2014,8 +2112,6 @@ pub fn get_keepalive(config: TransportConfig) -> Int {
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -2050,8 +2146,6 @@ pub fn get_keepalive_tolerance(config: TransportConfig) -> Int {
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -2086,8 +2180,6 @@ pub fn get_max_concurrent_streams(config: TransportConfig) -> Int {
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -2122,8 +2214,6 @@ pub fn get_initial_connection_window_size(config: TransportConfig) -> Int {
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -2158,8 +2248,6 @@ pub fn get_initial_stream_window_size(config: TransportConfig) -> Int {
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -2198,8 +2286,6 @@ pub fn get_closing_timeout(config: TransportConfig) -> Int {
 ///   |> client.default_connect_timeout(5000)
 ///   |> client.domain_lookup_timeout(2000)
 ///   |> client.tls_handshake_timeout(5000)
-///   |> client.retry(1)
-///   |> client.retry_timeout(500)
 ///   |> client.keepalive(10_000)
 ///   |> client.keepalive_tolerance(3)
 ///   |> client.max_concurrent_streams(200)
@@ -2238,8 +2324,6 @@ pub fn default_certificate_authority_file(
 ///     client.get_default_connect_timeout(config),
 ///     client.get_domain_lookup_timeout(config),
 ///     client.get_tls_handshake_timeout(config),
-///     client.get_retry(config),
-///     client.get_retry_timeout(config),
 ///     client.get_keepalive(config),
 ///     client.get_keepalive_tolerance(config),
 ///     client.get_max_concurrent_streams(config),
@@ -2351,6 +2435,11 @@ pub fn on_stream_start(
 ///
 /// Sets a function to be called for each data chunk received from the stream.
 /// This is where you process the actual response data.
+///
+/// The client reads the next chunk from the server only after the callback
+/// returns (at most 16 chunks wait in memory). A slow callback slows the
+/// server down and does not fill memory. The request timeout measures the
+/// server, not the callback.
 ///
 /// ## Parameters
 ///
@@ -2674,7 +2763,8 @@ pub fn get_headers(client_request: ClientRequest) -> List(Header) {
 
 /// Get the body from a request
 ///
-/// Returns the request body as a string.
+/// Returns the request body as bytes. A body set with `body()` is the UTF-8
+/// bytes of its string.
 ///
 /// ## Example
 ///
@@ -2683,12 +2773,12 @@ pub fn get_headers(client_request: ClientRequest) -> List(Header) {
 /// ```gleam
 /// import dream_http_client/client
 ///
-/// pub fn request_body() -> String {
+/// pub fn request_body() -> BitArray {
 ///   let request = client.new() |> client.body("{\"name\": \"Alice\"}")
 ///   client.get_body(request)
 /// }
 /// ```
-pub fn get_body(client_request: ClientRequest) -> String {
+pub fn get_body(client_request: ClientRequest) -> BitArray {
   client_request.body
 }
 
@@ -2836,6 +2926,49 @@ pub fn get_certificate_authority_file(
   client_request: ClientRequest,
 ) -> Option(String) {
   client_request.certificate_authority_file
+}
+
+/// Get the connection pool of the request
+///
+/// ## Parameters
+///
+/// - `client_request`: The request to read
+///
+/// ## Returns
+///
+/// `Some(ConnectionPool)` when `pool()` set one, and `None` for a request
+/// that uses the default pool.
+///
+/// ## Example
+///
+/// ### Give the model calls their own pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_pool.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/client
+/// import gleam/option.{type Option}
+///
+/// pub fn model_pool() -> client.ConnectionPool {
+///   client.new_pool(max_connections: 3)
+/// }
+///
+/// pub fn model_request(
+///   pool: client.ConnectionPool,
+///   prompt: String,
+/// ) -> client.ClientRequest {
+///   client.new()
+///   |> client.host("api.llm.example")
+///   |> client.path("/v1/chat")
+///   |> client.body(prompt)
+///   |> client.pool(pool)
+/// }
+///
+/// pub fn pool_limit(request: client.ClientRequest) -> Option(Int) {
+///   client.get_pool(request)
+///   |> option.map(client.get_pool_max_connections)
+/// }
+/// ```
+pub fn get_pool(client_request: ClientRequest) -> Option(ConnectionPool) {
+  client_request.pool
 }
 
 /// Get the recorder from a request
@@ -3064,14 +3197,16 @@ pub opaque type StreamHandle {
 ///
 /// ## Example
 ///
-/// ### Send and handle errors <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/blocking_send.gleam#L5-L25"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Send and handle errors <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/blocking_send.gleam#L5-L30"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/client.{
-///   HttpResponse, RequestError, ResponseError, host, path, port, scheme, send,
+///   RequestError, ResponseError, host, path, port, scheme, send,
 ///   transport_error_to_string,
 /// }
 /// import gleam/http
+/// import gleam/int
+/// import gleam/result
 ///
 /// pub fn fetch_text() -> Result(String, String) {
 ///   let result =
@@ -3083,8 +3218,11 @@ pub opaque type StreamHandle {
 ///     |> send()
 ///
 ///   case result {
-///     Ok(HttpResponse(body: body, ..)) -> Ok(body)
-///     Error(ResponseError(response: response)) -> Error(response.body)
+///     Ok(response) ->
+///       client.body_text(response)
+///       |> result.replace_error("The body is not text")
+///     Error(ResponseError(response: response)) ->
+///       Error("HTTP error " <> int.to_string(response.status))
 ///     Error(RequestError(error: error)) -> Error(transport_error_to_string(error))
 ///   }
 /// }
@@ -3192,12 +3330,12 @@ fn send_client_request_via_gun(
 
 fn send_client_request_via_gun_with_meta(
   client_request: ClientRequest,
-) -> Result(#(Int, List(#(String, String)), String), TransportError) {
+) -> Result(#(Int, List(#(String, String)), BitArray), TransportError) {
   let http_request = to_http_request(client_request)
   let url = build_url(http_request)
   let method_atom = internal.atomize_method(http_request.method)
   let method_dynamic = atom.to_dynamic(method_atom)
-  let body = <<http_request.body:utf8>>
+  let body = http_request.body
   let timeout_value = resolve_timeout(client_request)
   let connect_timeout_value = resolve_connect_timeout(client_request)
   let auto_redirect_value = resolve_auto_redirect(client_request)
@@ -3213,18 +3351,7 @@ fn send_client_request_via_gun_with_meta(
     auto_redirect_value,
     connection_settings,
   )
-  // Response bodies are opaque bytes, not text: S3 objects, PDFs, images. On
-  // the BEAM a String IS a binary, so reinterpret the bytes without UTF-8
-  // validation — rejecting non-UTF8 here made every binary download fail
-  // with a transport error.
-  |> result.map(fn(response) {
-    let #(status, headers, response_body) = response
-    #(status, headers, unchecked_bits_to_string(response_body))
-  })
 }
-
-@external(erlang, "gleam_stdlib", "identity")
-fn unchecked_bits_to_string(bits: BitArray) -> String
 
 fn client_request_to_recorded_request(
   client_request: ClientRequest,
@@ -3274,6 +3401,7 @@ fn resolve_connection_settings(
   internal.ConnectionSettings(
     protocols: protocols,
     certificate_authority_file: request.certificate_authority_file,
+    pool: option.map(request.pool, fn(pool) { #(pool.id, pool.max_connections) }),
   )
 }
 
@@ -3308,12 +3436,22 @@ fn send_sync(
 /// both recording and playback:
 ///
 /// - **Record mode**: Streams from the real server and records chunks to disk,
-///   capturing timing information between chunks for realistic replay.
+///   capturing timing information between chunks for realistic replay. The
+///   recording has the status that the server sent. A stream that fails is
+///   not saved, because playback would show its first part as a whole
+///   response.
 /// - **Playback mode**: Yields recorded chunks from the fixture file. No network
 ///   calls are made.
 ///
 /// The same `StreamingResponse` fixture format is shared with `start_stream()`,
 /// so recordings made with either function can be played back by both.
+///
+/// ## Flow Control
+///
+/// The client reads the response from the server only as fast as you take
+/// chunks from the yielder. At most 16 chunks wait in memory. The rest of the
+/// response waits in the network, so a slow reader of a large response does
+/// not fill memory.
 ///
 /// ## Error Semantics
 ///
@@ -3444,7 +3582,7 @@ fn create_yielder_from_recorded_response(
       create_yielder_from_chunks(chunks)
     recording.BlockingResponse(_, _, body) -> {
       // Blocking response - return as single chunk
-      let chunk = bytes_tree.from_bit_array(<<body:utf8>>)
+      let chunk = bytes_tree.from_bit_array(body)
       yielder.single(Ok(chunk))
     }
   }
@@ -3484,7 +3622,7 @@ fn create_stream_yielder_from_client_request(
 fn stream_yielder_with_record_mode(
   client_request: ClientRequest,
   recorder_instance: recorder.Recorder,
-  http_request: request.Request(String),
+  http_request: request.Request(BitArray),
   timeout_value: Int,
   connect_timeout_value: Int,
   auto_redirect_value: Bool,
@@ -3503,6 +3641,7 @@ fn stream_yielder_with_record_mode(
           connection_settings: connection_settings,
           recorder: recorder_instance,
           recorded_request: recorded_request,
+          start_status: 0,
           start_headers: [],
           chunks: [],
           last_chunk_time: 0,
@@ -3521,7 +3660,7 @@ fn stream_yielder_with_record_mode(
 }
 
 fn create_plain_yielder(
-  http_request: request.Request(String),
+  http_request: request.Request(BitArray),
   timeout_value: Int,
   connect_timeout_value: Int,
   auto_redirect_value: Bool,
@@ -3558,7 +3697,7 @@ fn convert_chunk_to_result(
 type YielderState {
   YielderState(
     owner: Option(process.Pid),
-    http_req: request.Request(String),
+    http_req: request.Request(BitArray),
     timeout_ms: Int,
     connect_timeout_ms: Int,
     auto_redirect: Bool,
@@ -3569,13 +3708,14 @@ type YielderState {
 type RecordingYielderState {
   RecordingYielderState(
     owner: Option(process.Pid),
-    http_req: request.Request(String),
+    http_req: request.Request(BitArray),
     timeout_ms: Int,
     connect_timeout_ms: Int,
     auto_redirect: Bool,
     connection_settings: internal.ConnectionSettings,
     recorder: recorder.Recorder,
     recorded_request: recording.RecordedRequest,
+    start_status: Int,
     start_headers: List(#(String, String)),
     chunks: List(recording.Chunk),
     last_chunk_time: Int,
@@ -3591,7 +3731,7 @@ fn handle_yielder_unfold_with_deps(
   }
 }
 
-fn to_http_request(client_request: ClientRequest) -> request.Request(String) {
+fn to_http_request(client_request: ClientRequest) -> request.Request(BitArray) {
   request.Request(
     method: client_request.method,
     headers: headers_to_tuples(client_request.headers),
@@ -3615,7 +3755,7 @@ fn tuples_to_headers(tuples: List(#(String, String))) -> List(Header) {
 fn response_result(
   status: Int,
   headers: List(#(String, String)),
-  body: String,
+  body: BitArray,
 ) -> Result(HttpResponse, SendError) {
   let response =
     HttpResponse(
@@ -3703,16 +3843,10 @@ fn handle_recording_yielder_start(
       state.auto_redirect,
       state.connection_settings,
     )
-  let start_headers = case internal.fetch_start_headers(owner) {
-    Ok(headers) -> headers
-    Error(failure) -> {
-      io.println_error(
-        "Failed to fetch stream_start headers for recording: "
-        <> stream_failure_to_string(failure),
-      )
-      []
-    }
-  }
+  // A stream that did not start has no status. Its first event is Failed,
+  // and a failed stream is not saved.
+  let #(start_status, start_headers) =
+    internal.fetch_start_headers(owner) |> result.unwrap(#(0, []))
   let now = get_time_ms()
 
   case internal.fetch_next(owner) {
@@ -3723,6 +3857,7 @@ fn handle_recording_yielder_start(
         RecordingYielderState(
           ..state,
           owner: Some(owner),
+          start_status: start_status,
           start_headers: start_headers,
           chunks: [chunk],
           last_chunk_time: now,
@@ -3732,7 +3867,11 @@ fn handle_recording_yielder_start(
     internal.Done(_) -> {
       // Empty stream - save recording with no chunks
       save_streaming_recording(
-        RecordingYielderState(..state, start_headers: start_headers),
+        RecordingYielderState(
+          ..state,
+          start_status: start_status,
+          start_headers: start_headers,
+        ),
         [],
       )
       yielder.Done
@@ -3766,10 +3905,9 @@ fn handle_recording_yielder_next(
       save_streaming_recording(state, state.chunks)
       yielder.Done
     }
-    internal.Failed(failure) -> {
-      save_streaming_recording(state, state.chunks)
-      yielder.Next(Error(failure), state)
-    }
+    // A stream that failed is not complete, so it is not saved. Playback
+    // would show the part that arrived as a whole response.
+    internal.Failed(failure) -> yielder.Next(Error(failure), state)
   }
 }
 
@@ -3780,6 +3918,7 @@ fn save_streaming_recording(
   save_stream_recording(
     state.recorder,
     state.recorded_request,
+    state.start_status,
     state.start_headers,
     chunks,
   )
@@ -3790,18 +3929,10 @@ fn save_streaming_recording(
 fn save_stream_recording(
   recorder_instance: recorder.Recorder,
   recorded_request: recording.RecordedRequest,
+  status: Int,
   headers: List(#(String, String)),
   reversed_chunks: List(recording.Chunk),
 ) -> Nil {
-  // gun only streams body chunks for successful responses (200/206). We
-  // infer 206 if Content-Range is present; otherwise default to 200.
-  let status = case
-    list.any(headers, fn(h) { string.lowercase(h.0) == "content-range" })
-  {
-    True -> 206
-    False -> 200
-  }
-
   let response =
     recording.StreamingResponse(
       status: status,
@@ -3817,13 +3948,14 @@ fn save_stream_recording(
 
 // Starts the low-level HTTP stream via gun. A translator process sends the
 // stream to the calling process as `{http, TranslatorMessage}` messages.
-fn start_stream_messages(client_request: ClientRequest) -> Nil {
+// Returns the translator.
+fn start_stream_messages(client_request: ClientRequest) -> process.Pid {
   let http_request = to_http_request(client_request)
   internal.start_stream_messages(
     internal.atomize_method(http_request.method),
     build_url(http_request),
     http_request.headers,
-    <<http_request.body:utf8>>,
+    http_request.body,
     resolve_timeout(client_request),
     resolve_connect_timeout(client_request),
     resolve_auto_redirect(client_request),
@@ -3831,7 +3963,7 @@ fn start_stream_messages(client_request: ClientRequest) -> Nil {
   )
 }
 
-fn build_url(request: request.Request(String)) -> String {
+fn build_url(request: request.Request(BitArray)) -> String {
   let port_string = case request.port {
     option.Some(port) -> ":" <> int.to_string(port)
     option.None -> ""
@@ -3851,7 +3983,7 @@ fn build_url(request: request.Request(String)) -> String {
 // A message from the translator process of a stream. The Erlang shim builds
 // these values, for example `{translator_chunk, Data}`.
 type TranslatorMessage {
-  TranslatorStart(headers: List(Header))
+  TranslatorStart(status: Int, headers: List(Header))
   TranslatorChunk(data: BitArray)
   TranslatorEnd(headers: List(Header))
   TranslatorError(failure: StreamFailure)
@@ -3880,6 +4012,7 @@ type StreamRecording {
   StreamRecording(
     recorder: recorder.Recorder,
     recorded_request: recording.RecordedRequest,
+    status: Int,
     headers: List(#(String, String)),
     chunks: List(recording.Chunk),
     last_chunk_time: Option(Int),
@@ -4245,6 +4378,7 @@ fn new_stream_recording(
       Some(StreamRecording(
         recorder: recorder_instance,
         recorded_request: recorded_request,
+        status: 0,
         headers: [],
         chunks: [],
         last_chunk_time: None,
@@ -4260,8 +4394,8 @@ fn stream_live(
   stream_recording: Option(StreamRecording),
 ) -> Nil {
   let selector = select_translator_messages(stop_selector)
-  start_stream_messages(request)
-  process_stream_loop(selector, handlers, stream_recording)
+  let translator = start_stream_messages(request)
+  process_stream_loop(selector, translator, handlers, stream_recording)
 }
 
 /// Replay a recorded response through the stream handlers.
@@ -4279,7 +4413,7 @@ fn replay_recorded_stream(
     }
     recording.BlockingResponse(_, headers, body) -> {
       handlers.on_start(tuples_to_headers(headers))
-      handlers.on_chunk(<<body:utf8>>)
+      handlers.on_chunk(body)
       handlers.on_end([])
     }
   }
@@ -4290,21 +4424,27 @@ fn replay_recorded_stream(
 // ends with a TimedOut failure. A stream of stream_to() also stops when its
 // owner stops. The recording is updated before the handler runs, so a
 // recording is saved before the end of the stream is reported.
+//
+// The translator sends the next chunk only after `grant_next`, which this
+// loop calls when the chunk handler returned. A slow handler slows the
+// server down, and no chunks collect in the mailbox.
 fn process_stream_loop(
   selector: process.Selector(StreamProcessMessage),
+  translator: process.Pid,
   handlers: StreamHandlers,
   stream_recording: Option(StreamRecording),
 ) -> Nil {
   case process.selector_receive_forever(selector) {
-    FromTranslator(TranslatorStart(headers)) -> {
-      let updated = record_stream_start(stream_recording, headers)
+    FromTranslator(TranslatorStart(status, headers)) -> {
+      let updated = record_stream_start(stream_recording, status, headers)
       handlers.on_start(headers)
-      process_stream_loop(selector, handlers, updated)
+      process_stream_loop(selector, translator, handlers, updated)
     }
     FromTranslator(TranslatorChunk(data)) -> {
       let updated = record_stream_chunk(stream_recording, data)
       handlers.on_chunk(data)
-      process_stream_loop(selector, handlers, updated)
+      internal.grant_next(translator)
+      process_stream_loop(selector, translator, handlers, updated)
     }
     FromTranslator(TranslatorEnd(headers)) -> {
       record_stream_end(stream_recording, headers)
@@ -4320,10 +4460,15 @@ fn process_stream_loop(
 
 fn record_stream_start(
   stream_recording: Option(StreamRecording),
+  status: Int,
   headers: List(Header),
 ) -> Option(StreamRecording) {
   option.map(stream_recording, fn(state) {
-    StreamRecording(..state, headers: headers_to_tuples(headers))
+    StreamRecording(
+      ..state,
+      status: status,
+      headers: headers_to_tuples(headers),
+    )
   })
 }
 
@@ -4361,6 +4506,7 @@ fn record_stream_end(
       save_stream_recording(
         state.recorder,
         state.recorded_request,
+        state.status,
         recorded_end_headers(state.headers, trailers),
         state.chunks,
       )
@@ -4380,23 +4526,18 @@ fn recorded_end_headers(
   }
 }
 
+// A stream that failed is not complete, so it is not saved. Playback would
+// show the part that arrived as a whole response.
 fn record_stream_error(
   stream_recording: Option(StreamRecording),
   failure: StreamFailure,
 ) -> Nil {
   case stream_recording {
-    Some(state) -> {
+    Some(_state) ->
       io.println_error(
-        "HTTP stream error while recording a stream: "
+        "HTTP stream error while recording a stream, so the recording is not saved: "
         <> stream_failure_to_string(failure),
       )
-      save_stream_recording(
-        state.recorder,
-        state.recorded_request,
-        state.headers,
-        state.chunks,
-      )
-    }
     None -> Nil
   }
 }

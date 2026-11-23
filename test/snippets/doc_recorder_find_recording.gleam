@@ -21,7 +21,7 @@ pub fn look_up_text(mocks_directory: String) -> Result(String, String) {
       path: "/text",
       query: option.None,
       headers: [],
-      body: "",
+      body: <<>>,
     )
 
   case recorder.find_recording(rec, request) {

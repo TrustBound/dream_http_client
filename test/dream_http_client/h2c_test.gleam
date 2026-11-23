@@ -28,7 +28,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("h2c should route to /text")
       }),
       it("send to /json returns its body", fn() {
@@ -43,7 +43,7 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok(#(200, "{\"message\":\"Hello, World!\",\"success\":true}")),
+          Ok(#(200, <<"{\"message\":\"Hello, World!\",\"success\":true}">>)),
         )
         |> or_fail_with("h2c should route to /json")
       }),
@@ -84,10 +84,11 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok(#(
-            201,
-            "{\"method\":\"POST\",\"url\":\"/post\",\"data\":\"{\\\"key\\\":\\\"value\\\"}\"}",
-          )),
+          Ok(
+            #(201, <<
+              "{\"method\":\"POST\",\"url\":\"/post\",\"data\":\"{\\\"key\\\":\\\"value\\\"}\"}",
+            >>),
+          ),
         )
         |> or_fail_with("h2c POST should echo the body")
       }),
@@ -102,7 +103,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("h2c should decompress gzip")
       }),
       it("send returns the response headers", fn() {
@@ -146,9 +147,9 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal([
-          Ok(#(200, "Hello, World!")),
-          Ok(#(200, "Hello, World!")),
-          Ok(#(200, "Hello, World!")),
+          Ok(#(200, <<"Hello, World!">>)),
+          Ok(#(200, <<"Hello, World!">>)),
+          Ok(#(200, <<"Hello, World!">>)),
         ])
         |> or_fail_with("All three h2c sends should succeed")
       }),
@@ -165,7 +166,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("HTTP/1.1 should work after h2c")
       }),
     ]),
@@ -251,7 +252,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("Http1Only should return the body")
       }),
     ]),

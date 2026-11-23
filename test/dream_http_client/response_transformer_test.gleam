@@ -19,7 +19,7 @@ pub fn tests() -> TestSuite(Nil) {
           response: recording.BlockingResponse(
             status: 200,
             headers: [#("set-cookie", "secret_cookie=abc123")],
-            body: "SECRET_BODY",
+            body: <<"SECRET_BODY">>,
           ),
         )
       let assert Ok(rec) =
@@ -44,7 +44,7 @@ pub fn tests() -> TestSuite(Nil) {
             response: recording.BlockingResponse(
               status: 200,
               headers: [],
-              body: "",
+              body: <<>>,
             ),
           ),
         ]),

@@ -9,7 +9,7 @@ for high-concurrency workloads. `stream_to()` sends typed stream messages to a
 `auto_redirect`, `protocols`, `certificate_authority_file`) are added to the
 `ClientRequest` builder. `protocols()` enables h2c (HTTP/2 over cleartext) and
 per-request protocol preference. Connection pool settings are managed through a
-redesigned `TransportConfig` type with 13 gun-native fields plus `log_level`
+redesigned `TransportConfig` type with 11 gun-native fields plus `log_level`
 for controlling log verbosity. All defaults are production-reasonable.
 
 This release was first prepared as 5.2.0 and never published. It changes four
@@ -92,6 +92,10 @@ pub fn explain_failure(failure: StreamFailure) -> String {
 | `on_stream_error(fn(String) -> Nil)` | `on_stream_error(fn(StreamFailure) -> Nil)` |
 | `stream_yielder() -> Yielder(Result(BytesTree, String))` | `stream_yielder() -> Yielder(Result(BytesTree, StreamFailure))` |
 | `StreamMessage.DecodeError` | Removed |
+| `HttpResponse.body: String` | `HttpResponse.body: BitArray` (use `client.body_text(response)` for text) |
+| `recording.BlockingResponse.body: String` | `recording.BlockingResponse.body: BitArray` |
+| `recording.RecordedRequest.body: String` | `recording.RecordedRequest.body: BitArray` |
+| `client.get_body() -> String` | `client.get_body() -> BitArray` |
 
 ### Migration guide
 
@@ -240,9 +244,10 @@ The HTTP client backend has been replaced from Erlang's `httpc` to
 - **HTTP/2 support** — native multiplexing over a single TCP connection
   when connecting to HTTP/2-capable servers
 - **Connection pooling** — managed by a new `dream_http_conn_manager`
-  gen_server with per-host multi-connection pools. A request gets a
-  connection that serves no other request, and automatic dead-connection
-  cleanup removes connections that stopped
+  gen_server with per-host multi-connection pools. An HTTP/1.1 connection
+  carries one request at a time, an HTTP/2 connection carries as many
+  streams as the server allows, and automatic dead-connection cleanup
+  removes connections that stopped
 - **Stale connection retry** — requests that hit a server-closed connection
   are automatically retried once on a fresh connection
 - **Protocol negotiation** — TLS connections negotiate HTTP/2 via ALPN,
@@ -262,7 +267,7 @@ request/response cycle.
 #### Set a connection timeout <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_connect_timeout.gleam#L5-L14"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
-pub fn fetch_with_connect_timeout() -> Result(String, client.SendError) {
+pub fn fetch_with_connect_timeout() -> Result(BitArray, client.SendError) {
   client.new()
   |> client.scheme(http.Http)
   |> client.host("localhost")
@@ -339,7 +344,7 @@ pub fn internal_request() -> client.ClientRequest {
 
 ## Feature: Global transport configuration
 
-`TransportConfig` is redesigned with 13 gun-native fields for full
+`TransportConfig` is redesigned with 11 gun-native fields for full
 connection pool control.
 
 #### Configure the transport for many requests <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/transport_config_example.gleam#L7-L13"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
@@ -363,8 +368,6 @@ pub fn configure_high_concurrency() -> Nil {
 | `default_connect_timeout(ms)` | 15000 | TCP connect timeout |
 | `domain_lookup_timeout(ms)` | 5000 | DNS resolution timeout |
 | `tls_handshake_timeout(ms)` | 10000 | TLS negotiation timeout |
-| `retry(count)` | 3 | Connection retry attempts |
-| `retry_timeout(ms)` | 1000 | Delay between retries |
 | `keepalive(ms)` | 30000 | HTTP/2 PING interval |
 | `keepalive_tolerance(count)` | 3 | Missed PINGs before close |
 | `max_concurrent_streams(count)` | 100 | HTTP/2 streams per connection |
@@ -382,13 +385,109 @@ The connection pool is managed by `dream_http_conn_manager`, a gen_server
 supervised by `dream_http_client_sup`. It uses an ETS `bag` table
 (`dream_http_client_connections`) for per-host multi-connection pooling with:
 
-- A free connection for each request: the pool opens a new connection only
-  when every connection is busy, and shares a busy connection only at
-  `max_connections` (the one with the fewest requests)
+- Room for each request: one request at a time on an HTTP/1.1 connection,
+  and up to the server's `SETTINGS_MAX_CONCURRENT_STREAMS` on an HTTP/2
+  connection. The pool waits for the server's first SETTINGS frame before it
+  uses a new HTTP/2 connection.
+- A new connection only when every connection is full. At
+  `max_connections`, a request waits for room up to its timeout.
+- One more try on another connection for a refused stream
+  (`REFUSED_STREAM` or `too_many_streams`) and after a GOAWAY. Streams that
+  the server kept after a GOAWAY finish.
 - Proactive dead-connection cleanup
 - Idle connection reaping, which never closes a connection that serves a
   response
 - Crash recovery (re-monitors connections on gen_server restart)
+
+Streams have flow control. The client reads a streamed response from the
+server only as fast as the caller takes chunks from `stream_yielder`, or as
+fast as the `on_stream_chunk` callback returns. At most 16 chunks wait in
+memory, and the rest of the response waits in the network.
+
+A recorded stream has the status that the server sent, and a stream that
+fails is not saved as a recording.
+
+---
+
+## Feature: Response bodies are bytes
+
+`HttpResponse.body` is a `BitArray`: the exact bytes the server sent. Before,
+it was a `String`, and a body that was not UTF-8 (an image, a PDF, text in
+another encoding) was a `String` that was not valid text. On streams, the
+body of an error response was read as Latin-1, and its bytes were lost.
+
+`client.body_text(response)` returns `Ok(text)` for a UTF-8 body and
+`Error(Nil)` for any other body.
+
+### Read the body as text <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_body_text.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```gleam
+import dream_http_client/client
+
+pub fn text_of(response: client.HttpResponse) -> String {
+  case client.body_text(response) {
+    Ok(text) -> text
+    Error(Nil) -> "The body is not text"
+  }
+}
+```
+
+A request body is bytes too. `client.body(String)` sets a text body, as
+before. `client.body_bits(BitArray)` sets a body that is not text.
+
+### Upload a file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_body_bits.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```gleam
+import dream_http_client/client
+import gleam/http
+
+pub fn upload_request(file: BitArray) -> client.ClientRequest {
+  client.new()
+  |> client.method(http.Put)
+  |> client.host("files.example.com")
+  |> client.path("/reports/2026.pdf")
+  |> client.add_header("Content-Type", "application/pdf")
+  |> client.body_bits(file)
+}
+```
+
+---
+
+## Feature: A connection pool of its own
+
+`client.new_pool(max_connections:)` makes a connection pool. Make it one
+time and keep the value. `client.pool(request, pool)` sends a request
+through it. Requests share connections only with requests that have the
+same pool, and the pool opens at most `max_connections` connections to each
+host. When the pool is full, a request waits for room up to its timeout, and
+then fails with `TimedOut`. Requests with no pool use the default pool.
+
+### Give the model calls their own pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_pool.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```gleam
+import dream_http_client/client
+import gleam/option.{type Option}
+
+pub fn model_pool() -> client.ConnectionPool {
+  client.new_pool(max_connections: 3)
+}
+
+pub fn model_request(
+  pool: client.ConnectionPool,
+  prompt: String,
+) -> client.ClientRequest {
+  client.new()
+  |> client.host("api.llm.example")
+  |> client.path("/v1/chat")
+  |> client.body(prompt)
+  |> client.pool(pool)
+}
+
+pub fn pool_limit(request: client.ClientRequest) -> Option(Int) {
+  client.get_pool(request)
+  |> option.map(client.get_pool_max_connections)
+}
+```
 
 ---
 
@@ -525,12 +624,12 @@ with proper method/body handling for 301/302/303/307/308.
 
 ## Test coverage
 
-518 tests, 0 failed, 100% line coverage, in about 170 seconds (with the mock
+568 tests, 0 failed, 100% line coverage, in about 85 seconds (with the mock
 server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1,
 OTP 29, Gleam 1.19.2.
 
 The tests cover:
-- All 13 `TransportConfig` builder/getter round-trips
+- All 11 `TransportConfig` builder/getter round-trips
 - Default values, edge cases (zero/one values), builder chaining
 - `configure_transport` application
 - Concurrent streaming scenarios with connection pool management
@@ -551,7 +650,7 @@ The tests cover:
   pool gen_server
 - `src/dream_http_client/dream_httpc_shim.erl` — Deleted
 - `src/dream_http_client/client.gleam` — Structured error types, `stream_to`,
-  per-request settings, redesigned `TransportConfig` with 13 gun-native fields
+  per-request settings, redesigned `TransportConfig` with 11 gun-native fields
 - `src/dream_http_client/internal.gleam` — Updated external function
   references from `dream_httpc_shim` to `dream_http_shim`
 - `src/dream_http_client/dream_http_client_app.erl` — Added
@@ -577,8 +676,9 @@ Then run:
 gleam deps download
 ```
 
-Error types have changed (see Structured Error Types above), and
-`StreamMessage.DecodeError` is removed. The HTTP backend has been swapped from
+Error types have changed (see Structured Error Types above),
+`StreamMessage.DecodeError` is removed, and `HttpResponse.body` is a
+`BitArray` (read text with `client.body_text(response)`). The HTTP backend has been swapped from
 `httpc` to `gun`. Use the migration guide above to update error handling code.
 
 ## Documentation

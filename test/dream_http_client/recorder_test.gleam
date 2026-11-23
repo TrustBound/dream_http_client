@@ -9,6 +9,7 @@ import dream_test/unit.{describe, group, it}
 import fixtures/recorded
 import fixtures/temp_directory
 import fixtures/transformers
+import gleam/bit_array
 import gleam/option.{None, Some}
 import gleam/result
 import simplifile
@@ -335,6 +336,43 @@ pub fn tests() -> TestSuite(Nil) {
         ))
         |> or_fail_with("Different responses for one key should be an error")
       }),
+      it("returns an error when one key has different binary responses", fn() {
+        // Arrange
+        let path = temp_directory.path("recorder_find_ambiguous_binary")
+        let assert Ok(writer) =
+          recorder.new() |> directory(path) |> mode("record") |> start()
+        recorder.add_recording(
+          writer,
+          recording.Recording(
+            ..recorded.text_recording(),
+            response: recording.BlockingResponse(200, [], <<255, 0>>),
+          ),
+        )
+        recorder.add_recording(
+          writer,
+          recording.Recording(
+            ..recorded.text_recording(),
+            response: recording.BlockingResponse(200, [], <<255, 1>>),
+          ),
+        )
+        let assert Ok(Nil) = recorder.stop(writer)
+        let assert Ok(rec) =
+          recorder.new() |> directory(path) |> mode("playback") |> start()
+
+        // Act
+        let found = recorder.find_recording(rec, recorded.text_request())
+        let assert Ok(Nil) = recorder.stop(rec)
+
+        // Assert
+        found
+        |> should
+        |> be_equal(Error(
+          "Ambiguous recording match for key: GEThttp://localhost:9876/text (2 recordings)",
+        ))
+        |> or_fail_with(
+          "Different binary bodies for one key should be an error",
+        )
+      }),
       it("returns an error when one key has two streaming responses", fn() {
         // Arrange
         let path = temp_directory.path("recorder_find_ambiguous_stream")
@@ -458,7 +496,7 @@ pub fn tests() -> TestSuite(Nil) {
           recorder.new()
           |> directory(path)
           |> mode("playback")
-          |> key(fn(request) { request.body })
+          |> key(fn(request) { bit_array.base64_encode(request.body, True) })
           |> request_transformer(transformers.scrub_auth_and_body)
           |> start()
 
@@ -492,7 +530,7 @@ pub fn tests() -> TestSuite(Nil) {
           recording.BlockingResponse(
             status: 200,
             headers: [#("set-cookie", "a=b"), #("Content-Type", "text/plain")],
-            body: "secret data",
+            body: <<"secret data">>,
           )
 
         // Act
@@ -503,11 +541,13 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         transformed
         |> should
-        |> be_equal(recording.BlockingResponse(
-          status: 200,
-          headers: [#("Content-Type", "text/plain")],
-          body: "",
-        ))
+        |> be_equal(
+          recording.BlockingResponse(
+            status: 200,
+            headers: [#("Content-Type", "text/plain")],
+            body: <<>>,
+          ),
+        )
         |> or_fail_with("The transformer should scrub the response")
       }),
       it("returns the response unchanged with no transformer", fn() {

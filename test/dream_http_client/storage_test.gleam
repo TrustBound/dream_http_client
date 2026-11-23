@@ -46,7 +46,7 @@ pub fn tests() -> TestSuite(Nil) {
               response: recording.BlockingResponse(
                 status: 200,
                 headers: [#("Content-Type", "text/plain")],
-                body: "Recorded text from the fixture",
+                body: <<"Recorded text from the fixture">>,
               ),
             ),
           ]),

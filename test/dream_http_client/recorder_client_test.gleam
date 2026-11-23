@@ -70,7 +70,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "RECORDED")))
+        |> be_equal(Ok(#(200, <<"RECORDED">>)))
         |> or_fail_with("Playback should return the recording, not the server")
       }),
       it("returns a recorded error status as a ResponseError", fn() {
@@ -87,7 +87,7 @@ pub fn tests() -> TestSuite(Nil) {
               response: recording.BlockingResponse(
                 status: 404,
                 headers: [#("x-recorded", "yes")],
-                body: "MODIFIED_CONTENT",
+                body: <<"MODIFIED_CONTENT">>,
               ),
             ),
             "k",
@@ -113,11 +113,13 @@ pub fn tests() -> TestSuite(Nil) {
         |> should
         |> be_equal(
           Error(
-            Ok(client.HttpResponse(
-              status: 404,
-              headers: [client.Header("x-recorded", "yes")],
-              body: "MODIFIED_CONTENT",
-            )),
+            Ok(
+              client.HttpResponse(
+                status: 404,
+                headers: [client.Header("x-recorded", "yes")],
+                body: <<"MODIFIED_CONTENT">>,
+              ),
+            ),
           ),
         )
         |> or_fail_with(
@@ -135,7 +137,7 @@ pub fn tests() -> TestSuite(Nil) {
               response: recording.BlockingResponse(
                 status: 201,
                 headers: [#("x-recorded", "yes")],
-                body: "made",
+                body: <<"made">>,
               ),
             ),
             "k",
@@ -152,11 +154,13 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok(client.HttpResponse(
-            status: 201,
-            headers: [client.Header("x-recorded", "yes")],
-            body: "made",
-          )),
+          Ok(
+            client.HttpResponse(
+              status: 201,
+              headers: [client.Header("x-recorded", "yes")],
+              body: <<"made">>,
+            ),
+          ),
         )
         |> or_fail_with(
           "The recorded status, headers and body should come back",
@@ -257,7 +261,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("Passthrough should reach the server")
       }),
       it("sends a real request when playback has no recording", fn() {
@@ -279,7 +283,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("A miss should reach the server")
       }),
       it("returns the transport error with a recorder", fn() {
@@ -326,7 +330,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Error(Ok(#(418, "{\"status\":418}"))))
+        |> be_equal(Error(Ok(#(418, <<"{\"status\":418}">>))))
         |> or_fail_with("Record mode should return the real 418")
       }),
       it("saves the status and body in record mode", fn() {
@@ -350,7 +354,7 @@ pub fn tests() -> TestSuite(Nil) {
                 )
                 recording.StreamingResponse(status, _headers, _chunks) -> #(
                   status,
-                  "",
+                  <<>>,
                 )
               }
             }),
@@ -359,7 +363,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok([#(418, "{\"status\":418}")]))
+        |> be_equal(Ok([#(418, <<"{\"status\":418}">>)]))
         |> or_fail_with("The 418 should be saved")
       }),
       it("saves the response headers in record mode", fn() {
@@ -414,8 +418,9 @@ pub fn tests() -> TestSuite(Nil) {
             list.map(_, fn(entry) {
               case entry.response {
                 recording.BlockingResponse(_status, _headers, body) -> body
-                recording.StreamingResponse(_status, _headers, _chunks) ->
-                  "stream"
+                recording.StreamingResponse(_status, _headers, _chunks) -> <<
+                  "stream",
+                >>
               }
             }),
           )
@@ -424,7 +429,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(#(Ok(#(200, "Hello, World!")), Ok([""])))
+        |> be_equal(#(Ok(#(200, <<"Hello, World!">>)), Ok([<<>>])))
         |> or_fail_with(
           "The caller should get the real body and the file the scrubbed one",
         )
@@ -463,7 +468,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("The scrubbed recording should still match")
       }),
       it("plays back the committed fixture", fn() {
@@ -485,7 +490,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         value
         |> should
-        |> be_equal(Ok(#(200, "FIXTURE_RESPONSE_NO_NETWORK")))
+        |> be_equal(Ok(#(200, <<"FIXTURE_RESPONSE_NO_NETWORK">>)))
         |> or_fail_with("The fixture should come back, not the server")
       }),
     ]),
@@ -843,10 +848,11 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok(#(
-            200,
-            "{\"method\":\"GET\",\"url\":\"/get\",\"query\":\"page=1&limit=10\",\"headers\":[]}",
-          )),
+          Ok(
+            #(200, <<
+              "{\"method\":\"GET\",\"url\":\"/get\",\"query\":\"page=1&limit=10\",\"headers\":[]}",
+            >>),
+          ),
         )
         |> or_fail_with("The server should get the query")
       }),
@@ -862,10 +868,11 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok(#(
-            200,
-            "{\"method\":\"GET\",\"url\":\"/get\",\"query\":\"\",\"headers\":[]}",
-          )),
+          Ok(
+            #(200, <<
+              "{\"method\":\"GET\",\"url\":\"/get\",\"query\":\"\",\"headers\":[]}",
+            >>),
+          ),
         )
         |> or_fail_with("The server should get no query")
       }),
@@ -883,10 +890,11 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok(#(
-            200,
-            "{\"method\":\"GET\",\"url\":\"/get\",\"query\":\"name=hello%20world&tag=a%26b&eq=1%3D1\",\"headers\":[]}",
-          )),
+          Ok(
+            #(200, <<
+              "{\"method\":\"GET\",\"url\":\"/get\",\"query\":\"name=hello%20world&tag=a%26b&eq=1%3D1\",\"headers\":[]}",
+            >>),
+          ),
         )
         |> or_fail_with("The query should not be encoded twice")
       }),
@@ -902,10 +910,11 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok(#(
-            200,
-            "{\"method\":\"GET\",\"url\":\"/get\",\"query\":\"\",\"headers\":[]}",
-          )),
+          Ok(
+            #(200, <<
+              "{\"method\":\"GET\",\"url\":\"/get\",\"query\":\"\",\"headers\":[]}",
+            >>),
+          ),
         )
         |> or_fail_with("An empty query should arrive empty")
       }),
@@ -1003,10 +1012,11 @@ pub fn tests() -> TestSuite(Nil) {
         value
         |> should
         |> be_equal(
-          Ok(#(
-            200,
-            "{\"method\":\"GET\",\"url\":\"/get\",\"query\":\"id=42\",\"headers\":[]}",
-          )),
+          Ok(
+            #(200, <<
+              "{\"method\":\"GET\",\"url\":\"/get\",\"query\":\"id=42\",\"headers\":[]}",
+            >>),
+          ),
         )
         |> or_fail_with("Playback should match the query")
       }),

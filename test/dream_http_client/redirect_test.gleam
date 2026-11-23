@@ -31,7 +31,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         response
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("A 301 should be followed to /text")
       }),
       it("follows a 302 to /text", fn() {
@@ -45,7 +45,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         response
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("A 302 should be followed to /text")
       }),
       it("follows a 303 to /text", fn() {
@@ -59,7 +59,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         response
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("A 303 should be followed to /text")
       }),
       it("follows a 307 to /text", fn() {
@@ -73,7 +73,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         response
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("A 307 should be followed to /text")
       }),
       it("follows a 308 to /text", fn() {
@@ -87,7 +87,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         response
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("A 308 should be followed to /text")
       }),
       it("returns the 3xx response when auto_redirect is False", fn() {
@@ -125,7 +125,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         response
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("Both redirects should be followed")
       }),
       it("follows an absolute Location URL", fn() {
@@ -139,7 +139,7 @@ pub fn tests() -> TestSuite(Nil) {
         // Assert
         response
         |> should
-        |> be_equal(Ok(#(200, "Hello, World!")))
+        |> be_equal(Ok(#(200, <<"Hello, World!">>)))
         |> or_fail_with("An absolute Location should be followed")
       }),
     ]),

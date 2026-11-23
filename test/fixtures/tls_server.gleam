@@ -6,6 +6,7 @@ import dream/http/response as dream_response
 import dream/router
 import dream/servers/mist/server
 import dream_http_client/client
+import gleam/erlang/process
 import gleam/http
 import gleam/int
 
@@ -19,7 +20,8 @@ pub type Certificates {
 }
 
 /// Start a TLS server on `port` that answers `GET /tls` with
-/// `hello over tls`, run `body`, stop the server, and return what `body`
+/// `hello over tls`, and `GET /tls/slow` with the same text after 300 ms,
+/// run `body`, stop the server, and return what `body`
 /// returned. Each port gets its own certificates, so one test never reuses
 /// the server or the pooled connection of another test.
 pub fn with(port: Int, body: fn(Certificates) -> a) -> a {
@@ -33,6 +35,12 @@ pub fn with(port: Int, body: fn(Certificates) -> a) -> a {
         method: dream_request.Get,
         path: "/tls",
         controller: hello,
+        middleware: [],
+      )
+      |> router.route(
+        method: dream_request.Get,
+        path: "/tls/slow",
+        controller: slow_hello,
         middleware: [],
       ),
     )
@@ -68,6 +76,11 @@ pub fn request(port: Int) -> client.ClientRequest {
 }
 
 fn hello(_request, _context, _services) {
+  dream_response.text_response(200, "hello over tls")
+}
+
+fn slow_hello(_request, _context, _services) {
+  process.sleep(300)
   dream_response.text_response(200, "hello over tls")
 }
 

@@ -4,7 +4,7 @@ import gleam/http
 import gleam/result
 import gleam/string
 
-pub fn record_call(mocks_directory: String) -> Result(String, String) {
+pub fn record_call(mocks_directory: String) -> Result(BitArray, String) {
   use rec <- result.try(
     recorder.new()
     |> directory(mocks_directory)

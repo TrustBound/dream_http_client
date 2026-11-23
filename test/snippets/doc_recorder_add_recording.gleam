@@ -24,9 +24,11 @@ pub fn add_by_hand(mocks_directory: String) -> Result(Int, String) {
         path: "/users",
         query: option.None,
         headers: [],
-        body: "",
+        body: <<>>,
       ),
-      response: recording.BlockingResponse(status: 200, headers: [], body: "[]"),
+      response: recording.BlockingResponse(status: 200, headers: [], body: <<
+        "[]",
+      >>),
     )
   recorder.add_recording(rec, manual_recording)
   list.length(recorder.get_recordings(rec))

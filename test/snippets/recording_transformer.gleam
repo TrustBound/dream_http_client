@@ -34,7 +34,7 @@ pub fn scrub_auth_and_body(
     path: path,
     query: query,
     headers: scrubbed_headers,
-    body: "",
+    body: <<>>,
   )
 }
 

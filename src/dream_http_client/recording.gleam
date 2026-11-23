@@ -48,7 +48,7 @@ import gleam/string
 ///     path: "/users/123",
 ///     query: option.Some("fields=name,email"),
 ///     headers: [#("Authorization", "Bearer token123")],
-///     body: "",
+///     body: <<>>,
 ///   )
 /// }
 /// ```
@@ -61,7 +61,7 @@ pub type RecordedRequest {
     path: String,
     query: option.Option(String),
     headers: List(#(String, String)),
-    body: String,
+    body: BitArray,
   )
 }
 
@@ -86,7 +86,7 @@ pub type RecordedRequest {
 ///   recording.BlockingResponse(
 ///     status: 200,
 ///     headers: [#("Content-Type", "application/json")],
-///     body: "{\"users\": []}",
+///     body: <<"{\"users\": []}">>,
 ///   )
 /// }
 ///
@@ -102,7 +102,11 @@ pub type RecordedRequest {
 /// }
 /// ```
 pub type RecordedResponse {
-  BlockingResponse(status: Int, headers: List(#(String, String)), body: String)
+  BlockingResponse(
+    status: Int,
+    headers: List(#(String, String)),
+    body: BitArray,
+  )
   StreamingResponse(
     status: Int,
     headers: List(#(String, String)),
@@ -304,22 +308,18 @@ fn encode_recorded_response(resp: RecordedResponse) -> json.Json {
   }
 }
 
-/// Encode a request/response body for JSON storage.
+/// Encode a request or response body for JSON storage.
 ///
-/// JSON strings can only carry UTF-8 (gleam/json raises `invalid_byte`
-/// on anything else), but recorded bodies may hold raw binary — S3
-/// objects, PDFs, images. Valid UTF-8 bodies are stored verbatim so
-/// existing fixtures stay byte-identical and reviewable; binary bodies
-/// are base64-encoded and tagged with `"body_encoding": "base64"` so
-/// the decoder can restore the exact bytes.
-fn encode_body_fields(body: String) -> List(#(String, json.Json)) {
-  case bit_array.to_string(bit_array.from_string(body)) {
-    Ok(_) -> [#("body", json.string(body))]
-    Error(_) -> [
-      #(
-        "body",
-        json.string(bit_array.base64_encode(bit_array.from_string(body), True)),
-      ),
+/// JSON strings can only carry UTF-8, but a body can be any bytes:
+/// S3 objects, PDFs, images. A body that is valid UTF-8 is stored as text,
+/// so fixtures stay easy to read. Any other body is base64-encoded and
+/// tagged with `"body_encoding": "base64"`, so the decoder restores the
+/// exact bytes.
+fn encode_body_fields(body: BitArray) -> List(#(String, json.Json)) {
+  case bit_array.to_string(body) {
+    Ok(text) -> [#("body", json.string(text))]
+    Error(Nil) -> [
+      #("body", json.string(bit_array.base64_encode(body, True))),
       #("body_encoding", json.string("base64")),
     ]
   }
@@ -578,33 +578,26 @@ fn decode_blocking_response_decoder(
   ))
 }
 
-/// Restore a stored body to its original bytes. `"base64"`-tagged
-/// bodies decode back to the exact recorded binary; everything else
-/// (including fixtures written before the tag existed) is verbatim
-/// UTF-8. A corrupt base64 payload falls back to the stored string
-/// with a logged error, matching this module's lenient decode style.
-fn decode_stored_body(stored: String, encoding: String) -> String {
+/// Restore a stored request or response body to its original bytes. A body tagged
+/// `"base64"` decodes to the exact recorded bytes. Any other body
+/// (including fixtures written before the tag existed) is UTF-8 text. A
+/// base64 body that cannot be decoded is an error in the fixture: the
+/// stored text is used, and the error is logged.
+fn decode_stored_body(stored: String, encoding: String) -> BitArray {
   case encoding {
     "base64" ->
       case bit_array.base64_decode(stored) {
-        Ok(bits) -> unchecked_bits_to_string(bits)
+        Ok(bits) -> bits
         Error(_) -> {
           io.println_error(
             "Recording body tagged base64 failed to decode; using raw value",
           )
-          stored
+          bit_array.from_string(stored)
         }
       }
-    _ -> stored
+    _ -> bit_array.from_string(stored)
   }
 }
-
-/// Reinterpret raw bytes as a String without UTF-8 validation. On the
-/// BEAM a String IS a binary; recorded bodies must round-trip
-/// byte-exact even when they are not valid UTF-8 (PDFs, images), which
-/// `bit_array.to_string` would reject.
-@external(erlang, "gleam_stdlib", "identity")
-fn unchecked_bits_to_string(bits: BitArray) -> String
 
 fn decode_streaming_response_decoder(
   status: Int,

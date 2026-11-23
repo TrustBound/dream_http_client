@@ -12,7 +12,7 @@ pub fn scrub_auth_and_body(
     headers: list.filter(request.headers, fn(header) {
       header.0 != "Authorization"
     }),
-    body: "",
+    body: <<>>,
   )
 }
 
@@ -27,7 +27,7 @@ pub fn scrub_cookies_and_body(
       recording.BlockingResponse(
         status: status,
         headers: without_set_cookie(headers),
-        body: "",
+        body: <<>>,
       )
     recording.StreamingResponse(status, headers, chunks) ->
       recording.StreamingResponse(
