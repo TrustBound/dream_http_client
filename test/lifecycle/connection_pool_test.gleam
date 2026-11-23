@@ -11,7 +11,7 @@ import dream_http_client/client.{
   ConnectFailed, Http2Only, RequestError, TimedOut,
 }
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/application.{
   connection_count, restart_application, restart_connection_manager,
@@ -25,7 +25,7 @@ import gleam/list
 import gleam/result
 import gleam/yielder
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("connection pool", [
     group("free connections", [
       it("uses one connection for requests sent one after another", fn() {

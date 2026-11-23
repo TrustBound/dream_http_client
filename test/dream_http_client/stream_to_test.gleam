@@ -6,7 +6,7 @@ import dream_http_client/recorder.{directory, mode, start}
 import dream_http_client/recording
 import dream_http_client/storage
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/edge_server
 import fixtures/mailbox
@@ -19,7 +19,7 @@ import gleam/erlang/process
 import gleam/list
 import gleam/result
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("client.stream_to", [
     group("a normal stream", [
       it("sends StreamStart, the Chunk and StreamEnd with exact values", fn() {

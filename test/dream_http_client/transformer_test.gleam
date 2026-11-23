@@ -5,14 +5,14 @@ import dream_http_client/recorder.{
 import dream_http_client/recording
 import dream_http_client/storage
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
 import fixtures/recorded
 import fixtures/temp_directory
 import fixtures/transformers
 import gleam/option
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("recorder.request_transformer", [
     it("changes the request before the recorder saves it", fn() {
       // Arrange

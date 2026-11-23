@@ -2,7 +2,7 @@
 
 import dream_http_client/client.{Header, Http1Only, Http2Only}
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/mailbox
 import fixtures/mock_server
@@ -14,7 +14,7 @@ import gleam/result
 import gleam/string
 import gleam/yielder
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("h2c", [
     group("client.send", [
       it("send to /text returns its body", fn() {

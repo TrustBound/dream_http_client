@@ -7,7 +7,7 @@ import dream_http_client/recorder.{directory, mode, start}
 import dream_http_client/recording
 import dream_http_client/storage
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/mock_server
 import fixtures/recorded
@@ -20,7 +20,7 @@ import gleam/list
 import gleam/result
 import gleam/yielder
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("client paths", [
     group("methods", [
       it("sends the Head method", fn() {

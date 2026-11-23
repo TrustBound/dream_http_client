@@ -8,7 +8,7 @@ import dream_http_client/recorder.{
 import dream_http_client/recording
 import dream_http_client/storage
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/mailbox
 import fixtures/mock_server
@@ -23,7 +23,7 @@ import gleam/option.{Some}
 import gleam/result
 import gleam/yielder
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("client with a recorder", [
     group("client.send", [
       it("client.recorder sets the recorder of the request", fn() {

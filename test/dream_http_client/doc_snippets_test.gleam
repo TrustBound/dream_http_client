@@ -6,7 +6,7 @@
 import dream_http_client/client
 import dream_http_client/recording
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/mock_server
 import fixtures/recorded
@@ -96,7 +96,7 @@ import snippets/doc_storage_load
 import snippets/doc_storage_save_many
 import snippets/doc_storage_save_one
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("doc comment snippets", [
     group("doc_client_transport_tuning", [
       it("tuned_transport sets every pool setting", fn() {

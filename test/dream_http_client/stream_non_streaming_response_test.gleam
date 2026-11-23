@@ -7,7 +7,7 @@
 
 import dream_http_client/client
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/mailbox
 import fixtures/mock_server
@@ -18,7 +18,7 @@ import gleam/result
 import gleam/string
 import gleam/yielder
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("non-2xx responses while streaming", [
     group("start_stream", [
       it("start_stream passes a 401 to on_stream_error", fn() {

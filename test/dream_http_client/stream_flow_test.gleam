@@ -5,7 +5,7 @@
 import dream_http_client/client.{HttpFailure, TransportFailure}
 import dream_http_client/recorder.{directory, mode, start}
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/edge_server
 import fixtures/mailbox
@@ -20,7 +20,7 @@ import gleam/list
 import gleam/result
 import gleam/yielder
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("stream flow control", [
     group("stream_yielder", [
       it("stops the server while the caller does not read", fn() {

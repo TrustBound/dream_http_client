@@ -12,7 +12,7 @@ import dream_http_client/client.{
 import dream_http_client/recorder.{directory, mode, start}
 import dream_http_client/recording
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/edge_server
 import fixtures/mock_server
@@ -27,7 +27,7 @@ import gleam/yielder
 const connection_error_description =
   "DATA frames MUST be associated with a stream. (RFC7540 6.1)"
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("server edge cases", [
     group("send", [
       it("gives up after five redirects", fn() {

@@ -28,7 +28,7 @@ dream = { git = "https://github.com/TrustBound/dream.git", ref = "c916b5a9652d2d
 # Switched to a Hex version range once it is published.
 dream_mock_server = { git = "https://github.com/TrustBound/dream_mock_server.git", ref = "33f4fae570b792a8a6819177072613c11d72930b" }
 # Switched to a Hex version range once it is published.
-dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "c583145874e63118cc5e680a293dd52cd4c35517" }
+dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "1639959578a14ae3577f8e3ae5cac058f933aa53" }
 # Switched to a Hex version range once it is published.
 dream_snippets = { git = "https://github.com/TrustBound/dream_snippets.git", ref = "7a862a3e5b74f0a7f2e9c15170d4d6c772605cfb" }
 

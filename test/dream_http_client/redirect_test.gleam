@@ -6,7 +6,7 @@
 
 import dream_http_client/client
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/mailbox
 import fixtures/mock_server
@@ -17,7 +17,7 @@ import gleam/result
 import gleam/string
 import gleam/yielder
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("auto redirect", [
     group("client.send", [
       it("follows a 301 to /text", fn() {

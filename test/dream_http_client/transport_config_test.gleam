@@ -2,12 +2,12 @@ import dream_http_client/client.{
   LogDebug, LogError, LogInfo, LogNone, LogWarning,
 }
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import gleam/option.{None, Some}
 import gleam/string
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("client transport config", [
     group("defaults", [
       it("get_max_connections returns 50 by default", fn() {

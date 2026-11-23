@@ -10,7 +10,7 @@
 
 import dream_http_client/client
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
 import fixtures/mock_server
 import gleam/bytes_tree
@@ -18,7 +18,7 @@ import gleam/list
 import gleam/result
 import gleam/yielder
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("client.stream_yielder completion", [
     it("yields every chunk of a fast stream and no error", fn() {
       // Arrange

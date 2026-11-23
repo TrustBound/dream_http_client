@@ -7,7 +7,7 @@
 
 import dream_http_client/client.{Http2Only}
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
 import fixtures/mailbox
 import fixtures/tls_server
@@ -16,7 +16,7 @@ import gleam/erlang/process
 import gleam/result
 import gleam/yielder
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("certificate authority", [
     it("send trusts a server signed by the certificate authority file", fn() {
       // Arrange

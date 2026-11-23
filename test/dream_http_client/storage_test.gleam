@@ -2,7 +2,7 @@ import dream_http_client/matching
 import dream_http_client/recording
 import dream_http_client/storage
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/recorded
 import fixtures/temp_directory
@@ -13,7 +13,7 @@ import gleam/result
 import gleam/string
 import simplifile
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("dream_http_client/storage", [
     group("load_recordings", [
       it("returns an empty list for a missing directory", fn() {

@@ -9,7 +9,7 @@ import dream_http_client/recorder
 import dream_http_client/recording
 import dream_http_client/storage
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/recorded
 import fixtures/temp_directory
@@ -36,7 +36,7 @@ import snippets/stream_yielder_basic
 import snippets/timeout_config
 import snippets/transport_config_example
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("snippets", [
     group("README", [
       it("Quick Start: simple_get returns the text endpoint", fn() {

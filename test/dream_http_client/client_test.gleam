@@ -1,11 +1,11 @@
 import dream_http_client/client.{Header, Http1Only, Http2Only, Http2Preferred}
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
 import gleam/http
 import gleam/option.{None, Some}
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("client request builder", [
     it("new uses GET", fn() {
       // Arrange

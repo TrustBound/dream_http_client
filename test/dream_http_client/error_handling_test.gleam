@@ -6,7 +6,7 @@
 
 import dream_http_client/client
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/mock_server
 import gleam/http
@@ -14,7 +14,7 @@ import gleam/list
 import gleam/result
 import gleam/string
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("error handling", [
     group("client.send status codes", [
       it("returns Ok for status 200", fn() {

@@ -4,7 +4,7 @@ import dream_http_client/recorder.{
 import dream_http_client/recording
 import dream_http_client/storage
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/recorded
 import fixtures/temp_directory
@@ -14,7 +14,7 @@ import gleam/option.{None, Some}
 import gleam/result
 import simplifile
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("dream_http_client/recorder", [
     group("start", [
       it("starts in record mode with a directory", fn() {

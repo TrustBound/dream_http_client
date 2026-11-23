@@ -1,12 +1,12 @@
 import dream_http_client/matching
 import dream_http_client/recording
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
 import fixtures/recorded
 import gleam/http
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("matching.request_key", [
     it("gives the same key when only the header order differs", fn() {
       // Arrange

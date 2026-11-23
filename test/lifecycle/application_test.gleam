@@ -6,7 +6,7 @@
 
 import dream_http_client/client
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
 import fixtures/application.{
   connection_count, restart_application, restart_connection_manager,
@@ -16,7 +16,7 @@ import fixtures/mock_server
 import gleam/erlang/process
 import gleam/result
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("application lifecycle", [
     it("serves requests after a restart, with no transport config", fn() {
       // Arrange

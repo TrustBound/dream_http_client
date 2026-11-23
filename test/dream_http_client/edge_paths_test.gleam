@@ -7,7 +7,7 @@ import dream_http_client/recorder.{directory, mode, start}
 import dream_http_client/recording
 import dream_http_client/storage
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, group, it}
 import fixtures/mock_server
 import fixtures/recorded
@@ -15,7 +15,7 @@ import fixtures/temp_directory
 import gleam/erlang/process
 import gleam/result
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("edge paths", [
     group("playback through start_stream", [
       it("passes the headers of a blocking recording to on_stream_start", fn() {

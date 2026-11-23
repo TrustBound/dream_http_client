@@ -2,13 +2,13 @@
 
 import dream_http_client/client
 import dream_test/matchers.{be_equal, or_fail_with, should}
-import dream_test/types.{type TestSuite}
+import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
 import fixtures/mailbox
 import fixtures/mock_server
 import gleam/erlang/process
 
-pub fn tests() -> TestSuite(Nil) {
+pub fn tests() -> TestSuite {
   describe("client.start_stream", [
     it("reports a running stream as active", fn() {
       // Arrange
