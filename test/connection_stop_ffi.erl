@@ -29,7 +29,7 @@ down_reported_when_stopped() ->
     timer:sleep(100),
     %% An exit signal stops even a suspended process, so the connection can
     %% be gone here.
-    _ = catch erlang:resume_process(ConnPid),
+    try erlang:resume_process(ConnPid) catch _:_ -> ok end,
     Reported = receive
         {gun_down, ConnPid, http, closed, []} -> true
     after 2000 -> false
