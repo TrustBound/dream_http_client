@@ -107,4 +107,6 @@ Build a recorder with `recorder.new()` and these functions, then start it with `
 | Request transformer, in every mode | `request_transformer(builder, fn(request))` | no change |
 | Response transformer, in record mode only | `response_transformer(builder, fn(request, response))` | no change |
 
+The match key also names the recording file: `{method}_{host}_{path}_{key hash}.json`, where the key hash is the first 16 hex characters of the SHA-256 of the key. A record run reads the directory at start, and the first recording of a key replaces the files that held that key. The files of the other keys stay.
+
 Guides: [Testing with recorded responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md) and [Matching requests and hiding secrets in recordings](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/request-matching-and-scrubbing.md).

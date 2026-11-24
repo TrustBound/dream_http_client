@@ -416,8 +416,11 @@ pub fn parse_mode(text: String) -> Result(Mode, String) {
 /// The key function determines how requests are grouped for playback lookup.
 /// Keys should be stable and should generally **not** include secrets.
 ///
-/// If two different recordings produce the same key, playback lookup becomes
-/// ambiguous and `find_recording()` will return `Error(...)`.
+/// The key also names the recording file, so a record run that records a
+/// key again replaces the file of that key. If two files in the directory
+/// hold different recordings with the same key (for example, a file written
+/// by hand), playback lookup becomes ambiguous and `find_recording()` will
+/// return `Error(...)`.
 ///
 /// ## Example
 ///
@@ -598,6 +601,9 @@ type RecorderState {
     request_transformer: RequestTransformer,
     response_transformer: ResponseTransformer,
     recordings: dict.Dict(String, List(recording.Recording)),
+    // Record mode: the files that were in the directory at start, by key.
+    // The first recording of a key in this run removes them.
+    earlier_files: dict.Dict(String, List(String)),
   )
 }
 
@@ -638,6 +644,11 @@ type RecorderState {
 /// ## Notes
 ///
 /// - In Playback mode, recordings are loaded from disk at startup
+/// - In Record mode, the recorder reads the files in the directory at
+///   startup. The first recording of a key in the run removes the files
+///   that held that key, and writes one file with a name from the key.
+///   Files of keys that the run does not record stay. A file that cannot be
+///   read or decoded stops the start with an error
 /// - In Record mode, a recorded call returns only when its recording is on
 ///   disk (the end of the stream for a stream), so there is no need to call
 ///   `stop()`. A failed write is the error of the call
@@ -646,6 +657,7 @@ type RecorderState {
 pub fn start(builder: RecorderBuilder) -> Result(Recorder, String) {
   use directory <- result.try(resolve_directory(builder.mode, builder.directory))
   use recordings <- result.try(initial_recordings(builder, directory))
+  use earlier_files <- result.try(initial_files(builder, directory))
   let initial_state =
     RecorderState(
       mode: builder.mode,
@@ -654,6 +666,7 @@ pub fn start(builder: RecorderBuilder) -> Result(Recorder, String) {
       request_transformer: builder.request_transformer,
       response_transformer: builder.response_transformer,
       recordings: recordings,
+      earlier_files: earlier_files,
     )
   actor.new(initial_state)
   |> actor.on_message(handle_recorder_message)
@@ -682,6 +695,35 @@ fn initial_recordings(
         _,
       ))
     Record | Passthrough -> Ok(dict.new())
+  }
+}
+
+// A record recorder starts with the file paths of the recordings in its
+// directory, grouped by key. The key is the one that playback computes
+// for the file, so a record run replaces exactly the files that playback
+// would find for the request. The other modes start with none.
+fn initial_files(
+  builder: RecorderBuilder,
+  directory: String,
+) -> Result(dict.Dict(String, List(String)), String) {
+  case builder.mode {
+    Record ->
+      storage.load_recording_files(directory)
+      |> result.map(
+        list.fold(_, dict.new(), fn(acc, file) {
+          let #(file_path, rec) = file
+          let transformed =
+            transform_recording_request(rec, builder.request_transformer)
+          let signature = builder.key(transformed.request)
+          let paths = result.unwrap(dict.get(acc, signature), [])
+          dict.insert(acc, signature, [file_path, ..paths])
+        }),
+      )
+      |> result.map_error(string.append(
+        "Failed to load recordings in record mode: ",
+        _,
+      ))
+    Playback | Passthrough -> Ok(dict.new())
   }
 }
 
@@ -825,7 +867,8 @@ fn handle_recorder_message(
 // Keeps a recording in record mode and writes it to disk, then replies.
 // The reply comes after the write, so the caller of add_recording knows
 // that the recording is on disk. A duplicate (the same key and an equal
-// response) is not written again.
+// response) is not written again. A record run keeps one recording for
+// each key: a new response replaces the one before.
 fn record_and_reply(
   state: RecorderState,
   rec: recording.Recording,
@@ -848,30 +891,33 @@ fn record_and_reply(
       process.send(reply_to, Ok(Nil))
       actor.continue(state)
     }
-    False -> save_and_reply(state, transformed, key, existing, reply_to)
+    False -> save_and_reply(state, transformed, key, reply_to)
   }
 }
 
-// Writes the recording, and keeps it in memory only when the write
-// succeeded: a recording that is not on disk would hide the next attempt
-// as a duplicate. The caller gets the write error.
+// Removes the files that held the key before this run, then writes the
+// recording, and keeps it in memory only when the write succeeded: a
+// recording that is not on disk would hide the next attempt as a
+// duplicate. The caller gets the removal or write error.
 fn save_and_reply(
   state: RecorderState,
   transformed: recording.Recording,
   key: String,
-  existing: List(recording.Recording),
   reply_to: process.Subject(Result(Nil, String)),
 ) -> Next(RecorderState, RecorderMessage) {
-  case storage.save_recording_immediately(state.directory, transformed, key) {
+  let earlier = result.unwrap(dict.get(state.earlier_files, key), [])
+  let saved = {
+    use _ <- result.try(list.try_each(earlier, storage.remove_recording_file))
+    storage.save_recording_immediately(state.directory, transformed, key)
+  }
+  case saved {
     Ok(Nil) -> {
       process.send(reply_to, Ok(Nil))
       actor.continue(
         RecorderState(
           ..state,
-          recordings: dict.insert(state.recordings, key, [
-            transformed,
-            ..existing
-          ]),
+          recordings: dict.insert(state.recordings, key, [transformed]),
+          earlier_files: dict.delete(state.earlier_files, key),
         ),
       )
     }
@@ -1010,7 +1056,8 @@ fn replace_json_string_value(
 /// ## Behavior by Mode
 ///
 /// - **Record mode**: Writes the recording to disk, keeps it in memory, and
-///   returns `Ok(Nil)` when the file is on disk
+///   returns `Ok(Nil)` when the file is on disk. The file replaces the files
+///   that held the same key
 /// - **Playback mode**: No-op, returns `Ok(Nil)` (recordings loaded from disk
 ///   at startup)
 /// - **Passthrough mode**: No-op, returns `Ok(Nil)` (no recording
@@ -1073,8 +1120,8 @@ fn replace_json_string_value(
 ///   same recording can be added again
 /// - An equal recording (the same key and an equal response) is not written
 ///   twice
-/// - If multiple recordings share the same match key, they are all stored
-///   (playback lookup will error if that makes the key ambiguous)
+/// - A recording with the same match key and a different response replaces
+///   the one before, in memory and on disk
 pub fn add_recording(
   recorder: Recorder,
   rec: recording.Recording,

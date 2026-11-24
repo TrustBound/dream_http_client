@@ -48,7 +48,7 @@ pub fn tests() -> TestSuite {
         |> be_equal(Ok("Hello, World!"))
         |> or_fail_with("Record mode should send the request")
       }),
-      it("the name of a recording file has two hashes", fn() {
+      it("the name of a recording file has the key hash", fn() {
         // Arrange
         let recordings = temp_directory.path("guide_recording_file_name")
         let assert Ok(mock) = server.start(19_952)
@@ -66,7 +66,7 @@ pub fn tests() -> TestSuite {
         |> should
         |> be_equal(output_file.read("guide_recording_file_name"))
         |> or_fail_with(
-          "The name holds the method, the host, the path and two hashes",
+          "The name holds the method, the host, the path and the key hash",
         )
       }),
       it("record mode writes one file for each request", fn() {
@@ -173,7 +173,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(Nil) = save_rate_limit_recording(recordings)
         let content =
           simplifile.read(
-            recordings <> "/GET_localhost__text_7646ad_f0cb30.json",
+            recordings <> "/GET_localhost__text_7646ad0d38469745.json",
           )
 
         // Assert
@@ -207,7 +207,7 @@ pub fn tests() -> TestSuite {
         // Act
         let statuses =
           recorded_statuses(
-            recordings <> "/GET_localhost__text_7646ad_f0cb30.json",
+            recordings <> "/GET_localhost__text_7646ad0d38469745.json",
           )
 
         // Assert
@@ -222,7 +222,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(Nil) = save_rate_limit_recording(recordings)
         let assert Ok(text) =
           simplifile.read(
-            recordings <> "/GET_localhost__text_7646ad_f0cb30.json",
+            recordings <> "/GET_localhost__text_7646ad0d38469745.json",
           )
 
         // Act
@@ -339,16 +339,16 @@ fn record_text_and_stream(recordings: String, port: Int) -> Nil {
   server.stop(mock)
 }
 
-/// A file name with the names of its two hashes in place of the hashes.
+/// A file name with the name of its hash in place of the hash.
 fn name_with_hash_names(file: String) -> String {
-  name_without_hashes(file) <> "_<key hash>_<content hash>.json"
+  name_without_hashes(file) <> "_<key hash>.json"
 }
 
-/// A file name without its two hashes and its extension.
+/// A file name without its key hash and its extension.
 fn name_without_hashes(file: String) -> String {
   let parts = string.split(file, "_")
   parts
-  |> list.take(list.length(parts) - 2)
+  |> list.take(list.length(parts) - 1)
   |> string.join("_")
 }
 

@@ -130,16 +130,16 @@ pub fn tests() -> TestSuite {
 }
 
 /// A GET with a record-mode recorder whose directory cannot be created:
-/// its parent is a file.
+/// after the recorder starts, its parent becomes a file.
 fn unwritable_request(label: String) -> client.ClientRequest {
   let parent = temp_directory.path(label)
-  let assert Ok(Nil) = simplifile.create_directory_all(temp_directory.root)
-  let assert Ok(Nil) = simplifile.write(parent, "a file, not a directory")
   let assert Ok(recorder_instance) =
     recorder.new()
     |> directory(parent <> "/recordings")
     |> mode(recorder.Record)
     |> start()
+  let assert Ok(Nil) = simplifile.create_directory_all(temp_directory.root)
+  let assert Ok(Nil) = simplifile.write(parent, "a file, not a directory")
   mock_server.get("/text")
   |> client.recorder(recorder_instance)
 }

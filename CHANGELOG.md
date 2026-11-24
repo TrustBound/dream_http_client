@@ -183,6 +183,23 @@ version.
 
 ### Changed
 
+- **BREAKING:** A record run replaces the recording of each request that it
+  records again. Before, a record run kept the old files: a changed response
+  went to a new file next to the old one, and playback then found two
+  recordings for one request and failed. Now a record recorder reads the
+  recordings in its directory at start. The first recording of a match key
+  in the run removes the files that held that key, then writes one file. A
+  second response for the key in the same run replaces the first. The files
+  of the keys that the run does not record stay. A file that the recorder
+  cannot read or decode stops `start` in record mode with
+  `Failed to load recordings in record mode: ...`.
+- **BREAKING:** A recording file name comes from the request and its match
+  key only: `{method}_{host}_{path}_{key_hash}.json`, with the first 16 hex
+  characters of the SHA-256 of the key. Before, the name also had a hash of
+  the file content, so a stream got a new name in each record run. Playback
+  reads every `.json` file of the directory whatever its name, so files with
+  the 5.x names still play back. The next record run of such a request
+  removes the old file and writes the file with the new name.
 - **BREAKING:** `recorder.add_recording` returns `Result(Nil, String)`:
   `Ok(Nil)` when the recording is on disk, or the write error. Before, it
   returned `Nil` before the write.
@@ -340,7 +357,7 @@ version.
 
 ### Testing
 
-- 751 tests, 0 failed, 100% line coverage (1222 of 1222 lines), in about 150 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
+- 762 tests, 0 failed, 100% line coverage (1242 of 1242 lines), in about 150 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
 
 ## [5.1.3] - 2026-03-17
 

@@ -121,10 +121,12 @@ pub fn record_text(
 ### The name of a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_file_name.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
-GET_localhost__text_<key hash>_<content hash>.json
+GET_localhost__text_<key hash>.json
 ```
 
-The name starts with the method, the host and the path, so you can find a recording by eye. The two hashes keep names unique: one comes from the request's match key, and one from the content.
+The name starts with the method, the host and the path, so you can find a recording by eye. The key hash comes from the request's match key, and not from the response. So a request keeps its file name when you record it again, and `git diff` shows only what changed in the response.
+
+A record run replaces the recording of each request that it records again. At start, the recorder reads the recordings in its directory. The first time the run records a request, the recorder removes the files that held the same match key, then writes the new file. If the run records the same request two times, the second response replaces the first. The files of the requests that the run does not record stay, so you can record again with one test and keep the rest. A file in the directory that the recorder can't read or decode stops `start` with an error that names the file.
 
 A recorded call returns only when its file is on disk: `send` returns after the write, and a stream ends after the write. So you can read the files, or start a playback recorder on them, right after the call. `recorder.stop` only ends the recorder process. If the recorder can't write the file, the call fails with that error in place of the response: `send` returns `Error(RequestError(Unexpected("Failed to save recording: ...")))`, and a stream ends with a `TransportFailure` with the same `Unexpected`.
 
@@ -251,7 +253,7 @@ pub fn save_rate_limit_recording(recordings: String) -> Result(Nil, String) {
 }
 ```
 
-`save_rate_limit_recording("test/recordings")` writes `GET_localhost__text_7646ad_f0cb30.json`, with this content:
+`save_rate_limit_recording("test/recordings")` writes `GET_localhost__text_7646ad0d38469745.json`, with this content:
 
 ### The file of the 429 <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_by_hand.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
@@ -261,7 +263,7 @@ pub fn save_rate_limit_recording(recordings: String) -> Result(Nil, String) {
 
 Played back, `fetch_text` returns `Error("HTTP 429")`, so you can test what your code does with a rate limit without ever hitting one. A `StreamingResponse(status, headers, chunks)` in place of `BlockingResponse` makes a stream recording, with a `Chunk(data, delay_ms)` for each chunk.
 
-The key you pass to `save_recording_immediately` must be the key the playback recorder uses, or the file name won't match what the recorder expects. The default key is `matching.request_key(method: True, url: True, headers: False, body: False)`.
+The key you pass to `save_recording_immediately` must be the key the playback recorder uses, or the file name won't match what a record run replaces. The file of a key replaces an earlier file with the same name. The default key is `matching.request_key(method: True, url: True, headers: False, body: False)`.
 
 You can also add a recording to a running recorder with `recorder.add_recording(recorder, recording)`. In record mode, the recorder writes it and keeps it, and `add_recording` returns `Ok(Nil)` when the file is on disk, or `Error` with the write error. In playback mode, `add_recording` does nothing: `recorder.get_recordings` stays as it was, so write the file before you start the playback recorder.
 
@@ -329,7 +331,7 @@ pub fn tests() -> TestSuite {
 
 The test passes whether or not a server runs on port 9876, and the text it checks only exists in the recording, so it can't pass by accident against a live server.
 
-To refresh the recordings, run the same code once with `start_recorder(recorder.Record, ...)` against the real API, then switch back to `recorder.Playback` and commit the new files.
+To refresh the recordings, run the same code once with `start_recorder(recorder.Record, ...)` against the real API, then switch back to `recorder.Playback` and commit the changes. You don't need to delete the old files first: the record run replaces the file of each request it records, and a request with the same response gives the same file.
 
 ## Common pitfalls
 

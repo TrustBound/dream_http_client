@@ -646,6 +646,19 @@ The package has nine guides in [`docs/guides/`](https://github.com/TrustBound/dr
   recorder and recording warnings that the client wrote to standard error
   go through the same module, so `log_level` applies to them too. The
   primary logger level and the logging of other applications do not change.
+- A record run replaces the recording of each request that it records
+  again. Before, a changed response went to a new file next to the old one,
+  because the file name had a hash of the content, and playback then found
+  two recordings for one request and failed with `Ambiguous recording
+  match`. A stream also got a new file name in each record run. Now the
+  file name comes from the request and its match key only:
+  `{method}_{host}_{path}_{key_hash}.json`, with the first 16 hex
+  characters of the SHA-256 of the key. A record recorder reads the
+  recordings in its directory at start, and the first recording of a key
+  removes the files that held that key before it writes the new file. The
+  files of the keys that the run does not record stay, so a run of one test
+  keeps the other recordings. A file that the recorder cannot read or decode
+  stops `start` in record mode with an error that names the file.
 - A recording is on disk when the recorded call returns. Before, the
   recorder wrote the file after an asynchronous message, so a playback
   recorder started right after `send` could miss it and give
@@ -674,7 +687,7 @@ The package has nine guides in [`docs/guides/`](https://github.com/TrustBound/dr
 
 ## Testing
 
-751 tests, 0 failed, 100% line coverage (1222 of 1222 lines), in about 150
+762 tests, 0 failed, 100% line coverage (1242 of 1242 lines), in about 150
 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1,
 OTP 29, Gleam 1.19.2.
 
@@ -693,6 +706,7 @@ The tests cover:
 - Which requests the client sends again after a failure, counted at the
   server, for `send`, `stream_yielder`, `start_stream` and `stream_to`
 - A playback request with no recording: no request reaches the server
+- A record run that records a request again: one file with the new response and the same name, a stream included, and the files of the other requests stay
 
 ## Upgrading
 
@@ -711,7 +725,7 @@ gleam deps update dream_http_client
 
 ### Migration Guide
 
-Step 1 applies to code that handles errors. Step 2 applies to code that reads a response body. Step 3 applies only to code that matches on `StreamMessage`. Step 4 applies to code that starts a recorder.
+Step 1 applies to code that handles errors. Step 2 applies to code that reads a response body. Step 3 applies only to code that matches on `StreamMessage`. Step 4 applies to code that starts a recorder. Step 5 applies to committed recordings.
 
 #### 1. Error types
 
@@ -809,6 +823,10 @@ The constructor is removed. Remove the `DecodeError` branch from each `case` on 
 #### 4. Recorder mode
 
 The recorder mode is a typed value, `recorder.Mode`: `Record`, `Playback` or `Passthrough`. `recorder.mode("playback")` becomes `recorder.mode(recorder.Playback)`. A wrong mode name is now a compile error, so `start` has no unknown-mode error any more. For a mode in a text, for example from an environment variable, use `recorder.parse_mode(text)`. It accepts `"record"`, `"playback"` and `"passthrough"`, and returns the error that `start` returned before for any other text.
+
+#### 5. Recording file names
+
+A recording file is named `{method}_{host}_{path}_{key_hash}.json`. Before, the name had a second hash, of the content. Files with the 5.x names still play back, because playback reads every `.json` file of the directory. The next record run of a request removes its old file and writes the file with the new name, so commit the removed and the new files together. A record run no longer needs an empty directory: remove any step that deletes the recordings before a record run.
 
 ## Documentation
 

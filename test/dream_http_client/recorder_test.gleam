@@ -254,7 +254,7 @@ pub fn tests() -> TestSuite {
         |> be_equal([recorded.text_recording()])
         |> or_fail_with("A duplicate recording should not be kept twice")
       }),
-      it("keeps two different responses for one key", fn() {
+      it("keeps only the newest of two responses for one key", fn() {
         // Arrange
         let other =
           recording.Recording(
@@ -277,8 +277,8 @@ pub fn tests() -> TestSuite {
         // Assert
         recordings
         |> should
-        |> be_equal([other, recorded.text_recording()])
-        |> or_fail_with("Both responses should be kept, newest first")
+        |> be_equal([other])
+        |> or_fail_with("The newest response should replace the first")
       }),
       it("returns the write error when the save fails", fn() {
         // Arrange
@@ -296,7 +296,7 @@ pub fn tests() -> TestSuite {
         saved
         |> should
         |> be_equal(Error(
-          "Failed to save recording: Failed to write recording file build/test_tmp/recorder_add_read_only/GET_localhost__text_7646ad_f1bb9a.json: \"eacces\"",
+          "Failed to save recording: Failed to write recording file build/test_tmp/recorder_add_read_only/GET_localhost__text_7646ad0d38469745.json: \"eacces\"",
         ))
         |> or_fail_with("A failed write is the error of add_recording")
       }),
@@ -426,19 +426,22 @@ pub fn tests() -> TestSuite {
       it("returns an error when one key has different responses", fn() {
         // Arrange
         let path = temp_directory.path("recorder_find_ambiguous")
-        let assert Ok(writer) =
-          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
+        // Two files for one request, as a file written by hand gives
         let assert Ok(Nil) =
-          recorder.add_recording(writer, recorded.text_recording())
+          storage.save_recording_immediately(
+            path,
+            recorded.text_recording(),
+            "first",
+          )
         let assert Ok(Nil) =
-          recorder.add_recording(
-            writer,
+          storage.save_recording_immediately(
+            path,
             recording.Recording(
               ..recorded.text_recording(),
               response: recorded.ok_response("Different"),
             ),
+            "second",
           )
-        let assert Ok(Nil) = recorder.stop(writer)
         let assert Ok(rec) =
           recorder.new()
           |> directory(path)
@@ -460,25 +463,24 @@ pub fn tests() -> TestSuite {
       it("returns an error when one key has different binary responses", fn() {
         // Arrange
         let path = temp_directory.path("recorder_find_ambiguous_binary")
-        let assert Ok(writer) =
-          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
         let assert Ok(Nil) =
-          recorder.add_recording(
-            writer,
+          storage.save_recording_immediately(
+            path,
             recording.Recording(
               ..recorded.text_recording(),
               response: recording.BlockingResponse(200, [], <<255, 0>>),
             ),
+            "first",
           )
         let assert Ok(Nil) =
-          recorder.add_recording(
-            writer,
+          storage.save_recording_immediately(
+            path,
             recording.Recording(
               ..recorded.text_recording(),
               response: recording.BlockingResponse(200, [], <<255, 1>>),
             ),
+            "second",
           )
-        let assert Ok(Nil) = recorder.stop(writer)
         let assert Ok(rec) =
           recorder.new()
           |> directory(path)

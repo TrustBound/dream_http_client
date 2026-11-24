@@ -200,7 +200,7 @@ pub fn tests() -> TestSuite {
         |> be_equal(Ok([second, recorded.text_recording()]))
         |> or_fail_with("Both recordings should load")
       }),
-      it("names the file method, host, path, key hash and content hash", fn() {
+      it("names the file method, host, path and key hash", fn() {
         // Arrange
         let directory = temp_directory.path("storage_filename")
 
@@ -221,7 +221,7 @@ pub fn tests() -> TestSuite {
         // Assert
         files
         |> should
-        |> be_equal(Ok(["GET_localhost__text_7646ad_f1bb9a.json"]))
+        |> be_equal(Ok(["GET_localhost__text_7646ad0d38469745.json"]))
         |> or_fail_with("Exactly one file, with no temp file, should exist")
       }),
       it("writes a file per query string", fn() {
@@ -252,8 +252,8 @@ pub fn tests() -> TestSuite {
         |> should
         |> be_equal(
           Ok([
-            "GET_localhost__text_21a3ff_9fe4a5.json",
-            "GET_localhost__text_2c2b6d_611916.json",
+            "GET_localhost__text_21a3ff746b7bd35d.json",
+            "GET_localhost__text_2c2b6dfe41ad69d3.json",
           ]),
         )
         |> or_fail_with("Each query string should get its own file")
@@ -279,7 +279,7 @@ pub fn tests() -> TestSuite {
         // Assert
         files
         |> should
-        |> be_equal(Ok(["GET_localhost__text_7646ad_f1bb9a.json"]))
+        |> be_equal(Ok(["GET_localhost__text_7646ad0d38469745.json"]))
         |> or_fail_with("The same request should give one file")
       }),
       it("replaces characters that are not safe in a file name", fn() {
@@ -306,7 +306,7 @@ pub fn tests() -> TestSuite {
         files
         |> should
         |> be_equal(
-          Ok(["GET_localhost__api_users_id_1_x_y_z_4d99ae_aaa4fd.json"]),
+          Ok(["GET_localhost__api_users_id_1_x_y_z_4d99aecb2ef1703d.json"]),
         )
         |> or_fail_with("Unsafe characters should become underscores")
       }),
@@ -339,7 +339,7 @@ pub fn tests() -> TestSuite {
         |> should
         |> be_equal(
           Ok([
-            "GET_localhost__api_v1_users_12345_profile_settings_notifications_86514a_e691fe.json",
+            "GET_localhost__api_v1_users_12345_profile_settings_notifications_86514a2edbe09165.json",
           ]),
         )
         |> or_fail_with("The path part should be cut to 50 characters")
@@ -367,7 +367,7 @@ pub fn tests() -> TestSuite {
         // Assert
         files
         |> should
-        |> be_equal(Ok(["GET_localhost__text_14e30c_f1bb9a.json"]))
+        |> be_equal(Ok(["GET_localhost__text_14e30cd163c73291.json"]))
         |> or_fail_with("The key hash should come from the key function")
       }),
       it("uses the uppercase name of an Other method", fn() {
@@ -709,14 +709,14 @@ pub fn tests() -> TestSuite {
         |> be_equal(Error(
           "Failed to write recording file "
           <> directory
-          <> "/GET_localhost__text_7646ad_f1bb9a.json: \"eacces\"",
+          <> "/GET_localhost__text_7646ad0d38469745.json: \"eacces\"",
         ))
         |> or_fail_with("A read-only directory should stop the write")
       }),
       it("returns an error when the target name is a folder", fn() {
         // Arrange
         let directory = temp_directory.path("storage_immediate_rename")
-        let target = directory <> "/GET_localhost__text_7646ad_f1bb9a.json"
+        let target = directory <> "/GET_localhost__text_7646ad0d38469745.json"
         let assert Ok(Nil) = simplifile.create_directory_all(target)
         let assert Ok(Nil) = simplifile.write(target <> "/keep", "x")
 
