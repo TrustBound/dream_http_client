@@ -259,7 +259,7 @@ Add the test dependencies first. `dream_test` and `dream_mock_server` aren't on 
 
 ```toml
 # Switched to a Hex version range once it is published.
-dream_mock_server = { git = "https://github.com/TrustBound/dream_mock_server.git", ref = "525abd32be8cbc5f8aff33bb37d3f8ba1c7d00d1" }
+dream_mock_server = { git = "https://github.com/TrustBound/dream_mock_server.git", ref = "42f51b21bb89af7cd732dfa6f723dbca67c53672" }
 # Switched to a Hex version range once it is published.
 dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "1639959578a14ae3577f8e3ae5cac058f933aa53" }
 ```
