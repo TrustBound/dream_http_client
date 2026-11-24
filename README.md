@@ -48,7 +48,7 @@ gleam add dream_http_client
 
 Send a request and print the answer:
 
-### Send a request and print the answer <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_getting_started_first_request.gleam#L5-L32"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a> <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/docs/guides/getting-started.md#send-a-request-and-print-the-answer-"><img align="right" alt="Guide" src="https://img.shields.io/badge/%F0%9F%93%96_read-guide-blue.svg?style=flat-square"></a>
+### Send a request and print the answer <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_getting_started_first_request.gleam#L5-L32"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a> <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/docs/guides/getting-started.md#send-a-request-and-print-the-answer-"><img align="right" alt="Guide: Getting started" title="Guide: Getting started" src="https://img.shields.io/badge/%F0%9F%93%96_read-guide-blue.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
