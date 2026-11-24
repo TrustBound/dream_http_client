@@ -43,7 +43,7 @@ pub fn tests() -> TestSuite {
         // Assert
         #(result, edge_server.requests_received(port))
         |> should
-        |> be_equal(#(Error(RequestError(no_recording(port))), 0))
+        |> be_equal(#(Error(RequestError(no_recording(port, "send"))), 0))
         |> or_fail_with("A playback miss must not reach the server")
       }),
       it("stream_yielder yields NoRecording once and sends nothing", fn() {
@@ -61,7 +61,10 @@ pub fn tests() -> TestSuite {
         // Assert
         #(items, edge_server.requests_received(port))
         |> should
-        |> be_equal(#([Error(TransportFailure(no_recording(port)))], 0))
+        |> be_equal(#(
+          [Error(TransportFailure(no_recording(port, "yielder")))],
+          0,
+        ))
         |> or_fail_with("A playback miss must yield one error")
       }),
       it("start_stream calls only on_stream_error and sends nothing", fn() {
@@ -90,7 +93,7 @@ pub fn tests() -> TestSuite {
         |> should
         |> be_equal(#(
           Ok(Nil),
-          [Failed(TransportFailure(no_recording(port)))],
+          [Failed(TransportFailure(no_recording(port, "start_stream")))],
           0,
         ))
         |> or_fail_with("A playback miss must call only on_stream_error")
@@ -111,7 +114,7 @@ pub fn tests() -> TestSuite {
         |> should
         |> be_equal(#(
           Ok(Nil),
-          [Failed(TransportFailure(no_recording(port)))],
+          [Failed(TransportFailure(no_recording(port, "stream_to")))],
           0,
         ))
         |> or_fail_with("A playback miss must send only StreamError")
@@ -140,18 +143,25 @@ pub fn tests() -> TestSuite {
       }),
     ]),
     group("messages", [
-      it("transport_error_to_string names the method and the URL", fn() {
+      it("transport_error_to_string names the request and the directory", fn() {
         // Act
         let message =
-          client.transport_error_to_string(NoRecording(
-            method: "GET",
-            url: "https://api.example.com/users/42",
-          ))
+          client.transport_error_to_string(
+            NoRecording(
+              method: "GET",
+              url: "https://api.example.com/users/42",
+              directory: "test/recordings",
+              nearest: [],
+            ),
+          )
 
         // Assert
         message
         |> should
-        |> be_equal("No recording matches GET https://api.example.com/users/42")
+        |> be_equal(
+          "No recording matches GET https://api.example.com/users/42\n"
+          <> "No recording in test/recordings has this method and path",
+        )
         |> or_fail_with("The message should name the request")
       }),
     ]),
@@ -174,10 +184,12 @@ fn playback_request(port: Int, label: String) -> client.ClientRequest {
   |> client.recorder(playback)
 }
 
-fn no_recording(port: Int) -> client.TransportError {
+fn no_recording(port: Int, label: String) -> client.TransportError {
   NoRecording(
     method: "GET",
     url: "http://localhost:" <> int.to_string(port) <> "/users/42?full=true",
+    directory: temp_directory.path("playback_miss_" <> label),
+    nearest: [],
   )
 }
 

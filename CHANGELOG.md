@@ -117,12 +117,16 @@ version.
 - In playback mode, a request that no recording matches is no longer sent
   to the network. Before, it went on to the live service, although the docs
   said that playback uses no network. Now `send` returns
-  `Error(RequestError(NoRecording(method: "GET", url: "https://api.example.com/users/42")))`,
+  `Error(RequestError(NoRecording(method: "GET", url: "https://api.example.com/users/42", directory: "test/recordings", nearest: [])))`,
   `stream_yielder` yields that error once and ends, `start_stream` calls
   only `on_stream_error`, and `stream_to` sends only `StreamError`. The new
-  `TransportError` variant `NoRecording(method, url)` names the request,
-  and `transport_error_to_string` gives
-  `No recording matches GET https://api.example.com/users/42`. Record mode
+  `TransportError` variant `NoRecording(method, url, directory, nearest)`
+  names the request, the directory that the recorder searched, and up to 3
+  recordings with the same method and path, nearest first, with the parts
+  that differ. `transport_error_to_string` gives
+  `No recording matches GET https://api.example.com/users/42` and then
+  either the nearest recordings or
+  `No recording in test/recordings has this method and path`. Record mode
   does not change: a request with no recording goes to the network and is
   recorded. `add_recording` still does nothing in playback mode.
 
@@ -166,6 +170,15 @@ version.
 
 ### Added
 
+- A playback miss names the nearest recordings and shows what differs.
+  `NoRecording.nearest` holds up to 3 `recorder.NearestRecording(path,
+  differences)`: recordings with the same method and path as the request,
+  fewest differing parts first, then by path. Each
+  `recorder.Difference(part, recorded, requested)` is a part that the key
+  compares (`Origin`, `Query`, `Header(name)` or `Body`), compared after
+  the request transformer, so a scrubbed value never shows.
+  `transport_error_to_string` shows each one with `-` and `+` lines, or
+  names the directory when no recording has the method and path.
 - `client.new_pool(max_connections:)` makes a connection pool, and
   `client.pool(request, pool)` sends a request through it. Requests share
   connections only with requests that have the same pool, and the pool
@@ -357,7 +370,7 @@ version.
 
 ### Testing
 
-- 762 tests, 0 failed, 100% line coverage (1242 of 1242 lines), in about 150 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
+- 781 tests, 0 failed, 100% line coverage (1314 of 1314 lines), in about 154 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
 
 ## [5.1.3] - 2026-03-17
 

@@ -10,9 +10,11 @@ import dream_http_client/storage
 import gleam/bit_array
 import gleam/dict
 import gleam/erlang/process
+import gleam/http
 import gleam/int
 import gleam/list
 import gleam/option
+import gleam/order
 import gleam/otp/actor.{type Next}
 import gleam/result
 import gleam/string
@@ -601,6 +603,9 @@ type RecorderState {
     request_transformer: RequestTransformer,
     response_transformer: ResponseTransformer,
     recordings: dict.Dict(String, List(recording.Recording)),
+    // Playback mode: every recording with the path of its file, after the
+    // request transformer. A miss looks here for the nearest recordings.
+    files: List(#(String, recording.Recording)),
     // Record mode: the files that were in the directory at start, by key.
     // The first recording of a key in this run removes them.
     earlier_files: dict.Dict(String, List(String)),
@@ -656,7 +661,7 @@ type RecorderState {
 /// - The recorder process runs until `stop()` is called or the VM shuts down
 pub fn start(builder: RecorderBuilder) -> Result(Recorder, String) {
   use directory <- result.try(resolve_directory(builder.mode, builder.directory))
-  use recordings <- result.try(initial_recordings(builder, directory))
+  use files <- result.try(initial_playback_files(builder, directory))
   use earlier_files <- result.try(initial_files(builder, directory))
   let initial_state =
     RecorderState(
@@ -665,7 +670,8 @@ pub fn start(builder: RecorderBuilder) -> Result(Recorder, String) {
       key: builder.key,
       request_transformer: builder.request_transformer,
       response_transformer: builder.response_transformer,
-      recordings: recordings,
+      recordings: build_recordings_map(files, builder.key),
+      files: files,
       earlier_files: earlier_files,
     )
   actor.new(initial_state)
@@ -676,25 +682,29 @@ pub fn start(builder: RecorderBuilder) -> Result(Recorder, String) {
   |> result.map_error(string.append("Failed to start recorder: ", _))
 }
 
-// A playback recorder starts with every recording in its directory. The
-// other modes start with none.
-fn initial_recordings(
+// A playback recorder starts with every recording in its directory, with
+// the path of its file, after the request transformer. The other modes
+// start with none.
+fn initial_playback_files(
   builder: RecorderBuilder,
   directory: String,
-) -> Result(dict.Dict(String, List(recording.Recording)), String) {
+) -> Result(List(#(String, recording.Recording)), String) {
   case builder.mode {
     Playback ->
-      storage.load_recordings(directory)
-      |> result.map(build_recordings_map(
-        _,
-        builder.key,
-        builder.request_transformer,
-      ))
+      storage.load_recording_files(directory)
+      |> result.map(
+        list.map(_, fn(file) {
+          #(
+            file.0,
+            transform_recording_request(file.1, builder.request_transformer),
+          )
+        }),
+      )
       |> result.map_error(string.append(
         "Failed to load recordings in playback mode: ",
         _,
       ))
-    Record | Passthrough -> Ok(dict.new())
+    Record | Passthrough -> Ok([])
   }
 }
 
@@ -734,12 +744,11 @@ fn wrap_recorder_subject(
 }
 
 fn build_recordings_map(
-  recordings: List(recording.Recording),
+  files: List(#(String, recording.Recording)),
   key: matching.MatchKey,
-  request_transformer: RequestTransformer,
 ) -> dict.Dict(String, List(recording.Recording)) {
-  list.fold(recordings, dict.new(), fn(acc, rec) {
-    let transformed = transform_recording_request(rec, request_transformer)
+  list.fold(files, dict.new(), fn(acc, file) {
+    let transformed = file.1
     let signature = key(transformed.request)
     case dict.get(acc, signature) {
       Ok(existing) -> dict.insert(acc, signature, [transformed, ..existing])
@@ -840,6 +849,14 @@ fn handle_recorder_message(
         }
       }
     }
+    ExplainMiss(request, reply_to) -> {
+      let miss = case state.mode {
+        Playback -> option.Some(explain_miss(state, request))
+        Record | Passthrough -> option.None
+      }
+      process.send(reply_to, miss)
+      actor.continue(state)
+    }
     GetRecordings(reply_to) -> {
       let all_recordings = flatten_recordings(dict.values(state.recordings))
       process.send(reply_to, all_recordings)
@@ -938,6 +955,10 @@ type RecorderMessage {
     reply_to: process.Subject(
       Result(option.Option(recording.Recording), String),
     ),
+  )
+  ExplainMiss(
+    request: recording.RecordedRequest,
+    reply_to: process.Subject(option.Option(PlaybackMiss)),
   )
   GetRecordings(reply_to: process.Subject(List(recording.Recording)))
   CheckMode(reply_to: process.Subject(Mode))
@@ -1325,7 +1346,7 @@ pub fn transform_response(
 /// - Only works in Playback mode (returns `None` in other modes)
 /// - When it returns `None` in Playback mode, the client does not send the
 ///   request: `send` and the stream functions fail with
-///   `client.NoRecording(method, url)`. In Record and Passthrough mode the
+///   `client.NoRecording(method, url, directory, nearest)`. In Record and Passthrough mode the
 ///   client sends the request to the network.
 /// - Matching uses the recorder's configured key + request transformer
 /// - Returns `None` if recorder doesn't respond (safe default)
@@ -1349,6 +1370,221 @@ pub fn find_recording(
       )
       Ok(option.None)
     }
+  }
+}
+
+/// A part of a request that a playback miss compares with a recording.
+///
+/// - `Origin` — the scheme, the host and the port, for example
+///   `http://localhost:19801`.
+/// - `Query` — the query string, without the `?`.
+/// - `Header(name)` — the values of one header, joined with `", "`.
+/// - `Body` — the body: its text when it is UTF-8, otherwise `base64:`
+///   and the base64 form.
+pub type RequestPart {
+  Origin
+  Query
+  Header(name: String)
+  Body
+}
+
+/// One part that differs between a recording and the request that no
+/// recording matches. `recorded` is the value in the recording and
+/// `requested` is the value in the request, both after the request
+/// transformer. `None` is a part that is not there: no query, no such
+/// header, or an empty body.
+pub type Difference {
+  Difference(
+    part: RequestPart,
+    recorded: option.Option(String),
+    requested: option.Option(String),
+  )
+}
+
+/// A recording near a request that no recording matches: the path of its
+/// file and the parts that differ, in the order origin, query, headers by
+/// name, body.
+pub type NearestRecording {
+  NearestRecording(path: String, differences: List(Difference))
+}
+
+/// What a playback recorder knows about a request that no recording
+/// matches. The client turns it into `client.NoRecording`.
+@internal
+pub type PlaybackMiss {
+  PlaybackMiss(
+    method: String,
+    url: String,
+    directory: String,
+    nearest: List(NearestRecording),
+  )
+}
+
+/// Explain a request that no recording matches. A playback recorder
+/// returns `Some` with the nearest recordings; a recorder in another mode,
+/// or one that does not answer within 1 second, returns `None`.
+///
+/// The client calls it when `find_recording` finds nothing. In playback
+/// mode the request then fails with `client.NoRecording`, and in the other
+/// modes it goes to the network.
+///
+/// ## Which recordings are nearest
+///
+/// The recorder compares the request after its request transformer with
+/// the recordings, which are also after the transformer, so a value that
+/// the transformer removes never shows. A candidate is a recording with
+/// the same method and path. For each candidate, a part differs when its
+/// value differs and the recorder's key changes when the request takes the
+/// candidate's value of that part. So a part that the key does not compare
+/// never shows. The parts are the origin, the query, each header by name,
+/// and the body. The nearest candidates have the fewest parts that differ;
+/// candidates with the same number are in the order of their paths. The
+/// miss holds at most 3 candidates.
+@internal
+pub fn playback_miss(
+  recorder: Recorder,
+  request: recording.RecordedRequest,
+) -> option.Option(PlaybackMiss) {
+  let Recorder(subject) = recorder
+  let reply_subject = process.new_subject()
+  process.send(subject, ExplainMiss(request, reply_subject))
+  process.receive(reply_subject, 1000)
+  |> result.unwrap(option.None)
+}
+
+/// The most recordings that a miss names.
+const nearest_limit = 3
+
+fn explain_miss(
+  state: RecorderState,
+  request: recording.RecordedRequest,
+) -> PlaybackMiss {
+  let requested = state.request_transformer(request)
+  let nearest =
+    state.files
+    |> list.filter(fn(file) {
+      let recorded = { file.1 }.request
+      recorded.method == requested.method && recorded.path == requested.path
+    })
+    |> list.map(fn(file) {
+      NearestRecording(
+        path: file.0,
+        differences: differences(state.key, { file.1 }.request, requested),
+      )
+    })
+    |> list.sort(compare_nearest)
+    |> list.take(nearest_limit)
+  PlaybackMiss(
+    method: http.method_to_string(requested.method),
+    url: origin_of(requested) <> requested.path <> query_suffix(requested),
+    directory: state.directory,
+    nearest: nearest,
+  )
+}
+
+fn compare_nearest(
+  left: NearestRecording,
+  right: NearestRecording,
+) -> order.Order {
+  int.compare(list.length(left.differences), list.length(right.differences))
+  |> order.break_tie(string.compare(left.path, right.path))
+}
+
+// The parts that differ and that the key compares: the key of the request
+// changes when the request takes the recorded value of the part.
+fn differences(
+  key: matching.MatchKey,
+  recorded: recording.RecordedRequest,
+  requested: recording.RecordedRequest,
+) -> List(Difference) {
+  let requested_key = key(requested)
+  let seen = fn(part, recorded_value, requested_value, swapped) {
+    case recorded_value != requested_value && key(swapped) != requested_key {
+      True -> [Difference(part, recorded_value, requested_value)]
+      False -> []
+    }
+  }
+  let origin =
+    seen(
+      Origin,
+      option.Some(origin_of(recorded)),
+      option.Some(origin_of(requested)),
+      recording.RecordedRequest(
+        ..requested,
+        scheme: recorded.scheme,
+        host: recorded.host,
+        port: recorded.port,
+      ),
+    )
+  let query =
+    seen(
+      Query,
+      recorded.query,
+      requested.query,
+      recording.RecordedRequest(..requested, query: recorded.query),
+    )
+  let headers =
+    list.append(recorded.headers, requested.headers)
+    |> list.map(fn(header) { header.0 })
+    |> list.unique()
+    |> list.sort(string.compare)
+    |> list.flat_map(fn(name) {
+      seen(
+        Header(name),
+        header_values(recorded.headers, name),
+        header_values(requested.headers, name),
+        recording.RecordedRequest(
+          ..requested,
+          headers: list.append(
+            list.filter(requested.headers, fn(header) { header.0 != name }),
+            list.filter(recorded.headers, fn(header) { header.0 == name }),
+          ),
+        ),
+      )
+    })
+  let body =
+    seen(
+      Body,
+      body_value(recorded.body),
+      body_value(requested.body),
+      recording.RecordedRequest(..requested, body: recorded.body),
+    )
+  list.flatten([origin, query, headers, body])
+}
+
+fn origin_of(request: recording.RecordedRequest) -> String {
+  let port = case request.port {
+    option.Some(port) -> ":" <> int.to_string(port)
+    option.None -> ""
+  }
+  http.scheme_to_string(request.scheme) <> "://" <> request.host <> port
+}
+
+fn query_suffix(request: recording.RecordedRequest) -> String {
+  case request.query {
+    option.Some(query) -> "?" <> query
+    option.None -> ""
+  }
+}
+
+fn header_values(
+  headers: List(#(String, String)),
+  name: String,
+) -> option.Option(String) {
+  case list.filter(headers, fn(header) { header.0 == name }) {
+    [] -> option.None
+    found -> option.Some(string.join(list.map(found, fn(h) { h.1 }), ", "))
+  }
+}
+
+// The body as `matching` puts it in a key: its text when it is UTF-8, and
+// "base64:" with the base64 form of any other body. An empty body is None.
+fn body_value(body: BitArray) -> option.Option(String) {
+  case bit_array.byte_size(body), bit_array.to_string(body) {
+    0, _ -> option.None
+    _, Ok(text) -> option.Some(text)
+    _, Error(Nil) ->
+      option.Some("base64:" <> bit_array.base64_encode(body, True))
   }
 }
 

@@ -276,7 +276,7 @@ For lookups in a test, `recorder.find_recording(recorder, request)` tells you wh
 
 **A header name in a different case.** *Symptom:* the token is still in the file, although your transformer removes `authorization`. *Fix:* the header keeps the case you gave `add_header`. Compare names in lower case, as `drop_authorization` does.
 
-**Recording and playing back with different keys.** *Symptom:* `NoRecording` or an ambiguous match for requests you just recorded. *Fix:* use the same `key` and the same request transformer for the record and the playback recorder. Build both from one function, as `start_search_recorder` and `start_scrubbing_recorder` do.
+**Recording and playing back with different keys.** *Symptom:* `NoRecording` or an ambiguous match for requests you just recorded. The miss shows the parts that differ under the playback key. *Fix:* use the same `key` and the same request transformer for the record and the playback recorder. Build both from one function, as `start_search_recorder` and `start_scrubbing_recorder` do.
 
 **Expecting a response transformer to clean old files.** *Symptom:* a cookie is still in a recording after you added `drop_cookies`. *Fix:* it runs only when recording. Record the file again, or edit it.
 

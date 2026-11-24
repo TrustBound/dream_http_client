@@ -57,8 +57,9 @@ for retry logic, alerting, or circuit breakers without fragile string parsing.
 `StreamReset(code, description)`, `Goaway(code, description)`,
 `ConnectionError(code, description)`, `RemoteClosed`, `TimedOut(timeout_ms)`,
 `ProcessDown(reason)`, `ConnectFailed(reason)` and `Unexpected(raw)`. The
-ninth, `NoRecording(method, url)`, is a playback request that no recording
-matches, which the client does not send.
+ninth, `NoRecording(method, url, directory, nearest)`, is a playback
+request that no recording matches, which the client does not send. It names
+the nearest recordings and the parts that differ.
 
 The `code` of `StreamReset`, `Goaway` and `ConnectionError` is an
 `Http2ErrorCode`: one constructor for each HTTP/2 error code of RFC 9113,
@@ -506,6 +507,32 @@ gun does not handle HTTP redirects natively. The shim implements manual
 redirect following for all three request paths, supporting up to 5 hops
 with proper method/body handling for 301/302/303/307/308.
 
+### A Playback Miss Shows What Differs
+
+When playback finds no recording for a request, the error names up to 3
+recordings with the same method and path, nearest first, and shows the
+parts that differ:
+
+#### The text of a near miss <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_near_miss.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```text
+No recording matches GET http://localhost:19958/text?lang=en
+Nearest recording: test/recordings/GET_localhost__text_59cc5dafb6aede24.json
+  query:
+  - (none)
+  + lang=en
+```
+
+The recorder compares only the parts that its key compares (the origin, the
+query, each header and the body), after its request transformer, so a
+scrubbed value never shows. The nearest recordings have the fewest parts
+that differ, then come in the order of their paths. When no recording has
+the method and path, the text names the directory that the recorder
+searched. `NoRecording.nearest` holds the same facts as
+`recorder.NearestRecording` and `recorder.Difference` values. The
+[recording guide](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md)
+shows the output.
+
 ### Its Own Repository
 
 `dream_http_client` moved out of the Dream repository. It has its own version, its own changelog and its own release workflow. The package name on Hex and the module names are the same as before.
@@ -625,12 +652,16 @@ The package has nine guides in [`docs/guides/`](https://github.com/TrustBound/dr
 - In playback mode, a request that no recording matches is no longer sent
   to the network. Before, it went on to the live service, although the docs
   said that playback uses no network. Now `send` returns
-  `Error(RequestError(NoRecording(method: "GET", url: "https://api.example.com/users/42")))`,
+  `Error(RequestError(NoRecording(method: "GET", url: "https://api.example.com/users/42", directory: "test/recordings", nearest: [])))`,
   `stream_yielder` yields that error once and ends, `start_stream` calls
   only `on_stream_error`, and `stream_to` sends only `StreamError`. The new
-  `TransportError` variant `NoRecording(method, url)` names the request,
-  and `transport_error_to_string` gives
-  `No recording matches GET https://api.example.com/users/42`. Record mode
+  `TransportError` variant `NoRecording(method, url, directory, nearest)`
+  names the request, the directory that the recorder searched, and up to 3
+  recordings with the same method and path, nearest first, with the parts
+  that differ. `transport_error_to_string` gives
+  `No recording matches GET https://api.example.com/users/42` and then
+  either the nearest recordings or
+  `No recording in test/recordings has this method and path`. Record mode
   does not change: a request with no recording goes to the network and is
   recorded. `add_recording` still does nothing in playback mode.
 
@@ -687,7 +718,7 @@ The package has nine guides in [`docs/guides/`](https://github.com/TrustBound/dr
 
 ## Testing
 
-762 tests, 0 failed, 100% line coverage (1242 of 1242 lines), in about 150
+781 tests, 0 failed, 100% line coverage (1314 of 1314 lines), in about 154
 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1,
 OTP 29, Gleam 1.19.2.
 
@@ -774,8 +805,10 @@ pub fn send_and_describe(request: client.ClientRequest) -> String {
 handling, as `explain` in **Explain a transport error** above does.
 
 **A `case` over every `TransportError` value.** `TransportError` has a new
-variant, `NoRecording(method, url)`. A `case` that names every variant and
-has no catch-all branch needs one more branch for it.
+variant, `NoRecording(method, url, directory, nearest)`. A `case` that
+names every variant and has no catch-all branch needs one more branch for
+it. A pattern that names the fields, such as `NoRecording(method: m, ..)`,
+keeps working when more fields come.
 
 **Tests that use playback.** A request that no recording matches now fails
 with `NoRecording` and is not sent. A test that passed only because such a

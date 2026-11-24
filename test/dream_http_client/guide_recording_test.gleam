@@ -142,10 +142,52 @@ pub fn tests() -> TestSuite {
           |> result.map(fn(response) { response.status })
 
         // Assert
-        output_file.lines([string.inspect(result)])
+        output_file.lines([
+          string.inspect(result)
+          |> string.replace(recordings, "test/recordings"),
+        ])
         |> should
         |> be_equal(output_file.read("guide_recording_no_recording"))
         |> or_fail_with("A playback miss should name the request")
+      }),
+      it("the text of a miss names the directory it searched", fn() {
+        // Arrange
+        let recordings = temp_directory.path("guide_recording_miss_text")
+        record_text_and_stream(recordings, 19_957)
+        let assert Ok(playback) = start_recorder(recorder.Playback, recordings)
+
+        // Act
+        let text =
+          api(19_957)
+          |> client.path("/json")
+          |> client.recorder(playback)
+          |> miss_text(recordings)
+
+        // Assert
+        output_file.lines([text])
+        |> should
+        |> be_equal(output_file.read("guide_recording_no_recording_text"))
+        |> or_fail_with("A miss with no candidate should name the directory")
+      }),
+      it("the text of a near miss shows what differs", fn() {
+        // Arrange
+        let recordings = temp_directory.path("guide_recording_near_miss")
+        record_text_and_stream(recordings, 19_958)
+        let assert Ok(playback) = start_recorder(recorder.Playback, recordings)
+
+        // Act
+        let text =
+          api(19_958)
+          |> client.path("/text")
+          |> client.query("lang=en")
+          |> client.recorder(playback)
+          |> miss_text(recordings)
+
+        // Assert
+        output_file.lines([text])
+        |> should
+        |> be_equal(output_file.read("guide_recording_near_miss"))
+        |> or_fail_with("A near miss should show the changed query")
       }),
       it("passthrough mode sends the request and records nothing", fn() {
         // Arrange
@@ -326,6 +368,17 @@ fn api(port: Int) -> client.ClientRequest {
   |> client.scheme(http.Http)
   |> client.host("localhost")
   |> client.port(port)
+}
+
+/// The text of the playback miss of a request, with `recordings` shown as
+/// `test/recordings`.
+fn miss_text(request: client.ClientRequest, recordings: String) -> String {
+  case client.send(request) {
+    Error(client.RequestError(error: error)) ->
+      client.transport_error_to_string(error)
+      |> string.replace(recordings, "test/recordings")
+    _ -> "The request did not miss"
+  }
 }
 
 /// Records /text and /stream/fast from a mock server on `port`, then stops

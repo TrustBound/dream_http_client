@@ -676,7 +676,7 @@ You can make recordings from real traffic, too. Attach a recorder in `Record` mo
 - The request's `timeout` applies in playback just as it does live. A recorded delay longer than the timeout ends the stream with the same `TimedOut` failure a live stream gives.
 - A recording with a status outside 2xx plays back as the live client would: one `HttpFailure` with the recorded status, the headers, and all the chunks joined as the body. No chunk and no end event come.
 - A stream that fails while you record it isn't saved, and neither is one that you cancel. Record mode never saves a failing status, so you write that recording by hand.
-- In playback mode, a request that matches no recording isn't sent. The stream fails with `TransportFailure(NoRecording(method, url))`, which names the request, so you can see which recording is missing.
+- In playback mode, a request that matches no recording isn't sent. The stream fails with `TransportFailure(NoRecording(method, url, directory, nearest))`, which names the request and the nearest recordings, so you can see which recording is missing and what differs.
 
 So a recording can test how your code handles an error status or a timeout. It can't test a dropped connection: test that against the mock server, as the Step 3 examples do.
 

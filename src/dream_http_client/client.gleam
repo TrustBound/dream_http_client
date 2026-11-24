@@ -50,7 +50,9 @@
 //// to play back recordings without network calls. All four execution modes
 //// (`send()`, `stream_yielder()`, `start_stream()`, `stream_to()`) fully
 //// support both recording and playback. In playback mode, a request that no
-//// recording matches fails with `NoRecording(method, url)` and is not sent.
+//// recording matches fails with `NoRecording(method, url, directory,
+//// nearest)` and is not sent. The error names the nearest recordings and
+//// the parts that differ.
 ////
 //// ### Record a call <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_record_call.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ////
@@ -111,6 +113,7 @@ import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import gleam/yielder
 
 /// HTTP header
@@ -328,8 +331,12 @@ pub type Http2ErrorCode {
 /// - `NoRecording` — The request has a recorder in playback mode, and no
 ///   recording matches it. The client sends nothing to the network.
 ///   `method` is the method in upper case, for example `"GET"`, and `url`
-///   is the URL that the client would request: the scheme, the host, the
-///   port when the request sets one, the path and the query.
+///   is the URL of the request after the recorder's request transformer:
+///   the scheme, the host, the port when the request sets one, the path and
+///   the query. `directory` is the directory that the recorder searched.
+///   `nearest` holds at most 3 recordings with the same method and path,
+///   nearest first: see `recorder.NearestRecording` and the recording guide
+///   for the rule.
 ///
 /// ## Example
 ///
@@ -361,7 +368,12 @@ pub type TransportError {
   ProcessDown(reason: String)
   ConnectFailed(reason: String)
   Unexpected(raw: String)
-  NoRecording(method: String, url: String)
+  NoRecording(
+    method: String,
+    url: String,
+    directory: String,
+    nearest: List(recorder.NearestRecording),
+  )
 }
 
 /// Failure during streaming, distinguishing HTTP errors from transport errors.
@@ -409,6 +421,12 @@ pub type StreamFailure {
 /// Produces a single-line summary suitable for log messages. For programmatic
 /// error handling, pattern match on the `TransportError` variants instead.
 ///
+/// `NoRecording` is the one error with more lines. The first line names the
+/// request. Then each nearest recording shows its path and the parts that
+/// differ, with the recorded value on a `-` line and the requested value on
+/// a `+` line. With no nearest recording, the second line names the
+/// directory that the recorder searched.
+///
 /// ## Example
 ///
 /// ### Describe a transport error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_transport_error_to_string.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
@@ -436,8 +454,70 @@ pub fn transport_error_to_string(error: TransportError) -> String {
     ProcessDown(reason: reason) -> "Process down: " <> reason
     ConnectFailed(reason: reason) -> "Connection failed: " <> reason
     Unexpected(raw: raw) -> "Unexpected error: " <> raw
-    NoRecording(method: method, url: url) ->
-      "No recording matches " <> method <> " " <> url
+    NoRecording(
+      method: method,
+      url: url,
+      directory: directory,
+      nearest: nearest,
+    ) ->
+      "No recording matches "
+      <> method
+      <> " "
+      <> url
+      <> "\n"
+      <> describe_nearest(directory, nearest)
+  }
+}
+
+// The nearest recordings of a playback miss, one block for each, or the
+// directory that has no recording with the method and path.
+fn describe_nearest(
+  directory: String,
+  nearest: List(recorder.NearestRecording),
+) -> String {
+  case nearest {
+    [] -> "No recording in " <> directory <> " has this method and path"
+    [first, ..rest] ->
+      [
+        describe_candidate("Nearest recording: ", first),
+        ..list.map(rest, describe_candidate("Next nearest recording: ", _))
+      ]
+      |> string.join("\n")
+  }
+}
+
+fn describe_candidate(
+  label: String,
+  candidate: recorder.NearestRecording,
+) -> String {
+  [
+    label <> candidate.path,
+    ..list.flat_map(candidate.differences, describe_difference)
+  ]
+  |> string.join("\n")
+}
+
+fn describe_difference(difference: recorder.Difference) -> List(String) {
+  [
+    "  " <> part_name(difference.part) <> ":",
+    "  - " <> shown_value(difference.recorded),
+    "  + " <> shown_value(difference.requested),
+  ]
+}
+
+fn part_name(part: recorder.RequestPart) -> String {
+  case part {
+    recorder.Origin -> "origin"
+    recorder.Query -> "query"
+    recorder.Header(name: name) -> "header " <> name
+    recorder.Body -> "body"
+  }
+}
+
+fn shown_value(value: Option(String)) -> String {
+  case value {
+    Some(text) -> text
+    None -> "(none)"
   }
 }
 
@@ -3303,7 +3383,7 @@ pub opaque type StreamHandle {
 /// both recording and playback. In record mode, the real response is persisted
 /// to disk. In playback mode, the recorded response is returned without making
 /// a network call. A request that no recording matches returns
-/// `Error(RequestError(NoRecording(method, url)))` and is not sent.
+/// `Error(RequestError(NoRecording(method, url, directory, nearest)))` and is not sent.
 ///
 /// ## Parameters
 ///
@@ -3367,7 +3447,7 @@ fn send_with_recorder(
 ) -> Result(HttpResponse, SendError) {
   let recorded_request = client_request_to_recorded_request(client_request)
 
-  case ask_recorder(client_request, recorder_instance, recorded_request) {
+  case ask_recorder(recorder_instance, recorded_request) {
     PlayRecording(response) -> handle_recorded_blocking_response(response)
     SendLive ->
       send_and_maybe_record(client_request, recorder_instance, recorded_request)
@@ -3390,33 +3470,33 @@ type RecorderAnswer {
 /// The one place that decides how a request with a recorder is answered.
 /// `send`, `stream_yielder`, `start_stream` and `stream_to` all use it.
 fn ask_recorder(
-  client_request: ClientRequest,
   recorder_instance: recorder.Recorder,
   recorded_request: recording.RecordedRequest,
 ) -> RecorderAnswer {
   case recorder.find_recording(recorder_instance, recorded_request) {
     Ok(option.Some(recording.Recording(_, response))) -> PlayRecording(response)
     Ok(option.None) ->
-      answer_without_recording(client_request, recorder_instance)
+      answer_without_recording(recorder_instance, recorded_request)
     Error(reason) -> RecorderFailure(Unexpected(raw: reason))
   }
 }
 
+// In playback mode the request fails with the nearest recordings, and in
+// the other modes it goes to the network.
 fn answer_without_recording(
-  client_request: ClientRequest,
   recorder_instance: recorder.Recorder,
+  recorded_request: recording.RecordedRequest,
 ) -> RecorderAnswer {
-  case recorder.is_playback_mode(recorder_instance) {
-    True -> RecorderFailure(no_recording_error(client_request))
-    False -> SendLive
+  case recorder.playback_miss(recorder_instance, recorded_request) {
+    option.Some(miss) ->
+      RecorderFailure(NoRecording(
+        method: miss.method,
+        url: miss.url,
+        directory: miss.directory,
+        nearest: miss.nearest,
+      ))
+    option.None -> SendLive
   }
-}
-
-fn no_recording_error(client_request: ClientRequest) -> TransportError {
-  NoRecording(
-    method: http.method_to_string(client_request.method),
-    url: build_url(to_http_request(client_request)),
-  )
 }
 
 fn handle_recorded_blocking_response(
@@ -3611,7 +3691,7 @@ fn send_sync(
 ///   recording with a status outside 2xx yields one `HttpFailure` with the
 ///   recorded status, headers and body, as a live stream does. No network
 ///   calls are made. A request that no recording matches yields one
-///   `TransportFailure(NoRecording(method, url))`, and is not sent.
+///   `TransportFailure(NoRecording(method, url, directory, nearest))`, and is not sent.
 ///
 /// The same `StreamingResponse` fixture format is shared with `start_stream()`,
 /// so recordings made with either function can be played back by both.
@@ -3738,7 +3818,7 @@ fn stream_yielder_with_recorder(
 ) -> yielder.Yielder(Result(bytes_tree.BytesTree, StreamFailure)) {
   let recorded_request = client_request_to_recorded_request(client_request)
 
-  case ask_recorder(client_request, recorder_instance, recorded_request) {
+  case ask_recorder(recorder_instance, recorded_request) {
     PlayRecording(response) ->
       yielder.unfold(
         YielderPlaybackNotStarted(
@@ -4140,7 +4220,7 @@ fn record_element(index: Int, record: d.Dynamic) -> TranslatorMessage
 ///   only `on_stream_error`, with an `HttpFailure` that holds the recorded
 ///   status, headers and body. No network calls are made. A request that
 ///   no recording matches calls only `on_stream_error`, with
-///   `TransportFailure(NoRecording(method, url))`, and is not sent.
+///   `TransportFailure(NoRecording(method, url, directory, nearest))`, and is not sent.
 ///
 /// The same `StreamingResponse` fixture format is shared with `stream_yielder()`,
 /// so recordings made with either function can be played back by both.
@@ -4263,7 +4343,7 @@ pub fn start_stream(request: ClientRequest) -> Result(StreamHandle, String) {
 ///   with a status outside 2xx sends only `StreamError`, with an
 ///   `HttpFailure` that holds the recorded status, headers and body. No
 ///   network calls are made. A request that no recording matches sends only
-///   `StreamError` with `TransportFailure(NoRecording(method, url))`, and
+///   `StreamError` with `TransportFailure(NoRecording(method, url, directory, nearest))`, and
 ///   is not sent.
 ///
 /// ## Parameters
@@ -4445,7 +4525,7 @@ fn stream_with_recorder(
   recorder_instance: recorder.Recorder,
 ) -> Nil {
   let recorded_request = client_request_to_recorded_request(request)
-  case ask_recorder(request, recorder_instance, recorded_request) {
+  case ask_recorder(recorder_instance, recorded_request) {
     PlayRecording(response) ->
       replay_recorded_stream(
         handlers,

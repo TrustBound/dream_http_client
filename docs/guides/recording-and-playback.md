@@ -196,15 +196,44 @@ Playback also waits the recorded time before each chunk, so a test sees the stre
 
 ## Step 4: When no recording matches
 
-In playback mode, a request with no recording isn't sent anywhere. It fails, and the error names the request. A GET of `/json`, which the recordings above don't have, through the playback recorder returns:
+In playback mode, a request with no recording isn't sent anywhere. It fails, and the error names the request and the recordings nearest to it. A GET of `/json`, which the recordings above don't have, through the playback recorder returns:
 
 ### A request with no recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_no_recording.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
-Error(RequestError(NoRecording("GET", "http://localhost:19996/json")))
+Error(RequestError(NoRecording("GET", "http://localhost:19996/json", "test/recordings", [])))
 ```
 
-`transport_error_to_string` writes it as `No recording matches GET http://localhost:19996/json`. The streaming functions report it as `TransportFailure(NoRecording(..))`: `stream_yielder` yields it once and ends, `start_stream` calls only `on_stream_error`, and `stream_to` sends only `StreamError`.
+The fields are `method`, `url`, `directory` (the directory that the recorder searched) and `nearest` (the nearest recordings). `transport_error_to_string` writes the error as text. No recording in the directory has the method and the path, so the text says that:
+
+### The text of a miss with no candidate <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_no_recording_text.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```text
+No recording matches GET http://localhost:19957/json
+No recording in test/recordings has this method and path
+```
+
+A GET of `/text?lang=en` has the method and the path of a recording, but not its query. The text names that recording and shows the part that differs. The `-` line is the value in the recording, and the `+` line is the value in the request:
+
+### The text of a near miss <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_near_miss.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```text
+No recording matches GET http://localhost:19958/text?lang=en
+Nearest recording: test/recordings/GET_localhost__text_59cc5dafb6aede24.json
+  query:
+  - (none)
+  + lang=en
+```
+
+How the recorder finds the nearest recordings:
+
+- A candidate is a recording with the same method and path as the request.
+- The recorder compares the parts that the key compares: the origin (scheme, host and port), the query, each header by name, and the body. A part that the key ignores never shows. With the default key, a header never shows.
+- The recorder compares the request after the request transformer, so a value that the transformer removes never shows.
+- The nearest candidates have the fewest parts that differ. Candidates with the same number are in the order of their paths. The error holds at most 3 candidates. The first shows as `Nearest recording:`, and the others as `Next nearest recording:`.
+- `(none)` is a part that is not there: no query, no such header, or no body.
+
+Each candidate is a `recorder.NearestRecording(path, differences)`, and each difference is a `recorder.Difference(part, recorded, requested)`, so a test can match on them too. The streaming functions report the miss as `TransportFailure(NoRecording(..))`: `stream_yielder` yields it once and ends, `start_stream` calls only `on_stream_error`, and `stream_to` sends only `StreamError`.
 
 That's the error you see when a test calls an endpoint you never recorded, or when the request changed since you recorded it, for example a new query parameter. Record again, or fix the request.
 

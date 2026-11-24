@@ -54,7 +54,7 @@ Here's what each `TransportError` means, and what usually helps:
 | `StreamReset(code, description)` | An HTTP/2 server reset the stream. `RefusedStream` means it didn't process the request | Depends on `code` |
 | `Goaway(code, description)` | An HTTP/2 server is shutting the connection down | Try later |
 | `ConnectionError(code, description)` | The HTTP/2 connection broke a protocol rule | Give up and report it |
-| `NoRecording(method, url)` | A recorder in playback mode has no recording for this request, so the client didn't send it | Record the request. See [Testing with recorded responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md) |
+| `NoRecording(method, url, directory, nearest)` | A recorder in playback mode has no recording for this request, so the client didn't send it. `nearest` names up to 3 recordings with the same method and path, and the parts that differ | Record the request, or fix the part that differs. See [Testing with recorded responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md) |
 | `Unexpected(raw)` | Anything else, for example a redirect loop or a URL that isn't valid | Give up and report it |
 
 `transport_error_to_string(error)` turns any of them into one line for a log. The streaming functions report the same `TransportError` inside a `StreamFailure`. The [Streaming a response](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming.md#step-3-handle-a-stream-that-fails) guide covers that side.
