@@ -101,7 +101,7 @@ Build a recorder with `recorder.new()` and these functions, then start it with `
 
 | Setting | Set with | Default |
 |:---|:---|:---|
-| Mode | `mode(builder, "record")`, `"playback"` or `"passthrough"` (case-sensitive) | `"passthrough"` |
+| Mode | `mode(builder, recorder.Record)`, `recorder.Playback` or `recorder.Passthrough`. For a mode in a text, `recorder.parse_mode("playback")` | `recorder.Passthrough` |
 | Directory of the recording files | `directory(builder, path)` | None. Record and playback mode need one: without it, `start` returns `Error("Recorder directory is required for record/playback")` |
 | Match key | `key(builder, matching.request_key(method:, url:, headers:, body:))` | method and URL |
 | Request transformer, in every mode | `request_transformer(builder, fn(request))` | no change |

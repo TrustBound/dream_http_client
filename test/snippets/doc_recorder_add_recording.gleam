@@ -9,7 +9,7 @@ pub fn add_by_hand(mocks_directory: String) -> Result(Int, String) {
   use rec <- result.try(
     recorder.new()
     |> directory(mocks_directory)
-    |> mode("record")
+    |> mode(recorder.Record)
     |> start(),
   )
 

@@ -21,7 +21,7 @@ pub fn scrubbed(
   use rec <- result.map(
     recorder.new()
     |> directory(mocks_directory)
-    |> mode("record")
+    |> mode(recorder.Record)
     |> response_transformer(drop_body)
     |> start(),
   )

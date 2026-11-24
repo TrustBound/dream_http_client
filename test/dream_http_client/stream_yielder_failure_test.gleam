@@ -138,7 +138,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("yielder_failure_record_drop"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let request = mock_server.get("/stream/drop") |> client.recorder(rec)
 
@@ -161,7 +161,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("yielder_failure_record_timeout"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let request =
           mock_server.get("/stream/slow")
@@ -183,7 +183,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("yielder_failure_record_500"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let request = mock_server.get("/stream/error") |> client.recorder(rec)
 
@@ -207,7 +207,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("yielder_failure_record_count"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let request = edge_server.request(port) |> client.recorder(rec)
 

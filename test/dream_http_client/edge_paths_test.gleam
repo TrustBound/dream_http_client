@@ -35,7 +35,10 @@ pub fn tests() -> TestSuite {
             "edge",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
         let started = process.new_subject()
         let request =
           mock_server.get("/text")

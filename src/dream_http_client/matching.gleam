@@ -95,7 +95,7 @@ pub type MatchKey =
 ///
 ///   use rec <- result.map(
 ///     recorder.new()
-///     |> mode("record")
+///     |> mode(recorder.Record)
 ///     |> directory(mocks_directory)
 ///     |> key(key_fn)
 ///     |> request_transformer(drop_auth)

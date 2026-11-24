@@ -8,7 +8,7 @@ pub fn look_up_text(mocks_directory: String) -> Result(String, String) {
   use rec <- result.map(
     recorder.new()
     |> directory(mocks_directory)
-    |> mode("playback")
+    |> mode(recorder.Playback)
     |> start(),
   )
 

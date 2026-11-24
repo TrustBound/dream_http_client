@@ -20,7 +20,7 @@ pub fn tests() -> TestSuite {
       let assert Ok(rec) =
         recorder.new()
         |> directory(path)
-        |> mode("record")
+        |> mode(recorder.Record)
         |> key(matching.request_key(
           method: True,
           url: True,
@@ -61,7 +61,7 @@ pub fn tests() -> TestSuite {
       let assert Ok(rec) =
         recorder.new()
         |> directory(path)
-        |> mode("record")
+        |> mode(recorder.Record)
         |> key(matching.request_key(
           method: True,
           url: True,
@@ -82,7 +82,7 @@ pub fn tests() -> TestSuite {
       let assert Ok(playback) =
         recorder.new()
         |> directory(path)
-        |> mode("playback")
+        |> mode(recorder.Playback)
         |> key(matching.request_key(
           method: True,
           url: True,

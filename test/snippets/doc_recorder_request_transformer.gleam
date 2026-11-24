@@ -13,7 +13,7 @@ pub fn drop_auth_header(
 
 pub fn scrubbing_builder() -> recorder.RecorderBuilder {
   recorder.new()
-  |> mode("record")
+  |> mode(recorder.Record)
   |> directory("mocks")
   |> request_transformer(drop_auth_header)
 }

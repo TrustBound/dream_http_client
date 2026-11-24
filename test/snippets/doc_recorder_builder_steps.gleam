@@ -24,7 +24,7 @@ pub fn drop_body(
 pub fn record_builder(mocks_directory: String) -> recorder.RecorderBuilder {
   recorder.new()
   |> directory(mocks_directory)
-  |> mode("record")
+  |> mode(recorder.Record)
   |> key(matching.request_key(
     method: True,
     url: True,

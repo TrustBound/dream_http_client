@@ -4,6 +4,7 @@
 //// server.
 
 import dream_http_client/client.{host, port, recorder as with_recorder, scheme}
+import dream_http_client/recorder
 import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
@@ -14,7 +15,8 @@ pub fn tests() -> TestSuite {
   describe("fetch_text", [
     it("reads the recorded text", fn() {
       // Arrange
-      let assert Ok(playback) = start_recorder("playback", "test/fixtures/api")
+      let assert Ok(playback) =
+        start_recorder(recorder.Playback, "test/fixtures/api")
       let api =
         client.new()
         |> scheme(http.Http)

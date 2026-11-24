@@ -16,7 +16,7 @@ pub fn tests() -> TestSuite {
       // Act
       let started =
         recorder.new()
-        |> recorder.mode("record")
+        |> recorder.mode(recorder.Record)
         |> recorder.start()
 
       // Assert

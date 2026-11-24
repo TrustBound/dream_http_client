@@ -557,7 +557,7 @@ dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "1639
 
 Here's a test module for `print_events` from Step 2 that does both. It uses [dream_test](https://hexdocs.pm/dream_test):
 
-### Test print_events with a mock server and a recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_streaming_testing.gleam#L6-L100"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test print_events with a mock server and a recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_streaming_testing.gleam#L6-L103"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -637,7 +637,10 @@ pub fn tests() -> TestSuite {
           key(split_line.request),
         )
       let assert Ok(playback) =
-        recorder.new() |> directory(recordings) |> mode("playback") |> start()
+        recorder.new()
+        |> directory(recordings)
+        |> mode(recorder.Playback)
+        |> start()
       let request =
         client.new()
         |> host("api.example.com")
@@ -667,7 +670,7 @@ A recording of a stream stores:
 - The response status and headers.
 - Each chunk, with `delay_ms`, the time since the chunk before it.
 
-You can make recordings from real traffic, too. Attach a recorder in `"record"` mode, run your code once against the real API, and commit the files. The [Testing with recorded responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md) guide shows how. Know what playback does and doesn't do:
+You can make recordings from real traffic, too. Attach a recorder in `Record` mode, run your code once against the real API, and commit the files. The [Testing with recorded responses](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/recording-and-playback.md) guide shows how. Know what playback does and doesn't do:
 
 - Playback hands over the recorded chunks with the same boundaries, and waits each chunk's `delay_ms` before it hands the chunk over. A slow chunk handler doesn't add to those waits: each chunk is due at its recorded time.
 - The request's `timeout` applies in playback just as it does live. A recorded delay longer than the timeout ends the stream with the same `TimedOut` failure a live stream gives.

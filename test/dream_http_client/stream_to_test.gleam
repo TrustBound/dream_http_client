@@ -358,7 +358,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("stream_to_records")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
         use port <- edge_server.with("chunks")
         let inbox = process.new_subject()
         let request = edge_server.request(port) |> client.recorder(rec)
@@ -411,7 +411,10 @@ pub fn tests() -> TestSuite {
             "k",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
         let inbox = process.new_subject()
         let request = mock_server.get("/text") |> client.recorder(rec)
         let assert Ok(request_id) = client.stream_to(request, inbox)

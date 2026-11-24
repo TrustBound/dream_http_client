@@ -4,6 +4,7 @@
 //// localhost:9876.
 
 import dream_http_client/client
+import dream_http_client/recorder
 import dream_http_client/recording
 import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/suite.{type TestSuite}
@@ -76,6 +77,7 @@ import snippets/doc_recorder_builder_steps
 import snippets/doc_recorder_find_recording
 import snippets/doc_recorder_get_recordings
 import snippets/doc_recorder_is_record_mode
+import snippets/doc_recorder_parse_mode
 import snippets/doc_recorder_record_and_stop
 import snippets/doc_recorder_request_transformer
 import snippets/doc_recorder_start
@@ -231,7 +233,7 @@ pub fn tests() -> TestSuite {
         // Assert
         value
         |> should
-        |> be_equal(#("record", Some("mocks")))
+        |> be_equal(#(recorder.Record, Some("mocks")))
         |> or_fail_with("The mode and directory should be set")
       }),
       it("record_builder drops the request headers", fn() {
@@ -1004,7 +1006,7 @@ pub fn tests() -> TestSuite {
         // Assert
         value
         |> should
-        |> be_equal(#("playback", Some("mocks/api")))
+        |> be_equal(#(recorder.Playback, Some("mocks/api")))
         |> or_fail_with("playback_builder sets the mode and directory")
       }),
     ]),
@@ -1049,6 +1051,41 @@ pub fn tests() -> TestSuite {
         |> should
         |> be_equal(Ok(True))
         |> or_fail_with("recording_mode_active is True")
+      }),
+    ]),
+    group("doc_recorder_parse_mode", [
+      it("start_from_text returns the error for an unknown mode", fn() {
+        // Act
+        let value =
+          doc_recorder_parse_mode.start_from_text("replay", "test/fixtures/api")
+          |> result.map(fn(_) { Nil })
+
+        // Assert
+        value
+        |> should
+        |> be_equal(Error(
+          "Unknown recorder mode: replay. Expected one of: record, playback, passthrough",
+        ))
+        |> or_fail_with("start_from_text rejects an unknown mode")
+      }),
+      it("start_from_text starts a playback recorder", fn() {
+        // Act
+        let value =
+          doc_recorder_parse_mode.start_from_text(
+            "playback",
+            "test/fixtures/api",
+          )
+          |> result.map(fn(rec) {
+            let playback = recorder.is_playback_mode(rec)
+            let _stopped = recorder.stop(rec)
+            playback
+          })
+
+        // Assert
+        value
+        |> should
+        |> be_equal(Ok(True))
+        |> or_fail_with("start_from_text starts in playback mode")
       }),
     ]),
     group("doc_recorder_record_and_stop", [

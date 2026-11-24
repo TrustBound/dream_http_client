@@ -51,7 +51,7 @@ import gleam/string
 ///   use rec <- result.try(
 ///     recorder.new()
 ///     |> directory(mocks_directory)
-///     |> mode("record")
+///     |> mode(recorder.Record)
 ///     |> start(),
 ///   )
 ///
@@ -107,7 +107,7 @@ pub opaque type Recorder {
 ///
 /// pub fn scrubbing_builder() -> recorder.RecorderBuilder {
 ///   recorder.new()
-///   |> mode("record")
+///   |> mode(recorder.Record)
 ///   |> directory("mocks")
 ///   |> request_transformer(drop_auth_header)
 /// }
@@ -133,6 +133,33 @@ pub type ResponseTransformer =
   fn(recording.RecordedRequest, recording.RecordedResponse) ->
     recording.RecordedResponse
 
+/// What a recorder does with each request.
+///
+/// - `Record`: sends the request to the network, and saves the request and
+///   its response to a file.
+/// - `Playback`: answers the request from a recording, and sends nothing.
+/// - `Passthrough`: sends the request to the network, and saves nothing.
+///
+/// Set it with `mode()`. For a mode in a text, for example from an
+/// environment variable, use `parse_mode()`.
+///
+/// ### Build a playback recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_builder.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/recorder.{directory, mode}
+///
+/// pub fn playback_builder() -> recorder.RecorderBuilder {
+///   recorder.new()
+///   |> directory("mocks/api")
+///   |> mode(recorder.Playback)
+/// }
+/// ```
+pub type Mode {
+  Record
+  Playback
+  Passthrough
+}
+
 /// Builder for configuring and starting a recorder.
 ///
 /// Recorder configuration uses a builder so options can evolve without adding a
@@ -140,8 +167,8 @@ pub type ResponseTransformer =
 ///
 /// ## Fields
 ///
-/// - `mode`: `"record"`, `"playback"` or `"passthrough"`, as set by `mode()`.
-///   The default is `"passthrough"`.
+/// - `mode`: `Record`, `Playback` or `Passthrough`, as set by `mode()`.
+///   The default is `Passthrough`.
 /// - `directory`: the recordings directory. It is `None` until `directory()`
 ///   is called.
 /// - `key`: the `MatchKey` that matches requests to recordings. The default
@@ -161,12 +188,12 @@ pub type ResponseTransformer =
 /// pub fn playback_builder() -> recorder.RecorderBuilder {
 ///   recorder.new()
 ///   |> directory("mocks/api")
-///   |> mode("playback")
+///   |> mode(recorder.Playback)
 /// }
 /// ```
 pub type RecorderBuilder {
   RecorderBuilder(
-    mode: String,
+    mode: Mode,
     directory: option.Option(String),
     key: matching.MatchKey,
     request_transformer: RequestTransformer,
@@ -177,7 +204,7 @@ pub type RecorderBuilder {
 /// Create a new recorder builder with safe defaults.
 ///
 /// Defaults:
-/// - `mode`: `"passthrough"`
+/// - `mode`: `Passthrough`
 /// - `directory`: unset
 /// - `key`: `matching.request_key(method: True, url: True, headers: False, body: False)`
 /// - `request_transformer`: identity
@@ -214,7 +241,7 @@ pub type RecorderBuilder {
 /// pub fn record_builder(mocks_directory: String) -> recorder.RecorderBuilder {
 ///   recorder.new()
 ///   |> directory(mocks_directory)
-///   |> mode("record")
+///   |> mode(recorder.Record)
 ///   |> key(matching.request_key(
 ///     method: True,
 ///     url: True,
@@ -227,7 +254,7 @@ pub type RecorderBuilder {
 /// ```
 pub fn new() -> RecorderBuilder {
   RecorderBuilder(
-    mode: "passthrough",
+    mode: Passthrough,
     directory: option.None,
     key: matching.request_key(
       method: True,
@@ -240,10 +267,10 @@ pub fn new() -> RecorderBuilder {
   )
 }
 
-/// Set the recording directory used by `"record"` and `"playback"` modes.
+/// Set the recording directory used by `Record` and `Playback` modes.
 ///
-/// The directory is **required** for `"record"` and `"playback"` (validated in
-/// `start()`), and ignored for `"passthrough"`.
+/// The directory is **required** for `Record` and `Playback` (validated in
+/// `start()`), and ignored for `Passthrough`.
 ///
 /// ## Example
 ///
@@ -276,7 +303,7 @@ pub fn new() -> RecorderBuilder {
 /// pub fn record_builder(mocks_directory: String) -> recorder.RecorderBuilder {
 ///   recorder.new()
 ///   |> directory(mocks_directory)
-///   |> mode("record")
+///   |> mode(recorder.Record)
 ///   |> key(matching.request_key(
 ///     method: True,
 ///     url: True,
@@ -294,14 +321,9 @@ pub fn directory(
   RecorderBuilder(..builder, directory: option.Some(directory))
 }
 
-/// Set the recorder mode string.
+/// Set the recorder mode: `Record`, `Playback` or `Passthrough`.
 ///
-/// Valid modes (validated in `start()`):
-/// - `"record"`
-/// - `"playback"`
-/// - `"passthrough"`
-///
-/// Mode strings are case-sensitive.
+/// For a mode in a text, use `parse_mode()` first.
 ///
 /// ## Example
 ///
@@ -334,7 +356,7 @@ pub fn directory(
 /// pub fn record_builder(mocks_directory: String) -> recorder.RecorderBuilder {
 ///   recorder.new()
 ///   |> directory(mocks_directory)
-///   |> mode("record")
+///   |> mode(recorder.Record)
 ///   |> key(matching.request_key(
 ///     method: True,
 ///     url: True,
@@ -345,8 +367,48 @@ pub fn directory(
 ///   |> response_transformer(drop_body)
 /// }
 /// ```
-pub fn mode(builder: RecorderBuilder, mode: String) -> RecorderBuilder {
+pub fn mode(builder: RecorderBuilder, mode: Mode) -> RecorderBuilder {
   RecorderBuilder(..builder, mode: mode)
+}
+
+/// Read a mode from a text, for example from an environment variable or a
+/// command line.
+///
+/// The texts are `"record"`, `"playback"` and `"passthrough"`. They are
+/// case-sensitive. Any other text gives
+/// `Error("Unknown recorder mode: <text>. Expected one of: record, playback, passthrough")`.
+///
+/// ### Start a recorder from a mode text <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_parse_mode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
+/// ```gleam
+/// import dream_http_client/recorder.{
+///   type Recorder, directory, mode, parse_mode, start,
+/// }
+/// import gleam/result
+///
+/// pub fn start_from_text(
+///   mode_text: String,
+///   mocks_directory: String,
+/// ) -> Result(Recorder, String) {
+///   use recorder_mode <- result.try(parse_mode(mode_text))
+///   recorder.new()
+///   |> directory(mocks_directory)
+///   |> mode(recorder_mode)
+///   |> start()
+/// }
+/// ```
+pub fn parse_mode(text: String) -> Result(Mode, String) {
+  case text {
+    "record" -> Ok(Record)
+    "playback" -> Ok(Playback)
+    "passthrough" -> Ok(Passthrough)
+    _ ->
+      Error(
+        "Unknown recorder mode: "
+        <> text
+        <> ". Expected one of: record, playback, passthrough",
+      )
+  }
 }
 
 /// Set the match key function.
@@ -388,7 +450,7 @@ pub fn mode(builder: RecorderBuilder, mode: String) -> RecorderBuilder {
 /// pub fn record_builder(mocks_directory: String) -> recorder.RecorderBuilder {
 ///   recorder.new()
 ///   |> directory(mocks_directory)
-///   |> mode("record")
+///   |> mode(recorder.Record)
 ///   |> key(matching.request_key(
 ///     method: True,
 ///     url: True,
@@ -442,7 +504,7 @@ pub fn key(
 /// pub fn record_builder(mocks_directory: String) -> recorder.RecorderBuilder {
 ///   recorder.new()
 ///   |> directory(mocks_directory)
-///   |> mode("record")
+///   |> mode(recorder.Record)
 ///   |> key(matching.request_key(
 ///     method: True,
 ///     url: True,
@@ -496,7 +558,7 @@ pub fn request_transformer(
 /// pub fn record_builder(mocks_directory: String) -> recorder.RecorderBuilder {
 ///   recorder.new()
 ///   |> directory(mocks_directory)
-///   |> mode("record")
+///   |> mode(recorder.Record)
 ///   |> key(matching.request_key(
 ///     method: True,
 ///     url: True,
@@ -530,19 +592,13 @@ fn identity_response_transformer(
 /// Recorder process state
 type RecorderState {
   RecorderState(
-    mode: RecorderMode,
+    mode: Mode,
     directory: String,
     key: matching.MatchKey,
     request_transformer: RequestTransformer,
     response_transformer: ResponseTransformer,
     recordings: dict.Dict(String, List(recording.Recording)),
   )
-}
-
-type RecorderMode {
-  Record
-  Playback
-  Passthrough
 }
 
 /// Start a new recorder from a builder.
@@ -572,7 +628,7 @@ type RecorderMode {
 ///   use rec <- result.map(
 ///     recorder.new()
 ///     |> directory(mocks_directory)
-///     |> mode("playback")
+///     |> mode(recorder.Playback)
 ///     |> start(),
 ///   )
 ///   recorder.is_record_mode(rec)
@@ -588,65 +644,44 @@ type RecorderMode {
 /// - Multiple requests can share the same recorder handle safely
 /// - The recorder process runs until `stop()` is called or the VM shuts down
 pub fn start(builder: RecorderBuilder) -> Result(Recorder, String) {
-  let mode = parse_mode(builder.mode)
-  let directory = resolve_directory(mode, builder.directory)
+  use directory <- result.try(resolve_directory(builder.mode, builder.directory))
+  use recordings <- result.try(initial_recordings(builder, directory))
+  let initial_state =
+    RecorderState(
+      mode: builder.mode,
+      directory: directory,
+      key: builder.key,
+      request_transformer: builder.request_transformer,
+      response_transformer: builder.response_transformer,
+      recordings: recordings,
+    )
+  actor.new(initial_state)
+  |> actor.on_message(handle_recorder_message)
+  |> actor.start
+  |> result.map(wrap_recorder_subject)
+  |> result.map_error(string.inspect)
+  |> result.map_error(string.append("Failed to start recorder: ", _))
+}
 
-  case mode, directory {
-    Error(e), _ -> Error(e)
-    _, Error(e) -> Error(e)
-    Ok(parsed_mode), Ok(dir) -> {
-      let initial_state =
-        RecorderState(
-          mode: parsed_mode,
-          directory: dir,
-          key: builder.key,
-          request_transformer: builder.request_transformer,
-          response_transformer: builder.response_transformer,
-          recordings: dict.new(),
-        )
-
-      case parsed_mode {
-        Playback -> {
-          case storage.load_recordings(dir) {
-            Ok(loaded) -> {
-              let recordings_map =
-                build_recordings_map(
-                  loaded,
-                  builder.key,
-                  builder.request_transformer,
-                )
-              let state_with_recordings =
-                RecorderState(
-                  mode: parsed_mode,
-                  directory: dir,
-                  key: builder.key,
-                  request_transformer: builder.request_transformer,
-                  response_transformer: builder.response_transformer,
-                  recordings: recordings_map,
-                )
-              actor.new(state_with_recordings)
-              |> actor.on_message(handle_recorder_message)
-              |> actor.start
-              |> result.map(wrap_recorder_subject)
-              |> result.map_error(string.inspect)
-              |> result.map_error(string.append("Failed to start recorder: ", _))
-            }
-            Error(load_error) ->
-              Error(
-                "Failed to load recordings in playback mode: " <> load_error,
-              )
-          }
-        }
-        _ -> {
-          actor.new(initial_state)
-          |> actor.on_message(handle_recorder_message)
-          |> actor.start
-          |> result.map(wrap_recorder_subject)
-          |> result.map_error(string.inspect)
-          |> result.map_error(string.append("Failed to start recorder: ", _))
-        }
-      }
-    }
+// A playback recorder starts with every recording in its directory. The
+// other modes start with none.
+fn initial_recordings(
+  builder: RecorderBuilder,
+  directory: String,
+) -> Result(dict.Dict(String, List(recording.Recording)), String) {
+  case builder.mode {
+    Playback ->
+      storage.load_recordings(directory)
+      |> result.map(build_recordings_map(
+        _,
+        builder.key,
+        builder.request_transformer,
+      ))
+      |> result.map_error(string.append(
+        "Failed to load recordings in playback mode: ",
+        _,
+      ))
+    Record | Passthrough -> Ok(dict.new())
   }
 }
 
@@ -691,34 +726,15 @@ fn transform_recording_for_persistence(
   recording.Recording(request: request2, response: response2)
 }
 
-fn parse_mode(mode: String) -> Result(RecorderMode, String) {
-  case mode {
-    "record" -> Ok(Record)
-    "playback" -> Ok(Playback)
-    "passthrough" -> Ok(Passthrough)
-    _ ->
-      Error(
-        "Unknown recorder mode: "
-        <> mode
-        <> ". Expected one of: record, playback, passthrough",
-      )
-  }
-}
-
 fn resolve_directory(
-  mode: Result(RecorderMode, String),
+  mode: Mode,
   directory: option.Option(String),
 ) -> Result(String, String) {
-  case mode {
-    Error(e) -> Error(e)
-    Ok(Record) | Ok(Playback) -> {
-      case directory {
-        option.Some(dir) -> Ok(dir)
-        option.None ->
-          Error("Recorder directory is required for record/playback")
-      }
-    }
-    Ok(Passthrough) -> Ok("")
+  case mode, directory {
+    Record, option.Some(dir) | Playback, option.Some(dir) -> Ok(dir)
+    Record, option.None | Playback, option.None ->
+      Error("Recorder directory is required for record/playback")
+    Passthrough, _ -> Ok("")
   }
 }
 
@@ -878,7 +894,7 @@ type RecorderMessage {
     ),
   )
   GetRecordings(reply_to: process.Subject(List(recording.Recording)))
-  CheckMode(reply_to: process.Subject(RecorderMode))
+  CheckMode(reply_to: process.Subject(Mode))
   TransformResponse(
     request: recording.RecordedRequest,
     response: recording.RecordedResponse,
@@ -1022,7 +1038,7 @@ fn replace_json_string_value(
 ///   use rec <- result.try(
 ///     recorder.new()
 ///     |> directory(mocks_directory)
-///     |> mode("record")
+///     |> mode(recorder.Record)
 ///     |> start(),
 ///   )
 ///
@@ -1099,7 +1115,7 @@ pub fn add_recording(
 ///   use rec <- result.map(
 ///     recorder.new()
 ///     |> directory(mocks_directory)
-///     |> mode("record")
+///     |> mode(recorder.Record)
 ///     |> start(),
 ///   )
 ///   recorder.is_record_mode(rec)
@@ -1124,7 +1140,7 @@ pub fn is_playback_mode(recorder: Recorder) -> Bool {
 
 /// The mode of the recorder, or `Error(Nil)` when the recorder does not
 /// answer within 1 second.
-fn current_mode(recorder: Recorder) -> Result(RecorderMode, Nil) {
+fn current_mode(recorder: Recorder) -> Result(Mode, Nil) {
   let Recorder(subject) = recorder
   let reply_subject = process.new_subject()
   process.send(subject, CheckMode(reply_subject))
@@ -1173,7 +1189,7 @@ fn current_mode(recorder: Recorder) -> Result(RecorderMode, Nil) {
 ///   use rec <- result.map(
 ///     recorder.new()
 ///     |> directory(mocks_directory)
-///     |> mode("record")
+///     |> mode(recorder.Record)
 ///     |> response_transformer(drop_body)
 ///     |> start(),
 ///   )
@@ -1233,7 +1249,7 @@ pub fn transform_response(
 ///   use rec <- result.map(
 ///     recorder.new()
 ///     |> directory(mocks_directory)
-///     |> mode("playback")
+///     |> mode(recorder.Playback)
 ///     |> start(),
 ///   )
 ///
@@ -1320,7 +1336,7 @@ pub fn find_recording(
 ///   use rec <- result.try(
 ///     recorder.new()
 ///     |> directory(mocks_directory)
-///     |> mode("record")
+///     |> mode(recorder.Record)
 ///     |> start(),
 ///   )
 ///
@@ -1392,7 +1408,7 @@ pub fn get_recordings(recorder: Recorder) -> List(recording.Recording) {
 ///   use rec <- result.try(
 ///     recorder.new()
 ///     |> directory(mocks_directory)
-///     |> mode("record")
+///     |> mode(recorder.Record)
 ///     |> start(),
 ///   )
 ///

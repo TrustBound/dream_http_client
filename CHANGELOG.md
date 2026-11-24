@@ -197,6 +197,15 @@ version.
   change: a UTF-8 body is stored as text, and any other body as base64.
 - **BREAKING:** `client.get_body(request)` returns a `BitArray`. A body set
   with `client.body(String)` is the UTF-8 bytes of its string.
+- **BREAKING:** The recorder mode is a typed value, `recorder.Mode`, with
+  the constructors `Record`, `Playback` and `Passthrough`. `recorder.mode`
+  takes a `Mode`, and `RecorderBuilder.mode` is a `Mode`, so
+  `mode("playback")` becomes `mode(recorder.Playback)`. A wrong mode name is
+  a compile error, and `start` has no unknown-mode error any more. For a mode
+  in a text, for example from an environment variable, use
+  `recorder.parse_mode(text)`. It accepts `"record"`, `"playback"` and
+  `"passthrough"`, and gives the error that `start` gave before for any
+  other text.
 - A `MatchKey` with `body: True` has `base64:` and the base64 form of a
   request body that is not UTF-8.
 - Moved to its own repository
@@ -331,7 +340,7 @@ version.
 
 ### Testing
 
-- 744 tests, 0 failed, 100% line coverage (1233 of 1233 lines), in about 150 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
+- 751 tests, 0 failed, 100% line coverage (1222 of 1222 lines), in about 150 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
 
 ## [5.1.3] - 2026-03-17
 

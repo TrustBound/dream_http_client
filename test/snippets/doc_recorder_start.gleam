@@ -5,7 +5,7 @@ pub fn start_playback(mocks_directory: String) -> Result(Bool, String) {
   use rec <- result.map(
     recorder.new()
     |> directory(mocks_directory)
-    |> mode("playback")
+    |> mode(recorder.Playback)
     |> start(),
   )
   recorder.is_record_mode(rec)

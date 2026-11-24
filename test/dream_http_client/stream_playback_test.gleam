@@ -459,7 +459,7 @@ fn playback_recorder(
       "k",
     )
   let assert Ok(rec) =
-    recorder.new() |> directory(path) |> mode("playback") |> start()
+    recorder.new() |> directory(path) |> mode(recorder.Playback) |> start()
   rec
 }
 

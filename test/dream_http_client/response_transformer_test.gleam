@@ -25,7 +25,7 @@ pub fn tests() -> TestSuite {
       let assert Ok(rec) =
         recorder.new()
         |> directory(path)
-        |> mode("record")
+        |> mode(recorder.Record)
         |> response_transformer(transformers.scrub_cookies_and_body)
         |> start()
 

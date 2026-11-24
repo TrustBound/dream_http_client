@@ -41,15 +41,15 @@ The idea that makes recordings easy is the one from Getting started: your API fu
 
 ## Which mode to use
 
-A recorder runs in one of three modes, which you pick by name when you start it:
+A recorder runs in one of three modes. You pick one with a `recorder.Mode` value when you start it:
 
 | Your situation | Mode | What the client does |
 |:---|:---|:---|
-| You want new recordings from the real API | `"record"` | Sends each request to the network, and saves the request and its response to a file at once. |
-| Tests that must run without the network | `"playback"` | Answers each request from a recording, and sends nothing. A request with no recording fails with `NoRecording`. |
-| A recorder is attached, but you want plain requests for now | `"passthrough"` | Sends each request to the network, and saves nothing. |
+| You want new recordings from the real API | `recorder.Record` | Sends each request to the network, and saves the request and its response to a file at once. |
+| Tests that must run without the network | `recorder.Playback` | Answers each request from a recording, and sends nothing. A request with no recording fails with `NoRecording`. |
+| A recorder is attached, but you want plain requests for now | `recorder.Passthrough` | Sends each request to the network, and saves nothing. |
 
-`recorder.new()` starts in `"passthrough"` mode. Mode names are case-sensitive. `recorder.is_record_mode(recorder)` tells you whether a running recorder records, for code that does something extra while it records.
+`recorder.new()` starts in `Passthrough` mode. To read the mode from a text, for example from an environment variable, use `recorder.parse_mode`: it accepts `"record"`, `"playback"` and `"passthrough"`, and returns an `Error` for any other text. `recorder.is_record_mode(recorder)` tells you whether a running recorder records, for code that does something extra while it records.
 
 ## Step 1: Record a real call
 
@@ -65,15 +65,15 @@ import dream_http_client/recorder.{type Recorder, directory, mode, start}
 import gleam/int
 import gleam/result
 
-/// Starts a recorder in `mode_name` ("record", "playback" or
-/// "passthrough") that keeps its recordings in `recordings`.
+/// Starts a recorder in `recorder_mode` (`Record`, `Playback` or
+/// `Passthrough`) that keeps its recordings in `recordings`.
 pub fn start_recorder(
-  mode_name: String,
+  recorder_mode: recorder.Mode,
   recordings: String,
 ) -> Result(Recorder, String) {
   recorder.new()
   |> directory(recordings)
-  |> mode(mode_name)
+  |> mode(recorder_mode)
   |> start()
 }
 
@@ -99,7 +99,7 @@ fn describe_send_error(error: client.SendError) -> String {
 }
 ```
 
-To record, start a recorder in `"record"` mode, put it on the base request with `client.recorder`, and stop it when you're done with it:
+To record, start a recorder in `Record` mode, put it on the base request with `client.recorder`, and stop it when you're done with it:
 
 ### Record the text once <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_round_trip.gleam#L10-L19"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
@@ -108,7 +108,7 @@ pub fn record_text(
   api: ClientRequest,
   recordings: String,
 ) -> Result(String, String) {
-  use recording <- result.try(start_recorder("record", recordings))
+  use recording <- result.try(start_recorder(recorder.Record, recordings))
   let text = fetch_text(api |> with_recorder(recording))
   // Ends the recorder process: the recording is already on disk
   use Nil <- result.try(recorder.stop(recording))
@@ -130,7 +130,7 @@ A recorded call returns only when its file is on disk: `send` returns after the 
 
 ## Step 2: Play it back with no network
 
-Now stop the server, start a recorder in `"playback"` mode on the same directory, and call the same function:
+Now stop the server, start a recorder in `Playback` mode on the same directory, and call the same function:
 
 ### Play the text back <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_round_trip.gleam#L21-L27"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
@@ -139,7 +139,7 @@ pub fn play_back_text(
   api: ClientRequest,
   recordings: String,
 ) -> Result(String, String) {
-  use playback <- result.try(start_recorder("playback", recordings))
+  use playback <- result.try(start_recorder(recorder.Playback, recordings))
   fetch_text(api |> with_recorder(playback))
 }
 ```
@@ -206,7 +206,7 @@ Error(RequestError(NoRecording("GET", "http://localhost:19996/json")))
 
 That's the error you see when a test calls an endpoint you never recorded, or when the request changed since you recorded it, for example a new query parameter. Record again, or fix the request.
 
-In `"passthrough"` mode, the same request goes to the network, and `recorder.get_recordings` stays empty.
+In `Passthrough` mode, the same request goes to the network, and `recorder.get_recordings` stays empty.
 
 ## Step 5: Write a recording by hand
 
@@ -290,10 +290,11 @@ For the file of the 429 above, `recorded_statuses` returns `Ok([429])`. `recordi
 
 The usual setup: commit the recordings to your repository, and start a playback recorder on their directory in your tests. This package has one such file, `test/fixtures/api/GET_localhost__text_7646ad.json`, which answers `GET http://localhost:9876/text` with `Recorded text from the fixture`. Here's a test of `fetch_text` that plays it back. It uses [dream_test](https://hexdocs.pm/dream_test), set up as in [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#test-your-code):
 
-### Test fetch_text with a committed recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_testing.gleam#L6-L35"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test fetch_text with a committed recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_testing.gleam#L6-L37"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{host, port, recorder as with_recorder, scheme}
+import dream_http_client/recorder
 import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/suite.{type TestSuite}
 import dream_test/unit.{describe, it}
@@ -304,7 +305,8 @@ pub fn tests() -> TestSuite {
   describe("fetch_text", [
     it("reads the recorded text", fn() {
       // Arrange
-      let assert Ok(playback) = start_recorder("playback", "test/fixtures/api")
+      let assert Ok(playback) =
+        start_recorder(recorder.Playback, "test/fixtures/api")
       let api =
         client.new()
         |> scheme(http.Http)
@@ -327,7 +329,7 @@ pub fn tests() -> TestSuite {
 
 The test passes whether or not a server runs on port 9876, and the text it checks only exists in the recording, so it can't pass by accident against a live server.
 
-To refresh the recordings, run the same code once with `start_recorder("record", ...)` against the real API, then switch back to `"playback"` and commit the new files.
+To refresh the recordings, run the same code once with `start_recorder(recorder.Record, ...)` against the real API, then switch back to `recorder.Playback` and commit the new files.
 
 ## Common pitfalls
 

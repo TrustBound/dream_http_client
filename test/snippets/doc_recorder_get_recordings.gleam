@@ -10,7 +10,7 @@ pub fn count_captured(mocks_directory: String) -> Result(String, String) {
   use rec <- result.try(
     recorder.new()
     |> directory(mocks_directory)
-    |> mode("record")
+    |> mode(recorder.Record)
     |> start(),
   )
 

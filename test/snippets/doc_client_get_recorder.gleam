@@ -7,7 +7,7 @@ pub fn has_recorder(mocks_directory: String) -> Result(Bool, String) {
   use rec <- result.map(
     recorder.new()
     |> directory(mocks_directory)
-    |> mode("record")
+    |> mode(recorder.Record)
     |> start(),
   )
   let request = client.new() |> client.recorder(rec)

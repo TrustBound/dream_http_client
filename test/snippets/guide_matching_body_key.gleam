@@ -7,12 +7,12 @@ import dream_http_client/matching
 import dream_http_client/recorder.{type Recorder, directory, key, mode, start}
 
 pub fn start_search_recorder(
-  mode_name: String,
+  recorder_mode: recorder.Mode,
   recordings: String,
 ) -> Result(Recorder, String) {
   recorder.new()
   |> directory(recordings)
-  |> mode(mode_name)
+  |> mode(recorder_mode)
   |> key(matching.request_key(
     method: True,
     url: True,

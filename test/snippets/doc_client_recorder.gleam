@@ -8,7 +8,7 @@ pub fn recorded_request(
   use rec <- result.map(
     recorder.new()
     |> directory(mocks_directory)
-    |> mode("record")
+    |> mode(recorder.Record)
     |> start(),
   )
   client.new() |> host("api.example.com") |> recorder(rec)

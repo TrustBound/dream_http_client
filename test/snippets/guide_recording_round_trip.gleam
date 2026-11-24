@@ -11,7 +11,7 @@ pub fn record_text(
   api: ClientRequest,
   recordings: String,
 ) -> Result(String, String) {
-  use recording <- result.try(start_recorder("record", recordings))
+  use recording <- result.try(start_recorder(recorder.Record, recordings))
   let text = fetch_text(api |> with_recorder(recording))
   // Ends the recorder process: the recording is already on disk
   use Nil <- result.try(recorder.stop(recording))
@@ -22,6 +22,6 @@ pub fn play_back_text(
   api: ClientRequest,
   recordings: String,
 ) -> Result(String, String) {
-  use playback <- result.try(start_recorder("playback", recordings))
+  use playback <- result.try(start_recorder(recorder.Playback, recordings))
   fetch_text(api |> with_recorder(playback))
 }

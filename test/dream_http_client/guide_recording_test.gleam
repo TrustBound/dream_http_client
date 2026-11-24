@@ -110,7 +110,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let recordings = temp_directory.path("guide_recording_stream")
         record_text_and_stream(recordings, 19_995)
-        let assert Ok(playback) = start_recorder("playback", recordings)
+        let assert Ok(playback) = start_recorder(recorder.Playback, recordings)
 
         // Act
         let chunks = fetch_chunks(api(19_995) |> client.recorder(playback))
@@ -131,7 +131,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let recordings = temp_directory.path("guide_recording_miss")
         record_text_and_stream(recordings, 19_996)
-        let assert Ok(playback) = start_recorder("playback", recordings)
+        let assert Ok(playback) = start_recorder(recorder.Playback, recordings)
 
         // Act
         let result =
@@ -150,7 +150,8 @@ pub fn tests() -> TestSuite {
       it("passthrough mode sends the request and records nothing", fn() {
         // Arrange
         let recordings = temp_directory.path("guide_recording_passthrough")
-        let assert Ok(passthrough) = start_recorder("passthrough", recordings)
+        let assert Ok(passthrough) =
+          start_recorder(recorder.Passthrough, recordings)
 
         // Act
         let text = fetch_text(api(9876) |> client.recorder(passthrough))
@@ -187,7 +188,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let recordings = temp_directory.path("guide_recording_429")
         let assert Ok(Nil) = save_rate_limit_recording(recordings)
-        let assert Ok(playback) = start_recorder("playback", recordings)
+        let assert Ok(playback) = start_recorder(recorder.Playback, recordings)
 
         // Act
         let text = fetch_text(api(9876) |> client.recorder(playback))
@@ -268,8 +269,10 @@ pub fn tests() -> TestSuite {
       it("is_record_mode tells a recording recorder apart", fn() {
         // Arrange
         let recordings = temp_directory.path("guide_recording_is_record")
-        let assert Ok(recording_recorder) = start_recorder("record", recordings)
-        let assert Ok(passthrough) = start_recorder("passthrough", recordings)
+        let assert Ok(recording_recorder) =
+          start_recorder(recorder.Record, recordings)
+        let assert Ok(passthrough) =
+          start_recorder(recorder.Passthrough, recordings)
 
         // Act
         let modes = #(
@@ -286,7 +289,7 @@ pub fn tests() -> TestSuite {
       it("add_recording keeps the recording in record mode", fn() {
         // Arrange
         let recordings = temp_directory.path("guide_recording_add_record")
-        let assert Ok(recorder) = start_recorder("record", recordings)
+        let assert Ok(recorder) = start_recorder(recorder.Record, recordings)
 
         // Act
         let assert Ok(Nil) = recorder.add_recording(recorder, hand_recording())
@@ -302,7 +305,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let recordings = temp_directory.path("guide_recording_add_playback")
         let assert Ok(Nil) = simplifile.create_directory_all(recordings)
-        let assert Ok(playback) = start_recorder("playback", recordings)
+        let assert Ok(playback) = start_recorder(recorder.Playback, recordings)
 
         // Act
         let assert Ok(Nil) = recorder.add_recording(playback, hand_recording())
@@ -329,7 +332,7 @@ fn api(port: Int) -> client.ClientRequest {
 /// the server.
 fn record_text_and_stream(recordings: String, port: Int) -> Nil {
   let assert Ok(mock) = server.start(port)
-  let assert Ok(recorder) = start_recorder("record", recordings)
+  let assert Ok(recorder) = start_recorder(recorder.Record, recordings)
   let _text = fetch_text(api(port) |> client.recorder(recorder))
   let _chunks = fetch_chunks(api(port) |> client.recorder(recorder))
   let assert Ok(Nil) = recorder.stop(recorder)

@@ -262,7 +262,10 @@ pub fn tests() -> TestSuite {
             "second",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let value =
@@ -306,7 +309,10 @@ pub fn tests() -> TestSuite {
             "second",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
         let errors = process.new_subject()
         let request =
           mock_server.get("/text")
@@ -342,7 +348,10 @@ pub fn tests() -> TestSuite {
             "k",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let assert Ok(handle) =
@@ -376,7 +385,10 @@ pub fn tests() -> TestSuite {
         let assert Ok(Nil) =
           storage.save_recording_immediately(path, streaming, "k")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let assert Ok(handle) =
@@ -397,7 +409,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("cp_yield_record_refused")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
 
         // Act
         let value =
@@ -425,7 +437,10 @@ pub fn tests() -> TestSuite {
           // Arrange
           let path = temp_directory.path("cp_yield_record_drop")
           let assert Ok(rec) =
-            recorder.new() |> directory(path) |> mode("record") |> start()
+            recorder.new()
+            |> directory(path)
+            |> mode(recorder.Record)
+            |> start()
 
           // Act
           let _items =
@@ -466,7 +481,10 @@ pub fn tests() -> TestSuite {
           // Arrange
           let path = temp_directory.path("cp_start_record_drop")
           let assert Ok(rec) =
-            recorder.new() |> directory(path) |> mode("record") |> start()
+            recorder.new()
+            |> directory(path)
+            |> mode(recorder.Record)
+            |> start()
           let ended = process.new_subject()
           let request =
             mock_server.get("/stream/drop")

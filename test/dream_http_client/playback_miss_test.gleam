@@ -124,7 +124,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(recording) =
           recorder.new()
           |> directory(temp_directory.path("playback_miss_record"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let request = edge_server.request(port) |> client.recorder(recording)
 
@@ -164,7 +164,10 @@ fn playback_request(port: Int, label: String) -> client.ClientRequest {
   let recordings = temp_directory.path("playback_miss_" <> label)
   let assert Ok(Nil) = simplifile.create_directory_all(recordings)
   let assert Ok(playback) =
-    recorder.new() |> directory(recordings) |> mode("playback") |> start()
+    recorder.new()
+    |> directory(recordings)
+    |> mode(recorder.Playback)
+    |> start()
   edge_server.request(port)
   |> client.path("/users/42")
   |> client.query("full=true")

@@ -162,7 +162,7 @@ pub fn tests() -> TestSuite {
         let path =
           temp_directory.path("flow_yield_status_" <> int.to_string(port))
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
 
         // Act
         let _chunks =
@@ -185,7 +185,7 @@ pub fn tests() -> TestSuite {
         let path =
           temp_directory.path("flow_start_status_" <> int.to_string(port))
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
         let ended = process.new_subject()
         let assert Ok(_handle) =
           edge_server.request(port)
@@ -210,7 +210,7 @@ pub fn tests() -> TestSuite {
         let path =
           temp_directory.path("flow_yield_failed_" <> int.to_string(port))
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
 
         // Act
         let _chunks =
@@ -234,7 +234,7 @@ pub fn tests() -> TestSuite {
         let path =
           temp_directory.path("flow_start_failed_" <> int.to_string(port))
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
         let failed = process.new_subject()
         let assert Ok(_handle) =
           edge_server.request(port)

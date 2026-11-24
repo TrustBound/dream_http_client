@@ -67,7 +67,8 @@ pub fn tests() -> TestSuite {
         // Arrange
         let recordings = temp_directory.path("guide_matching_body")
         record_two_searches(recordings)
-        let assert Ok(playback) = start_search_recorder("playback", recordings)
+        let assert Ok(playback) =
+          start_search_recorder(recorder.Playback, recordings)
 
         // Act
         let lines =
@@ -89,7 +90,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(playback) =
           recorder.new()
           |> recorder.directory(recordings)
-          |> recorder.mode("playback")
+          |> recorder.mode(recorder.Playback)
           |> recorder.start()
 
         // Act
@@ -111,7 +112,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(plain) =
           recorder.new()
           |> recorder.directory(recordings)
-          |> recorder.mode("record")
+          |> recorder.mode(recorder.Record)
           |> recorder.start()
         let _response =
           session_request(port, "test-token-123")
@@ -136,7 +137,7 @@ pub fn tests() -> TestSuite {
         use port <- edge_server.with("set_cookie")
         record_session(recordings, port)
         let assert Ok(playback) =
-          start_scrubbing_recorder("playback", recordings)
+          start_scrubbing_recorder(recorder.Playback, recordings)
 
         // Act
         let lines = [
@@ -161,14 +162,14 @@ pub fn tests() -> TestSuite {
         let recordings = temp_directory.path("guide_matching_cookie")
         use port <- edge_server.with("set_cookie")
         let assert Ok(scrubbing) =
-          start_scrubbing_recorder("record", recordings)
+          start_scrubbing_recorder(recorder.Record, recordings)
         let live =
           session_request(port, "test-token-123")
           |> client.recorder(scrubbing)
           |> client.send()
         let assert Ok(Nil) = recorder.stop(scrubbing)
         let assert Ok(playback) =
-          start_scrubbing_recorder("playback", recordings)
+          start_scrubbing_recorder(recorder.Playback, recordings)
 
         // Act
         let lines = [
@@ -225,7 +226,7 @@ pub fn tests() -> TestSuite {
             key(with_cookie.request),
           )
         let assert Ok(playback) =
-          start_scrubbing_recorder("playback", recordings)
+          start_scrubbing_recorder(recorder.Playback, recordings)
 
         // Act
         let headers =
@@ -268,7 +269,7 @@ fn post_search(
 }
 
 fn record_two_searches(recordings: String) -> Nil {
-  let assert Ok(recording) = start_search_recorder("record", recordings)
+  let assert Ok(recording) = start_search_recorder(recorder.Record, recordings)
   let _milk = post_search("milk", recording)
   let _eggs = post_search("eggs", recording)
   let assert Ok(Nil) = recorder.stop(recording)
@@ -283,7 +284,8 @@ fn session_request(port: Int, token: String) -> client.ClientRequest {
 }
 
 fn record_session(recordings: String, port: Int) -> Nil {
-  let assert Ok(scrubbing) = start_scrubbing_recorder("record", recordings)
+  let assert Ok(scrubbing) =
+    start_scrubbing_recorder(recorder.Record, recordings)
   let _response =
     session_request(port, "test-token-123")
     |> client.recorder(scrubbing)

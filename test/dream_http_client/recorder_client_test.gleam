@@ -57,7 +57,10 @@ pub fn tests() -> TestSuite {
             "k",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let value =
@@ -93,7 +96,10 @@ pub fn tests() -> TestSuite {
             "k",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let value =
@@ -143,7 +149,10 @@ pub fn tests() -> TestSuite {
             "k",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let value =
@@ -186,7 +195,10 @@ pub fn tests() -> TestSuite {
             "k",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let value =
@@ -227,7 +239,10 @@ pub fn tests() -> TestSuite {
             "second",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let value =
@@ -288,7 +303,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("rc_send_record_response"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
 
         // Act
@@ -315,7 +330,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("rc_send_record_saves")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
 
         // Act
         let _sent =
@@ -348,7 +363,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("rc_send_record_headers")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
 
         // Act
         let _sent =
@@ -379,7 +394,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(path)
-          |> mode("record")
+          |> mode(recorder.Record)
           |> response_transformer(transformers.scrub_cookies_and_body)
           |> start()
 
@@ -418,7 +433,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(writer) =
           recorder.new()
           |> directory(path)
-          |> mode("record")
+          |> mode(recorder.Record)
           |> request_transformer(transformers.scrub_auth_and_body)
           |> start()
         let assert Ok(_sent) =
@@ -430,7 +445,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(path)
-          |> mode("playback")
+          |> mode(recorder.Playback)
           |> request_transformer(transformers.scrub_auth_and_body)
           |> start()
 
@@ -454,7 +469,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory("test/fixtures/recordings")
-          |> mode("playback")
+          |> mode(recorder.Playback)
           |> start()
 
         // Act
@@ -493,7 +508,10 @@ pub fn tests() -> TestSuite {
             "k",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let request = mock_server.get("/text") |> client.recorder(rec)
@@ -525,7 +543,10 @@ pub fn tests() -> TestSuite {
             "k",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let request = mock_server.get("/text") |> client.recorder(rec)
@@ -546,7 +567,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("rc_yield_miss"))
-          |> mode("passthrough")
+          |> mode(recorder.Passthrough)
           |> start()
 
         // Act
@@ -575,7 +596,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("rc_yield_records")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
 
         // Act
         let _chunks =
@@ -618,7 +639,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("rc_yield_round_trip")
         let assert Ok(writer) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
         let _chunks =
           mock_server.get("/stream/fast")
           |> client.recorder(writer)
@@ -626,7 +647,10 @@ pub fn tests() -> TestSuite {
           |> yielder.to_list
         let assert Ok(Nil) = recorder.stop(writer)
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let request = mock_server.get("/stream/fast") |> client.recorder(rec)
@@ -672,7 +696,10 @@ pub fn tests() -> TestSuite {
             "k",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
         let chunks = process.new_subject()
         let ended = process.new_subject()
         let request =
@@ -707,7 +734,10 @@ pub fn tests() -> TestSuite {
             "k",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
         let chunks = process.new_subject()
         let ended = process.new_subject()
         let request =
@@ -734,7 +764,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("rc_start_miss"))
-          |> mode("passthrough")
+          |> mode(recorder.Passthrough)
           |> start()
         let chunks = process.new_subject()
         let ended = process.new_subject()
@@ -766,7 +796,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("rc_start_records")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
         let chunks = process.new_subject()
         let ended = process.new_subject()
         let request =
@@ -944,7 +974,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("rc_query_record")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
 
         // Act
         let _sent =
@@ -967,7 +997,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("rc_query_playback")
         let assert Ok(writer) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
         let assert Ok(_sent) =
           mock_server.get("/get")
           |> client.query("id=42")
@@ -975,7 +1005,10 @@ pub fn tests() -> TestSuite {
           |> client.send
         let assert Ok(Nil) = recorder.stop(writer)
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let value =

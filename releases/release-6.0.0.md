@@ -674,7 +674,7 @@ The package has nine guides in [`docs/guides/`](https://github.com/TrustBound/dr
 
 ## Testing
 
-744 tests, 0 failed, 100% line coverage (1233 of 1233 lines), in about 150
+751 tests, 0 failed, 100% line coverage (1222 of 1222 lines), in about 150
 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1,
 OTP 29, Gleam 1.19.2.
 
@@ -711,7 +711,7 @@ gleam deps update dream_http_client
 
 ### Migration Guide
 
-Step 1 applies to code that handles errors. Step 2 applies to code that reads a response body. Step 3 applies only to code that matches on `StreamMessage`.
+Step 1 applies to code that handles errors. Step 2 applies to code that reads a response body. Step 3 applies only to code that matches on `StreamMessage`. Step 4 applies to code that starts a recorder.
 
 #### 1. Error types
 
@@ -727,6 +727,7 @@ Step 1 applies to code that handles errors. Step 2 applies to code that reads a 
 | `recording.RecordedRequest.body: String` | `recording.RecordedRequest.body: BitArray` |
 | `client.get_body() -> String` | `client.get_body() -> BitArray` |
 | `recorder.add_recording() -> Nil` | `recorder.add_recording() -> Result(Nil, String)` |
+| `recorder.mode("playback")` | `recorder.mode(recorder.Playback)` |
 
 **Quick migration.** Before 6.0.0, a failed request gave
 `Error(client.RequestError(message: msg))`, where `msg` was a string. Now it
@@ -804,6 +805,10 @@ pub fn report_failure(
 #### 3. `StreamMessage.DecodeError`
 
 The constructor is removed. Remove the `DecodeError` branch from each `case` on a `StreamMessage`.
+
+#### 4. Recorder mode
+
+The recorder mode is a typed value, `recorder.Mode`: `Record`, `Playback` or `Passthrough`. `recorder.mode("playback")` becomes `recorder.mode(recorder.Playback)`. A wrong mode name is now a compile error, so `start` has no unknown-mode error any more. For a mode in a text, for example from an environment variable, use `recorder.parse_mode(text)`. It accepts `"record"`, `"playback"` and `"passthrough"`, and returns the error that `start` returned before for any other text.
 
 ## Documentation
 

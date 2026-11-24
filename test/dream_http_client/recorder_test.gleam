@@ -22,7 +22,7 @@ pub fn tests() -> TestSuite {
         let builder =
           recorder.new()
           |> directory(temp_directory.path("recorder_start_record"))
-          |> mode("record")
+          |> mode(recorder.Record)
 
         // Act
         let is_record =
@@ -44,7 +44,7 @@ pub fn tests() -> TestSuite {
         let builder =
           recorder.new()
           |> directory(temp_directory.path("recorder_start_playback"))
-          |> mode("playback")
+          |> mode(recorder.Playback)
 
         // Act
         let is_record =
@@ -80,24 +80,31 @@ pub fn tests() -> TestSuite {
         |> be_equal(Ok(False))
         |> or_fail_with("The default recorder should be in passthrough mode")
       }),
-      it("returns an error for an unknown mode", fn() {
+      it("starts in passthrough mode when the mode is set", fn() {
         // Arrange
-        let builder = recorder.new() |> mode("replay")
+        let builder = recorder.new() |> mode(recorder.Passthrough)
 
         // Act
-        let started = start(builder) |> result.map(fn(_) { Nil })
+        let modes =
+          start(builder)
+          |> result.map(fn(rec) {
+            let value = #(
+              recorder.is_record_mode(rec),
+              recorder.is_playback_mode(rec),
+            )
+            let _stopped = recorder.stop(rec)
+            value
+          })
 
         // Assert
-        started
+        modes
         |> should
-        |> be_equal(Error(
-          "Unknown recorder mode: replay. Expected one of: record, playback, passthrough",
-        ))
-        |> or_fail_with("An unknown mode should be an error")
+        |> be_equal(Ok(#(False, False)))
+        |> or_fail_with("A passthrough recorder should not record or play back")
       }),
       it("returns an error for record mode with no directory", fn() {
         // Arrange
-        let builder = recorder.new() |> mode("record")
+        let builder = recorder.new() |> mode(recorder.Record)
 
         // Act
         let started = start(builder) |> result.map(fn(_) { Nil })
@@ -113,7 +120,8 @@ pub fn tests() -> TestSuite {
         let path = temp_directory.path("recorder_start_bad_playback")
         let assert Ok(Nil) = simplifile.create_directory_all(path)
         let assert Ok(Nil) = simplifile.write(path <> "/bad.json", "{}")
-        let builder = recorder.new() |> directory(path) |> mode("playback")
+        let builder =
+          recorder.new() |> directory(path) |> mode(recorder.Playback)
 
         // Act
         let started = start(builder) |> result.map(fn(_) { Nil })
@@ -129,13 +137,69 @@ pub fn tests() -> TestSuite {
         |> or_fail_with("A bad file should stop playback from starting")
       }),
     ]),
+    group("parse_mode", [
+      it("reads record as Record", fn() {
+        // Act
+        let parsed = recorder.parse_mode("record")
+
+        // Assert
+        parsed
+        |> should
+        |> be_equal(Ok(recorder.Record))
+        |> or_fail_with("record should be Record")
+      }),
+      it("reads playback as Playback", fn() {
+        // Act
+        let parsed = recorder.parse_mode("playback")
+
+        // Assert
+        parsed
+        |> should
+        |> be_equal(Ok(recorder.Playback))
+        |> or_fail_with("playback should be Playback")
+      }),
+      it("reads passthrough as Passthrough", fn() {
+        // Act
+        let parsed = recorder.parse_mode("passthrough")
+
+        // Assert
+        parsed
+        |> should
+        |> be_equal(Ok(recorder.Passthrough))
+        |> or_fail_with("passthrough should be Passthrough")
+      }),
+      it("returns an error for an unknown mode", fn() {
+        // Act
+        let parsed = recorder.parse_mode("replay")
+
+        // Assert
+        parsed
+        |> should
+        |> be_equal(Error(
+          "Unknown recorder mode: replay. Expected one of: record, playback, passthrough",
+        ))
+        |> or_fail_with("An unknown mode should be an error")
+      }),
+      it("returns an error for a mode in another case", fn() {
+        // Act
+        let parsed = recorder.parse_mode("Playback")
+
+        // Assert
+        parsed
+        |> should
+        |> be_equal(Error(
+          "Unknown recorder mode: Playback. Expected one of: record, playback, passthrough",
+        ))
+        |> or_fail_with("Mode texts should be case-sensitive")
+      }),
+    ]),
     group("add_recording", [
       it("keeps a recording in record mode", fn() {
         // Arrange
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("recorder_add_record"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
 
         // Act
@@ -154,7 +218,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("recorder_add_saves")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
 
         // Act
         let assert Ok(Nil) =
@@ -173,7 +237,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("recorder_add_duplicate"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
 
         // Act
@@ -200,7 +264,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("recorder_add_two"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
 
         // Act
@@ -222,7 +286,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(Nil) = simplifile.create_directory_all(path)
         let assert Ok(Nil) = simplifile.set_permissions_octal(path, 0o555)
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
 
         // Act
         let saved = recorder.add_recording(rec, recorded.text_recording())
@@ -242,7 +306,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(Nil) = simplifile.create_directory_all(path)
         let assert Ok(Nil) = simplifile.set_permissions_octal(path, 0o555)
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
 
         // Act
         let _saved = recorder.add_recording(rec, recorded.text_recording())
@@ -276,7 +340,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("recorder_add_playback"))
-          |> mode("playback")
+          |> mode(recorder.Playback)
           |> start()
 
         // Act
@@ -303,7 +367,10 @@ pub fn tests() -> TestSuite {
             "GEThttp://localhost:9876/text",
           )
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let found = recorder.find_recording(rec, recorded.text_request())
@@ -319,7 +386,10 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("recorder_find_none")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
         let request =
           recording.RecordedRequest(..recorded.text_request(), path: "/other")
 
@@ -338,7 +408,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("recorder_find_record_mode"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let assert Ok(Nil) =
           recorder.add_recording(rec, recorded.text_recording())
@@ -357,7 +427,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("recorder_find_ambiguous")
         let assert Ok(writer) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
         let assert Ok(Nil) =
           recorder.add_recording(writer, recorded.text_recording())
         let assert Ok(Nil) =
@@ -370,7 +440,10 @@ pub fn tests() -> TestSuite {
           )
         let assert Ok(Nil) = recorder.stop(writer)
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let found = recorder.find_recording(rec, recorded.text_request())
@@ -388,7 +461,7 @@ pub fn tests() -> TestSuite {
         // Arrange
         let path = temp_directory.path("recorder_find_ambiguous_binary")
         let assert Ok(writer) =
-          recorder.new() |> directory(path) |> mode("record") |> start()
+          recorder.new() |> directory(path) |> mode(recorder.Record) |> start()
         let assert Ok(Nil) =
           recorder.add_recording(
             writer,
@@ -407,7 +480,10 @@ pub fn tests() -> TestSuite {
           )
         let assert Ok(Nil) = recorder.stop(writer)
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let found = recorder.find_recording(rec, recorded.text_request())
@@ -440,7 +516,10 @@ pub fn tests() -> TestSuite {
         let assert Ok(Nil) =
           storage.save_recording_immediately(path, streaming, "second")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let found = recorder.find_recording(rec, recorded.text_request())
@@ -481,7 +560,10 @@ pub fn tests() -> TestSuite {
         let assert Ok(Nil) =
           storage.save_recording_immediately(path, second, "second")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let found =
@@ -516,7 +598,10 @@ pub fn tests() -> TestSuite {
         let assert Ok(Nil) =
           storage.save_recording_immediately(path, second, "second")
         let assert Ok(rec) =
-          recorder.new() |> directory(path) |> mode("playback") |> start()
+          recorder.new()
+          |> directory(path)
+          |> mode(recorder.Playback)
+          |> start()
 
         // Act
         let found =
@@ -545,7 +630,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(path)
-          |> mode("playback")
+          |> mode(recorder.Playback)
           |> key(fn(request) { bit_array.base64_encode(request.body, True) })
           |> request_transformer(transformers.scrub_auth_and_body)
           |> start()
@@ -623,7 +708,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("recorder_stopped_mode"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let assert Ok(Nil) = recorder.stop(rec)
 
@@ -691,7 +776,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("recorder_stopped_add"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let assert Ok(Nil) = recorder.stop(rec)
 

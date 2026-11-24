@@ -8,7 +8,7 @@ pub fn record_call(mocks_directory: String) -> Result(BitArray, String) {
   use rec <- result.try(
     recorder.new()
     |> directory(mocks_directory)
-    |> mode("record")
+    |> mode(recorder.Record)
     |> start(),
   )
   client.new()

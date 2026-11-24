@@ -16,12 +16,12 @@ import gleam/list
 import gleam/string
 
 pub fn start_scrubbing_recorder(
-  mode_name: String,
+  recorder_mode: recorder.Mode,
   recordings: String,
 ) -> Result(Recorder, String) {
   recorder.new()
   |> directory(recordings)
-  |> mode(mode_name)
+  |> mode(recorder_mode)
   |> request_transformer(drop_authorization)
   |> response_transformer(drop_cookies)
   |> start()

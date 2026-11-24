@@ -26,7 +26,8 @@ pub fn tests() -> TestSuite {
       let recordings = "build/guide_matching_recordings"
       let _deleted = simplifile.delete(recordings)
       let assert Ok(mock) = server.start(19_997)
-      let assert Ok(scrubbing) = start_scrubbing_recorder("record", recordings)
+      let assert Ok(scrubbing) =
+        start_scrubbing_recorder(recorder.Record, recordings)
 
       // Act
       let _response =

@@ -138,7 +138,7 @@ fn unwritable_request(label: String) -> client.ClientRequest {
   let assert Ok(recorder_instance) =
     recorder.new()
     |> directory(parent <> "/recordings")
-    |> mode("record")
+    |> mode(recorder.Record)
     |> start()
   mock_server.get("/text")
   |> client.recorder(recorder_instance)
@@ -156,14 +156,14 @@ fn record_and_play(attempt: Int) -> Result(List(Int), String) {
   let mocks_directory =
     temp_directory.path("recording_on_disk_" <> int.to_string(attempt))
   let recorded =
-    start_recorder(mocks_directory, "record")
+    start_recorder(mocks_directory, recorder.Record)
     |> result.try(fn(recording_recorder) {
       send_both(recording_recorder)
       |> result.map_error(string.inspect)
     })
   recorded
   |> result.try(fn(_recorded_statuses) {
-    start_recorder(mocks_directory, "playback")
+    start_recorder(mocks_directory, recorder.Playback)
   })
   |> result.try(fn(playback_recorder) {
     send_both(playback_recorder)
@@ -173,7 +173,7 @@ fn record_and_play(attempt: Int) -> Result(List(Int), String) {
 
 fn start_recorder(
   mocks_directory: String,
-  recorder_mode: String,
+  recorder_mode: recorder.Mode,
 ) -> Result(recorder.Recorder, String) {
   recorder.new()
   |> directory(mocks_directory)

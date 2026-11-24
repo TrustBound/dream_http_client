@@ -10,15 +10,15 @@ import dream_http_client/recorder.{type Recorder, directory, mode, start}
 import gleam/int
 import gleam/result
 
-/// Starts a recorder in `mode_name` ("record", "playback" or
-/// "passthrough") that keeps its recordings in `recordings`.
+/// Starts a recorder in `recorder_mode` (`Record`, `Playback` or
+/// `Passthrough`) that keeps its recordings in `recordings`.
 pub fn start_recorder(
-  mode_name: String,
+  recorder_mode: recorder.Mode,
   recordings: String,
 ) -> Result(Recorder, String) {
   recorder.new()
   |> directory(recordings)
-  |> mode(mode_name)
+  |> mode(recorder_mode)
   |> start()
 }
 

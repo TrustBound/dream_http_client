@@ -70,12 +70,12 @@ import dream_http_client/matching
 import dream_http_client/recorder.{type Recorder, directory, key, mode, start}
 
 pub fn start_search_recorder(
-  mode_name: String,
+  recorder_mode: recorder.Mode,
   recordings: String,
 ) -> Result(Recorder, String) {
   recorder.new()
   |> directory(recordings)
-  |> mode(mode_name)
+  |> mode(recorder_mode)
   |> key(matching.request_key(
     method: True,
     url: True,
@@ -118,12 +118,12 @@ import gleam/list
 import gleam/string
 
 pub fn start_scrubbing_recorder(
-  mode_name: String,
+  recorder_mode: recorder.Mode,
   recordings: String,
 ) -> Result(Recorder, String) {
   recorder.new()
   |> directory(recordings)
-  |> mode(mode_name)
+  |> mode(recorder_mode)
   |> request_transformer(drop_authorization)
   |> response_transformer(drop_cookies)
   |> start()
@@ -209,7 +209,7 @@ That's what happens when you record the `milk` and `eggs` searches of Step 2 wit
 
 The test worth having is the one that keeps secrets out of your repository: record through your recorder, load what it saved, and check it. `storage.load_recordings` reads every recording in a directory, so the test doesn't depend on file names. Here's one for the scrubbing recorder. It uses [dream_test](https://hexdocs.pm/dream_test), set up as in [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#test-your-code):
 
-### Test that recordings hold no token <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_matching_testing.gleam#L6-L58"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test that recordings hold no token <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_matching_testing.gleam#L6-L59"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -235,7 +235,8 @@ pub fn tests() -> TestSuite {
       let recordings = "build/guide_matching_recordings"
       let _deleted = simplifile.delete(recordings)
       let assert Ok(mock) = server.start(19_997)
-      let assert Ok(scrubbing) = start_scrubbing_recorder("record", recordings)
+      let assert Ok(scrubbing) =
+        start_scrubbing_recorder(recorder.Record, recordings)
 
       // Act
       let _response =

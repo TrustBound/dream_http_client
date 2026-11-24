@@ -515,7 +515,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("edge_yielder_content_range"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let request = edge_server.request(port) |> client.recorder(rec)
 
@@ -537,7 +537,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("edge_yielder_empty"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let request = mock_server.get("/empty") |> client.recorder(rec)
 
@@ -613,7 +613,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("edge_start_trailers"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let ended = process.new_subject()
         let request =
@@ -641,7 +641,7 @@ pub fn tests() -> TestSuite {
         let assert Ok(rec) =
           recorder.new()
           |> directory(temp_directory.path("edge_start_content_range"))
-          |> mode("record")
+          |> mode(recorder.Record)
           |> start()
         let ended = process.new_subject()
         let request =

@@ -80,7 +80,10 @@ pub fn tests() -> TestSuite {
           key(split_line.request),
         )
       let assert Ok(playback) =
-        recorder.new() |> directory(recordings) |> mode("playback") |> start()
+        recorder.new()
+        |> directory(recordings)
+        |> mode(recorder.Playback)
+        |> start()
       let request =
         client.new()
         |> host("api.example.com")

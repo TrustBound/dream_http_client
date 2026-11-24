@@ -21,7 +21,7 @@ pub fn start_scrubbed(mocks_directory: String) -> Result(Bool, String) {
 
   use rec <- result.map(
     recorder.new()
-    |> mode("record")
+    |> mode(recorder.Record)
     |> directory(mocks_directory)
     |> key(key_fn)
     |> request_transformer(drop_auth)

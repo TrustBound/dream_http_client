@@ -65,7 +65,7 @@
 ////   use rec <- result.try(
 ////     recorder.new()
 ////     |> directory(mocks_directory)
-////     |> mode("record")
+////     |> mode(recorder.Record)
 ////     |> start(),
 ////   )
 ////   client.new()
@@ -1203,7 +1203,7 @@ pub fn body_bits(
 ///   use rec <- result.map(
 ///     recorder.new()
 ///     |> directory(mocks_directory)
-///     |> mode("record")
+///     |> mode(recorder.Record)
 ///     |> start(),
 ///   )
 ///   client.new() |> host("api.example.com") |> recorder(rec)
@@ -3108,7 +3108,7 @@ pub fn get_pool(client_request: ClientRequest) -> Option(ConnectionPool) {
 ///   use rec <- result.map(
 ///     recorder.new()
 ///     |> directory(mocks_directory)
-///     |> mode("record")
+///     |> mode(recorder.Record)
 ///     |> start(),
 ///   )
 ///   let request = client.new() |> client.recorder(rec)
