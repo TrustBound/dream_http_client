@@ -2,7 +2,7 @@
 //// Each test reads the defaults with the getters and asserts the values
 //// that the reference tables show.
 
-import dream_http_client/client.{LogInfo}
+import dream_http_client/client.{LogWarning}
 import dream_http_client/recorder
 import dream_test/matchers.{be_equal, or_fail_with, should}
 import dream_test/suite.{type TestSuite}
@@ -107,7 +107,7 @@ pub fn tests() -> TestSuite {
         65_535,
         15_000,
         None,
-        LogInfo,
+        LogWarning,
       ))
       |> or_fail_with("The transport table should match transport_config()")
     }),

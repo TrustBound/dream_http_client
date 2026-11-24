@@ -456,19 +456,23 @@ dream_http_client's log output. It is the `logger:set_module_level/2` level
 of that one module, so it applies to every line of the client and does not
 change the logging of the rest of your application.
 
-##### Log warnings only <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_log_level.gleam#L1-L7"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+##### Show the info lines <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_log_level.gleam#L1-L7"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
-import dream_http_client/client.{LogWarning}
+import dream_http_client/client.{LogInfo}
 
-pub fn warnings_only() -> Nil {
+pub fn info_lines() -> Nil {
   client.transport_config()
-  |> client.log_level(LogWarning)
+  |> client.log_level(LogInfo)
   |> client.configure_transport()
 }
 ```
 
-Defaults to `LogInfo`. Available levels: `LogDebug`, `LogInfo`, `LogWarning`,
+Defaults to `LogWarning`, so the client writes only warnings. A server
+that closes an idle connection writes no line, and a connection that goes
+down with a request on it writes the `connection down` warning. The example
+sets `LogInfo` to also see the `connection closed` info line for each idle
+connection that a server closes. Available levels: `LogDebug`, `LogInfo`, `LogWarning`,
 `LogError`, `LogNone`.
 
 ### How It Works
@@ -637,7 +641,7 @@ The package has nine guides in [`docs/guides/`](https://github.com/TrustBound/dr
   `LogDebug` did not show the `connection closed` info line. Now every line
   goes through one module, `dream_http_client_log`, with the logger macros,
   and `log_level` is the module level of that module. `LogDebug` and
-  `LogInfo` (the default) show the info line and the warnings, `LogWarning`
+  `LogInfo` show the info line and the warnings, `LogWarning` (the default)
   shows only the warnings, and `LogError` and `LogNone` show nothing. The
   recorder and recording warnings that the client wrote to standard error
   go through the same module, so `log_level` applies to them too. The
@@ -670,7 +674,7 @@ The package has nine guides in [`docs/guides/`](https://github.com/TrustBound/dr
 
 ## Testing
 
-740 tests, 0 failed, 100% line coverage (1232 of 1232 lines), in about 150
+744 tests, 0 failed, 100% line coverage (1233 of 1233 lines), in about 150
 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1,
 OTP 29, Gleam 1.19.2.
 

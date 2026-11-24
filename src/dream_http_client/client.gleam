@@ -597,10 +597,10 @@ pub type Protocols {
 ///
 /// - `LogDebug` — Every line. The client writes no debug lines, so this shows
 ///   the same lines as `LogInfo`.
-/// - `LogInfo` — Info lines and warnings (default). The info line is
+/// - `LogInfo` — Info lines and warnings. The info line is
 ///   `[dream_http] connection closed: ...`, when a server closes an idle
 ///   connection.
-/// - `LogWarning` — Warnings only: a connection that went down while a
+/// - `LogWarning` — Warnings only (default): a connection that went down while a
 ///   request was on it, a body that the client cannot decompress, an unknown
 ///   content encoding, a recorder that does not answer, a recording that
 ///   cannot be read correctly, and a recorded stream that failed.
@@ -610,14 +610,14 @@ pub type Protocols {
 ///
 /// ## Example
 ///
-/// ### Log warnings only <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_log_level.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Show the info lines <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_log_level.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
-/// import dream_http_client/client.{LogWarning}
+/// import dream_http_client/client.{LogInfo}
 ///
-/// pub fn warnings_only() -> Nil {
+/// pub fn info_lines() -> Nil {
 ///   client.transport_config()
-///   |> client.log_level(LogWarning)
+///   |> client.log_level(LogInfo)
 ///   |> client.configure_transport()
 /// }
 /// ```
@@ -1520,7 +1520,9 @@ pub opaque type TransportConfig {
 /// - initial_connection_window_size: 65_535 (HTTP/2 connection flow control)
 /// - initial_stream_window_size: 65_535 (HTTP/2 per-stream flow control)
 /// - closing_timeout: 15_000ms (graceful shutdown wait)
-/// - log_level: LogInfo (minimum severity for dream log output)
+/// - log_level: LogWarning (minimum severity for dream log output: warnings
+///   only. The application starts with this level, and a server that closes
+///   an idle connection writes no line)
 /// - default_certificate_authority_file: None (trust the system certificate
 ///   authorities over TLS)
 ///
@@ -1560,7 +1562,7 @@ pub fn transport_config() -> TransportConfig {
     initial_connection_window_size: 65_535,
     initial_stream_window_size: 65_535,
     closing_timeout: 15_000,
-    log_level: LogInfo,
+    log_level: LogWarning,
     default_certificate_authority_file: None,
   )
 }
@@ -1988,18 +1990,18 @@ pub fn closing_timeout(config: TransportConfig, ms: Int) -> TransportConfig {
 /// ## Parameters
 ///
 /// - `config`: The transport config to modify
-/// - `level`: Minimum log level (default: `LogInfo`)
+/// - `level`: Minimum log level (default: `LogWarning`)
 ///
 /// ## Example
 ///
-/// ### Log warnings only <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_log_level.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Show the info lines <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_client_log_level.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
-/// import dream_http_client/client.{LogWarning}
+/// import dream_http_client/client.{LogInfo}
 ///
-/// pub fn warnings_only() -> Nil {
+/// pub fn info_lines() -> Nil {
 ///   client.transport_config()
-///   |> client.log_level(LogWarning)
+///   |> client.log_level(LogInfo)
 ///   |> client.configure_transport()
 /// }
 /// ```
@@ -2462,7 +2464,8 @@ pub fn get_default_certificate_authority_file(
 /// Get the configured minimum log level
 ///
 /// Returns the `LogLevel` that controls which internal log messages are emitted.
-/// Only messages at this level or above are output.
+/// Only messages at this level or above are output. The default is
+/// `LogWarning`.
 ///
 /// ## Example
 ///

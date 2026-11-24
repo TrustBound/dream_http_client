@@ -133,7 +133,7 @@ version.
   `LogDebug` did not show the `connection closed` info line. Now every line
   goes through one module, `dream_http_client_log`, with the logger macros,
   and `log_level` is the module level of that module. `LogDebug` and
-  `LogInfo` (the default) show the info line and the warnings, `LogWarning`
+  `LogInfo` show the info line and the warnings, `LogWarning` (the default)
   shows only the warnings, and `LogError` and `LogNone` show nothing. The
   recorder and recording warnings that the client wrote to standard error
   go through the same module, so `log_level` applies to them too. The
@@ -229,7 +229,10 @@ version.
 - **Logging uses OTP `logger` instead of `error_logger`/`io:format`.** Connection
   events, decompression warnings and recorder warnings go through OTP's
   logger. Use `log_level()` on `TransportConfig` to choose which of them
-  appear. It defaults to `LogInfo`.
+  appear. It defaults to `LogWarning`: a server that closes an idle
+  connection writes no line, and a connection that goes down with a request
+  on it writes a warning. Set `log_level(LogInfo)` to also see the
+  `connection closed` info line.
 - The package has nine guides in `docs/guides/`, each one a walk through
   one task from a first request to tested code, and one settings reference.
   Every code block in them is proven: each Gleam block is a tested snippet
@@ -328,7 +331,7 @@ version.
 
 ### Testing
 
-- 740 tests, 0 failed, 100% line coverage (1232 of 1232 lines), in about 150 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
+- 744 tests, 0 failed, 100% line coverage (1233 of 1233 lines), in about 150 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
 
 ## [5.1.3] - 2026-03-17
 

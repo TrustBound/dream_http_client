@@ -16,7 +16,8 @@
 %%   `{translator_end, Trailers}` or `{translator_error, StreamFailure}`.
 
 -export([request_sync/8, request_stream/8, fetch_next/1, fetch_start_headers/1,
-         request_stream_messages/8, grant_next/1, configure_transport/1]).
+         request_stream_messages/8, grant_next/1, configure_transport/1,
+         apply_log_level/1]).
 
 -define(MAX_REDIRECTS, 5).
 
@@ -435,9 +436,15 @@ translator_message({failed, Failure}) -> {translator_error, Failure}.
 configure_transport(Config) ->
     %% Config is a Gleam opaque type = Erlang tuple {transport_config, F1, F2, ...}
     ets:insert(dream_http_client_transport_config, {config, Config}),
-    dream_http_client_log:set_level(map_log_level(element(13, Config))),
+    apply_log_level(Config),
     dream_http_conn_manager:idle_timeout_changed(),
     nil.
+
+%% Sets the level of the client's log lines from the log_level of a Gleam
+%% TransportConfig. The application start applies transport_config() with
+%% this function, so the default level is the one in transport_config().
+apply_log_level(Config) ->
+    dream_http_client_log:set_level(map_log_level(element(13, Config))).
 
 map_log_level(log_debug) -> debug;
 map_log_level(log_info) -> info;

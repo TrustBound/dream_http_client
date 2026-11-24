@@ -533,15 +533,15 @@ pub fn tests() -> TestSuite {
       }),
     ]),
     group("doc_client_get_log_level", [
-      it("default_log_level is LogInfo", fn() {
+      it("default_log_level is LogWarning", fn() {
         // Act
         let value = doc_client_get_log_level.default_log_level()
 
         // Assert
         value
         |> should
-        |> be_equal(client.LogInfo)
-        |> or_fail_with("default_log_level is LogInfo")
+        |> be_equal(client.LogWarning)
+        |> or_fail_with("default_log_level is LogWarning")
       }),
     ]),
     group("doc_client_get_method", [

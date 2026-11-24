@@ -229,9 +229,22 @@ Getters read a configuration back. For `busy_service_config()`, `get_max_connect
 
 ## Step 6: Watch connections in the log
 
-The client writes a few lines to the OTP logger about its connections and bodies. With the default `log_level`, `LogInfo`, you see these:
+The client writes a few lines to the OTP logger about its connections and bodies. With the default `log_level`, `LogWarning`, you see only the warnings:
 
-### The log lines of the client <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_6.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The warnings of the client <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_6.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+
+```text
+warning: [dream_http] connection down: pid=<pid> protocol=http reason=closed killed_streams=1
+warning: decompression failed, passing through raw bytes
+warning: unrecognized Content-Encoding, passing through raw bytes: br
+```
+
+- `connection down` means a connection closed while a request was on it. The test of this guide sends a GET to a server that closes the connection without an answer: the client sends it once more on a new connection, so the log shows two of these lines, one for each connection.
+- The two `passing through raw bytes` lines mean the server compressed a body in a way the client can't undo, so you get the bytes as they came.
+
+A server can also close a connection while it is idle. That is normal, and the next request opens a new one, so the default level writes nothing for it. To see a line for each of these closes, set `client.log_level(client.LogInfo)` and apply it with `configure_transport`. Then the same requests give one more line:
+
+### The log lines at LogInfo <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_6_info.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 info: [dream_http] connection closed: pid=<pid> protocol=http reason=closed
@@ -240,14 +253,10 @@ warning: decompression failed, passing through raw bytes
 warning: unrecognized Content-Encoding, passing through raw bytes: br
 ```
 
-- `connection closed` means a server closed a connection while it was idle. That is normal, and the next request opens a new one.
-- `connection down` means a connection closed while a request was on it. The test of this guide sends a GET to a server that closes the connection without an answer: the client sends it once more on a new connection, so the log shows two of these lines, one for each connection.
-- The two `passing through raw bytes` lines mean the server compressed a body in a way the client can't undo, so you get the bytes as they came.
-
 The `log_level` setting of the transport configuration picks which of these lines appear. It applies to every line the client writes, and to nothing else in your program:
 
 - `LogDebug` and `LogInfo` show all four lines. The client writes no debug lines.
-- `LogWarning` shows the three warnings, and hides `connection closed`.
+- `LogWarning`, the default, shows the three warnings, and hides `connection closed`.
 - `LogError` and `LogNone` show nothing. The client writes no error lines.
 
 ## Test your code

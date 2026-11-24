@@ -66,7 +66,7 @@ These apply to every request. Build a `TransportConfig` with `transport_config()
 | HTTP/2 stream flow-control window, in bytes | `initial_stream_window_size(config, bytes)` | `get_initial_stream_window_size` | 65535 |
 | Wait for a graceful close, in ms | `closing_timeout(config, ms)` | `get_closing_timeout` | 15000 |
 | Certificate authority file of a request that sets none | `default_certificate_authority_file(config, path)` | `get_default_certificate_authority_file` | `None`: the system authorities |
-| Log level | `log_level(config, level)` | `get_log_level` | `LogInfo` |
+| Log level | `log_level(config, level)` | `get_log_level` | `LogWarning` |
 
 Guide: [Controlling connections](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/connection-pools.md#step-5-tune-the-transport-for-a-busy-service).
 
@@ -88,8 +88,8 @@ The values of `log_level(config, value)`. The client writes every line through o
 | Value | What the client writes |
 |:---|:---|
 | `LogDebug` | Every line. The client writes no debug lines, so this is the same as `LogInfo` |
-| `LogInfo` (default) | The info line `connection closed`, when a server closes an idle connection, and every warning |
-| `LogWarning` | The warnings: a connection that went down with a request on it, a body the client can't decompress, an unknown content encoding, a recorder that doesn't answer, a recording file it can't read correctly, and a recorded stream that failed |
+| `LogInfo` | The info line `connection closed`, when a server closes an idle connection, and every warning |
+| `LogWarning` (default) | The warnings: a connection that went down with a request on it, a body the client can't decompress, an unknown content encoding, a recorder that doesn't answer, a recording file it can't read correctly, and a recorded stream that failed |
 | `LogError` | Nothing. The client writes no error lines |
 | `LogNone` | Nothing |
 

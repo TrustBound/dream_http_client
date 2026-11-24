@@ -155,7 +155,7 @@ pub fn tests() -> TestSuite {
         |> be_equal(15_000)
         |> or_fail_with("Default closing_timeout should be 15_000")
       }),
-      it("get_log_level returns LogInfo by default", fn() {
+      it("get_log_level returns LogWarning by default", fn() {
         // Arrange
         let config = client.transport_config()
 
@@ -165,8 +165,8 @@ pub fn tests() -> TestSuite {
         // Assert
         value
         |> should
-        |> be_equal(LogInfo)
-        |> or_fail_with("Default log_level should be LogInfo")
+        |> be_equal(LogWarning)
+        |> or_fail_with("Default log_level should be LogWarning")
       }),
       it("get_default_certificate_authority_file returns None by default", fn() {
         // Arrange
@@ -434,6 +434,19 @@ pub fn tests() -> TestSuite {
         |> should
         |> be_equal(LogDebug)
         |> or_fail_with("log_level should store LogDebug")
+      }),
+      it("log_level accepts LogInfo", fn() {
+        // Arrange
+        let config = client.transport_config()
+
+        // Act
+        let value = client.log_level(config, LogInfo) |> client.get_log_level
+
+        // Assert
+        value
+        |> should
+        |> be_equal(LogInfo)
+        |> or_fail_with("log_level should store LogInfo")
       }),
       it("log_level accepts LogError", fn() {
         // Arrange

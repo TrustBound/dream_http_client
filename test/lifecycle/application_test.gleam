@@ -31,6 +31,19 @@ pub fn tests() -> TestSuite {
       |> be_equal(Ok(200))
       |> or_fail_with("A restarted application should serve requests")
     }),
+    it("starts with the warning log level", fn() {
+      // Arrange
+      restart_application()
+
+      // Act
+      let level = client_log_level()
+
+      // Assert
+      level
+      |> should
+      |> be_equal("warning")
+      |> or_fail_with("The application should start at the warning level")
+    }),
     it("sets the debug log level", fn() {
       // Arrange
       let config =

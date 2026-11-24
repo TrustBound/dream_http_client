@@ -26,16 +26,16 @@ pub fn tests() -> TestSuite {
       |> be_equal(Nil)
       |> or_fail_with("keep_idle_connections applies the config")
     }),
-    it("warnings_only applies the config", fn() {
+    it("info_lines applies the config", fn() {
       // Act
-      let value = doc_client_log_level.warnings_only()
+      let value = doc_client_log_level.info_lines()
       client.configure_transport(client.transport_config())
 
       // Assert
       value
       |> should
       |> be_equal(Nil)
-      |> or_fail_with("warnings_only applies the config")
+      |> or_fail_with("info_lines applies the config")
     }),
     it("allow_more_connections applies the config", fn() {
       // Act

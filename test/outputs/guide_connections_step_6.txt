@@ -1,4 +1,3 @@
-info: [dream_http] connection closed: pid=<pid> protocol=http reason=closed
 warning: [dream_http] connection down: pid=<pid> protocol=http reason=closed killed_streams=1
 warning: decompression failed, passing through raw bytes
 warning: unrecognized Content-Encoding, passing through raw bytes: br

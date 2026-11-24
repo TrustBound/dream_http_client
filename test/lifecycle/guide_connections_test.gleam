@@ -212,25 +212,46 @@ pub fn tests() -> TestSuite {
       }),
     ]),
     group("step 6: the log", [
-      it("a closed connection logs a warning for each connection", fn() {
+      it("with no configuration, a closed idle connection writes no line", fn() {
         // Arrange
         restart_application()
-        use port <- edge_server.with("close")
 
         // Act
         let #(_result, lines) =
           log_capture.capture(
-            fn() { client.send(edge_server.request(port)) },
-            2,
-            log_wait_ms,
+            fn() { send_to_edge_server("close_after_response") },
+            0,
+            quiet_wait_ms,
           )
 
         // Assert
         lines
         |> should
-        |> be_equal([connection_down_line, connection_down_line])
-        |> or_fail_with("Each of the two connections logs a warning")
+        |> be_equal([])
+        |> or_fail_with("The default level hides the connection closed line")
       }),
+      it(
+        "with no configuration, a lost request logs a warning for each connection",
+        fn() {
+          // Arrange
+          restart_application()
+          use port <- edge_server.with("close")
+
+          // Act
+          let #(_result, lines) =
+            log_capture.capture(
+              fn() { client.send(edge_server.request(port)) },
+              2,
+              log_wait_ms,
+            )
+
+          // Assert
+          lines
+          |> should
+          |> be_equal([connection_down_line, connection_down_line])
+          |> or_fail_with("Each of the two connections logs a warning")
+        },
+      ),
       it("the default level shows the lines that the guide shows", fn() {
         // Arrange
         restart_application()
@@ -246,7 +267,7 @@ pub fn tests() -> TestSuite {
                 client.send(mock_server.get("/corrupted-gzip")),
               )
             },
-            5,
+            4,
             log_wait_ms,
           )
 
@@ -254,9 +275,38 @@ pub fn tests() -> TestSuite {
         output_file.lines(list.sort(list.unique(lines), string.compare))
         |> should
         |> be_equal(output_file.read("guide_connections_step_6"))
+        |> or_fail_with("The three warnings")
+      }),
+      it("LogInfo shows the lines that the guide shows", fn() {
+        // Arrange
+        restart_application()
+        client.transport_config()
+        |> client.log_level(client.LogInfo)
+        |> client.configure_transport()
+
+        // Act
+        let #(_results, lines) =
+          log_capture.capture(
+            fn() {
+              #(
+                send_to_edge_server("close_after_response"),
+                send_to_edge_server("close"),
+                client.send(mock_server.get("/unknown-encoding")),
+                client.send(mock_server.get("/corrupted-gzip")),
+              )
+            },
+            5,
+            log_wait_ms,
+          )
+        client.configure_transport(client.transport_config())
+
+        // Assert
+        output_file.lines(list.sort(list.unique(lines), string.compare))
+        |> should
+        |> be_equal(output_file.read("guide_connections_step_6_info"))
         |> or_fail_with("The info line and the three warnings")
       }),
-      it("LogInfo, the default, shows the info line and the warning", fn() {
+      it("LogInfo shows the info line and the warning", fn() {
         // Arrange
         let level = client.LogInfo
 
