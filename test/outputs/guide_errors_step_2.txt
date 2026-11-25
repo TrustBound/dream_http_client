@@ -1,0 +1,2 @@
+fetch_report(api, 500)    -> Error(RequestError(TimedOut(500)))
+fetch_report(api, 7000)   -> Ok(response)  (status 200, body "Slow response")

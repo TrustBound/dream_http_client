@@ -2,10 +2,24 @@ name = "dream_http_client"
 version = "6.0.0"
 description = "Type-safe HTTP client for Gleam with streaming support"
 licences = ["MIT"]
-repository = { type = "github", user = "TrustBound", repo = "dream" }
+repository = { type = "github", user = "TrustBound", repo = "dream_http_client" }
 links = [
     { title = "Documentation", href = "https://hexdocs.pm/dream_http_client" },
-    { title = "GitHub", href = "https://github.com/TrustBound/dream" },
+    { title = "GitHub", href = "https://github.com/TrustBound/dream_http_client" },
+]
+
+[documentation]
+pages = [
+    { title = "Getting started", path = "guides/getting-started.html", source = "./docs/guides/getting-started.md" },
+    { title = "Sending data to an API", path = "guides/sending-data.html", source = "./docs/guides/sending-data.md" },
+    { title = "Handling errors, timeouts and retries", path = "guides/errors.html", source = "./docs/guides/errors.md" },
+    { title = "Streaming a response", path = "guides/streaming.html", source = "./docs/guides/streaming.md" },
+    { title = "Streaming into an OTP actor", path = "guides/streaming-to-actors.html", source = "./docs/guides/streaming-to-actors.md" },
+    { title = "Controlling connections", path = "guides/connection-pools.html", source = "./docs/guides/connection-pools.md" },
+    { title = "Calling a service with a private certificate authority", path = "guides/tls-and-certificate-authorities.html", source = "./docs/guides/tls-and-certificate-authorities.md" },
+    { title = "Testing with recorded responses", path = "guides/recording-and-playback.html", source = "./docs/guides/recording-and-playback.md" },
+    { title = "Matching requests and hiding secrets in recordings", path = "guides/request-matching-and-scrubbing.html", source = "./docs/guides/request-matching-and-scrubbing.md" },
+    { title = "Settings reference", path = "guides/settings-reference.html", source = "./docs/guides/settings-reference.md" },
 ]
 
 [dependencies]
@@ -23,6 +37,11 @@ gun = ">= 2.2.0 and < 3.0.0"
 application_start_module = "dream_http_client_app"
 
 [dev-dependencies]
-dream = { path = "../.." }
-dream_mock_server = { path = "../mock_server" }
-gleeunit = ">= 1.0.0 and < 2.0.0"
+dream_http_server = ">= 2.1.0 and < 3.0.0"
+dream_mock_server = ">= 2.0.0 and < 3.0.0"
+dream_test = ">= 3.0.0 and < 4.0.0"
+dream_snippets = ">= 1.0.0 and < 2.0.0"
+
+[tools.dream_snippets]
+checked_from_version = "6.0.0"
+tested_files = ["test", ".github", "gleam.toml"]

@@ -1,185 +1,332 @@
 -module(dream_http_conn_manager).
 -behaviour(gen_server).
 
--export([start_link/0, get_connection/4, ensure_connection/4]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+%% The connection pool. Each request gets a lease on one connection.
+%%
+%% - An HTTP/1.1 connection carries one request at a time.
+%% - An HTTP/2 connection carries streams up to the limit the server sets
+%%   with SETTINGS_MAX_CONCURRENT_STREAMS (RFC 9113, section 6.5.2). The pool
+%%   waits for the first SETTINGS frame of the server before it uses a new
+%%   connection, and follows every later SETTINGS frame.
+%% - The pool opens a new connection only when every connection to the
+%%   origin is full. At max_connections, a request waits until a connection
+%%   has room, or until its timeout.
+%% - A retired connection (after a GOAWAY or a stale-connection error) gets
+%%   no new request. The pool closes it when its last lease ends.
+
+-export([start_link/0, ensure_connection/4, release/1, release_paused/1, abandon/1, refuse/1,
+         retire/1, idle_timeout_changed/0, stop_connection/1]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
 -define(TABLE, dream_http_client_connections).
+
+%% How long the pool waits for a connection to stop by itself.
+-define(STOP_TIMEOUT, 5000).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-%% Hot path: lock-free ETS lookup with round-robin selection.
-%% Returns {ok, ConnPid, Protocol} | none.
-get_connection(Scheme, Host, Port, Protocols) ->
-    case ets:lookup(?TABLE, {Scheme, Host, Port, Protocols}) of
-        [] ->
-            none;
-        Entries ->
-            Len = length(Entries),
-            Idx = erlang:unique_integer([monotonic, positive]) rem Len,
-            {_Key, ConnPid, _MonRef, Protocol, _LastUsed} = lists:nth(Idx + 1, Entries),
-            case erlang:is_process_alive(ConnPid) of
-                true ->
-                    touch(ConnPid),
-                    {ok, ConnPid, Protocol};
-                false ->
-                    %% Dead connection — try the others
-                    Alive = [E || {_, Pid, _, _, _} = E <- Entries, erlang:is_process_alive(Pid)],
-                    case Alive of
-                        [] -> none;
-                        _ ->
-                            Idx2 = erlang:unique_integer([monotonic, positive]) rem length(Alive),
-                            {_, Pid2, _, Proto2, _} = lists:nth(Idx2 + 1, Alive),
-                            touch(Pid2),
-                            {ok, Pid2, Proto2}
-                    end
-            end
-    end.
-
-%% Cold path: create or reuse a connection via the gen_server.
+%% Gives the calling process a connection for one request, and a lease on it.
+%% Returns {ok, ConnPid, Protocol, Lease}, {error, {pool_timeout, Ms}} when
+%% no connection had room within the request timeout, or {error, Reason}
+%% when a new connection failed.
+%%
+%% The caller gives the lease back with release/1 when the response is
+%% complete, abandon/1 when the response did not end, refuse/1 when the
+%% server refused the stream, or retire/1 when the connection is stale.
+%% When the caller stops with the lease, the pool treats it as abandoned.
+%% The pool replies before the request timeout, so the call has no timeout
+%% of its own.
 ensure_connection(Scheme, Host, Port, GunOpts) ->
-    gen_server:call(?MODULE, {ensure_connection, Scheme, Host, Port, GunOpts}, 30000).
+    gen_server:call(?MODULE, {ensure_connection, Scheme, Host, Port, GunOpts}, infinity).
 
-%% Update LastUsed for a connection entry.
-%% bag tables don't support select_replace, so we delete+insert.
-touch(ConnPid) ->
-    Now = erlang:monotonic_time(millisecond),
-    case ets:match_object(?TABLE, {'_', ConnPid, '_', '_', '_'}) of
-        [{Key, _, MonRef, Protocol, _OldLastUsed}] ->
-            ets:match_delete(?TABLE, {'_', ConnPid, '_', '_', '_'}),
-            ets:insert(?TABLE, {Key, ConnPid, MonRef, Protocol, Now});
-        [_ | _] = Entries ->
-            ets:match_delete(?TABLE, {'_', ConnPid, '_', '_', '_'}),
-            lists:foreach(fun({Key, _, MonRef, Protocol, _}) ->
-                ets:insert(?TABLE, {Key, ConnPid, MonRef, Protocol, Now})
-            end, Entries);
-        [] ->
-            ok
-    end.
+%% The response on the leased connection is complete.
+release(Lease) ->
+    gen_server:cast(?MODULE, {release, Lease}).
+
+%% The response is complete, but gun can have stopped reading the
+%% connection: the stream got as many data messages as its flow window
+%% holds, or more. gun does not read an HTTP/1.1 connection again after
+%% that, so the pool retires it. An HTTP/2 connection has no such limit and
+%% is released.
+release_paused(Lease) ->
+    gen_server:cast(?MODULE, {release_paused, Lease}).
+
+%% The response on the leased connection did not end. An HTTP/1.1 connection
+%% would send the next request behind the rest of that response, so the pool
+%% closes it. The stream of an HTTP/2 connection is gone, and the connection
+%% has room again.
+abandon(Lease) ->
+    gen_server:cast(?MODULE, {abandon, Lease}).
+
+%% The stream was refused: gun's local `too_many_streams`, or the server's
+%% REFUSED_STREAM. The server did not process the request. The pool treats
+%% the connection as full until the server sends new SETTINGS.
+refuse(Lease) ->
+    gen_server:cast(?MODULE, {refuse, Lease}).
+
+%% The connection is stale: the server closed it, or sent a GOAWAY. It gets
+%% no new request. Streams that still run on it finish.
+retire(Lease) ->
+    gen_server:cast(?MODULE, {retire, Lease}).
+
+%% The idle timeout in the transport configuration changed. The pool
+%% cancels the idle check that it scheduled with the old value and
+%% schedules one with the new value, so the new value applies at once.
+idle_timeout_changed() ->
+    gen_server:cast(?MODULE, idle_timeout_changed).
+
+%% Records that a request used the connection now. The time is in the state
+%% of the manager, so the table entry of a connection never changes while
+%% the connection lives: a reader of the table always sees the connection.
+touch(ConnPid, State = #{last_used := LastUsed}) ->
+    State#{last_used := LastUsed#{ConnPid => erlang:monotonic_time(millisecond)}}.
 
 %% ============================================================================
 %% gen_server callbacks
 %% ============================================================================
 
+%% State:
+%% - `leases` maps each lease to {ConnPid, Protocol}. A lease is the
+%%   reference of the monitor on the process that holds it.
+%% - `limits` maps each connection to the number of leases it may carry, or
+%%   `retired`. For HTTP/2 it is the server's limit, `infinity` when the
+%%   server sets none, or the count of running streams after a refused
+%%   stream. An HTTP/1.1 connection carries at most 1.
+%% - `waiting` is the list of requests that wait for room, oldest first.
+%% - `last_used` maps each connection to the time of its last use. The
+%%   idle check reads it.
+%% - `idle_timer` is the timer of the next idle check. Only the message of
+%%   this timer runs the check: a timer that was cancelled after it fired
+%%   sends a message that the pool ignores.
 init([]) ->
-    %% Crash recovery: scan ETS for leftover entries from previous incarnation
-    recover_connections(),
-    schedule_idle_check(),
-    {ok, #{}}.
+    %% After a restart, the table can still hold the connections of the old
+    %% manager. gun closes a connection when its owner stops, so none of them
+    %% can be used again.
+    ets:delete_all_objects(?TABLE),
+    {ok, #{leases => #{}, limits => #{}, waiting => [], last_used => #{},
+           idle_timer => schedule_idle_check()}}.
 
-handle_call({ensure_connection, Scheme, Host, Port, GunOpts}, _From, State) ->
-    Transport = case Scheme of
-        https -> tls;
-        _ -> tcp
-    end,
-    Protocols = resolve_protocols(GunOpts, Transport),
-    ResolvedOpts = GunOpts#{protocols => Protocols},
-    %% Requests that trust different certificate authorities never share a
-    %% connection.
-    Key = {Scheme, Host, Port, Protocols, maps:get(certificate_authority_file, GunOpts, system)},
-    Existing = ets:lookup(?TABLE, Key),
-    %% Clean up dead connections first
-    Alive = [E || {_, Pid, _, _, _} = E <- Existing, erlang:is_process_alive(Pid)],
-    Dead = length(Existing) - length(Alive),
-    case Dead > 0 of
-        true ->
-            lists:foreach(fun({_, Pid, _, _, _}) ->
-                case erlang:is_process_alive(Pid) of
-                    false -> ets:match_delete(?TABLE, {'_', Pid, '_', '_', '_'});
-                    true -> ok
-                end
-            end, Existing);
-        false -> ok
-    end,
-    MaxConns = maps:get(max_connections, GunOpts, 50),
-    AliveCount = length(Alive),
-    case AliveCount < MaxConns of
-        true ->
-            case open_connection(Scheme, Host, Port, ResolvedOpts) of
-                {ok, ConnPid, Protocol} ->
-                    MonRef = erlang:monitor(process, ConnPid),
-                    Now = erlang:monotonic_time(millisecond),
-                    ets:insert(?TABLE, {Key, ConnPid, MonRef, Protocol, Now}),
-                    {reply, {ok, ConnPid, Protocol}, State};
-                {error, Reason} ->
-                    {reply, {error, Reason}, State}
-            end;
-        false ->
-            %% At max — round-robin an existing one
-            Idx = erlang:unique_integer([monotonic, positive]) rem AliveCount,
-            {_, Pid, _, Proto, _} = lists:nth(Idx + 1, Alive),
-            touch(Pid),
-            {reply, {ok, Pid, Proto}, State}
+%% The caller of ensure_connection/4 holds the lease.
+handle_call({ensure_connection, Scheme, Host, Port, GunOpts}, From, State) ->
+    Request = request(Scheme, Host, Port, GunOpts, From),
+    case attempt(Request, State) of
+        {reply, Reply, NewState} ->
+            {reply, Reply, NewState};
+        wait ->
+            Timeout = maps:get(request_timeout, GunOpts),
+            erlang:send_after(Timeout, self(), {waiter_timeout, Request}),
+            #{waiting := Waiting} = State,
+            {noreply, State#{waiting := Waiting ++ [Request]}}
+    end.
+
+%% A lease of a manager that restarted is not in `leases`, and nothing
+%% changes.
+handle_cast({release, Lease}, State = #{leases := Leases}) ->
+    erlang:demonitor(Lease, [flush]),
+    Released = [ConnPid || {ConnPid, _Protocol} <- maps:values(maps:with([Lease], Leases))],
+    {noreply, serve_waiting(end_lease(Lease, lists:foldl(fun touch/2, State, Released)))};
+handle_cast({release_paused, Lease}, State = #{leases := Leases}) ->
+    case maps:get(Lease, Leases, none) of
+        {_ConnPid, http} -> handle_cast({retire, Lease}, State);
+        _ -> handle_cast({release, Lease}, State)
     end;
-
-handle_call(_Request, _From, State) ->
-    {reply, {error, unknown_call}, State}.
-
+handle_cast({abandon, Lease}, State) ->
+    erlang:demonitor(Lease, [flush]),
+    {noreply, serve_waiting(abandon_lease(Lease, State))};
+handle_cast({refuse, Lease}, State = #{leases := Leases, limits := Limits}) ->
+    erlang:demonitor(Lease, [flush]),
+    Rest = maps:remove(Lease, Leases),
+    Full = maps:from_list([{ConnPid, lease_count(ConnPid, Rest)}
+                           || {ConnPid, _Protocol} <- maps:values(maps:with([Lease], Leases))]),
+    {noreply, serve_waiting(State#{leases := Rest, limits := maps:merge(Limits, Full)})};
+handle_cast({retire, Lease}, State = #{leases := Leases, limits := Limits}) ->
+    erlang:demonitor(Lease, [flush]),
+    Retired = maps:from_list([{ConnPid, retired}
+                              || {ConnPid, _Protocol} <- maps:values(maps:with([Lease], Leases))]),
+    {noreply, serve_waiting(end_lease(Lease, State#{limits := maps:merge(Limits, Retired)}))};
+handle_cast(idle_timeout_changed, State = #{idle_timer := IdleTimer}) ->
+    erlang:cancel_timer(IdleTimer),
+    {noreply, State#{idle_timer := schedule_idle_check()}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({'DOWN', _MonRef, process, ConnPid, _Reason}, State) ->
-    ets:match_delete(?TABLE, {'_', ConnPid, '_', '_', '_'}),
-    {noreply, State};
+handle_info({'DOWN', MonRef, process, Pid, _Reason}, State = #{leases := Leases}) ->
+    case maps:is_key(MonRef, Leases) of
+        %% The process that held the lease stopped.
+        true ->
+            {noreply, serve_waiting(abandon_lease(MonRef, State))};
+        %% A connection stopped.
+        false ->
+            ets:match_delete(?TABLE, {'_', Pid, '_', '_', '_'}),
+            #{limits := Limits, last_used := LastUsed} = State,
+            {noreply, serve_waiting(State#{limits := maps:remove(Pid, Limits),
+                                           last_used := maps:remove(Pid, LastUsed)})}
+    end;
 
-handle_info(check_idle, State) ->
-    reap_idle_connections(),
-    schedule_idle_check(),
-    {noreply, State};
+%% The server sent new SETTINGS on an HTTP/2 connection. A retired
+%% connection stays retired.
+handle_info({gun_notify, ConnPid, settings_changed, Settings}, State = #{limits := Limits}) ->
+    Updated = [{ConnPid, stream_limit(Settings)} || maps:get(ConnPid, Limits, retired) =/= retired],
+    {noreply, serve_waiting(State#{limits := maps:merge(Limits, maps:from_list(Updated))})};
 
-handle_info({gun_up, _ConnPid, _Protocol}, State) ->
-    {noreply, State};
+handle_info({waiter_timeout, Request}, State = #{waiting := Waiting}) ->
+    {TimedOut, Rest} = lists:partition(fun(Waiter) -> Waiter =:= Request end, Waiting),
+    [gen_server:reply(From, {error, {pool_timeout, maps:get(request_timeout, GunOpts)}})
+     || #{from := From, gun_opts := GunOpts} <- TimedOut],
+    {noreply, State#{waiting := Rest}};
 
+handle_info({timeout, IdleTimer, check_idle}, State = #{idle_timer := IdleTimer}) ->
+    reap_idle_connections(State),
+    {noreply, State#{idle_timer := schedule_idle_check()}};
+
+%% The connection lost its socket. gun stops by itself (retry is 0), and
+%% the 'DOWN' message removes the connection from the pool.
 handle_info({gun_down, ConnPid, Protocol, Reason, KilledStreams}, State) ->
-    Killed = length(KilledStreams),
-    log_gun_down(ConnPid, Protocol, Reason, Killed, 0),
-    {noreply, State};
-
-handle_info({gun_down, ConnPid, Protocol, Reason, KilledStreams, UnprocessedStreams}, State) ->
-    Killed = length(KilledStreams),
-    Unprocessed = length(UnprocessedStreams),
-    log_gun_down(ConnPid, Protocol, Reason, Killed, Unprocessed),
+    log_gun_down(ConnPid, Protocol, Reason, length(KilledStreams)),
     {noreply, State};
 
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, _State) ->
-    ok.
-
 %% ============================================================================
 %% Internal
 %% ============================================================================
+
+request(Scheme, Host, Port, GunOpts, From) ->
+    Transport = case Scheme of
+        https -> tls;
+        _ -> tcp
+    end,
+    Protocols = resolve_protocols(GunOpts, Transport),
+    %% Requests that trust different certificate authorities, or that use
+    %% different pools, never share a connection.
+    Key = {Scheme, Host, Port, Protocols, maps:get(certificate_authority_file, GunOpts, system),
+           maps:get(pool, GunOpts, default)},
+    %% A unique reference tells two waiting requests apart.
+    #{key => Key, scheme => Scheme, host => Host, port => Port,
+      gun_opts => GunOpts#{protocols => Protocols}, from => From, id => make_ref()}.
+
+%% Finds room for a request. Returns {reply, Reply, State}, or `wait` when
+%% every connection is full at max_connections.
+%%
+%% 1. A connection with room: use the one with the fewest leases.
+%% 2. Every connection is full, and the pool can open one more: open it.
+%% 3. Every connection is full at max_connections: wait.
+attempt(Request = #{key := Key, gun_opts := GunOpts, from := {Holder, _Tag}},
+        State = #{leases := Leases, limits := Limits}) ->
+    %% A connection that stopped stays in the table until its 'DOWN'
+    %% message removes it.
+    Alive = [E || {_, Pid, _, _, _} = E <- ets:lookup(?TABLE, Key), erlang:is_process_alive(Pid)],
+    WithRoom = lists:keysort(1, [{lease_count(Pid, Leases), E}
+                                  || {_, Pid, _, Proto, _} = E <- Alive,
+                                     lease_count(Pid, Leases) < capacity(Pid, Proto, Limits)]),
+    MaxConns = maps:get(max_connections, GunOpts, 50),
+    case {WithRoom, length(Alive) < MaxConns} of
+        {[{_, {_, Pid, _, Proto, _}} | _], _} ->
+            {Lease, NewState} = lease(Holder, Pid, Proto, touch(Pid, State)),
+            {reply, {ok, Pid, Proto, Lease}, NewState};
+        {[], true} ->
+            open(Request, State);
+        {[], false} ->
+            wait
+    end.
+
+open(#{key := Key, scheme := Scheme, host := Host, port := Port, gun_opts := GunOpts,
+       from := {Holder, _Tag}}, State = #{limits := Limits}) ->
+    case open_connection(Scheme, Host, Port, GunOpts) of
+        {ok, ConnPid, Protocol, Limit} ->
+            MonRef = erlang:monitor(process, ConnPid),
+            Opened = erlang:monotonic_time(millisecond),
+            ets:insert(?TABLE, {Key, ConnPid, MonRef, Protocol, Opened}),
+            {Lease, NewState} = lease(Holder, ConnPid, Protocol,
+                                      touch(ConnPid, State#{limits := Limits#{ConnPid => Limit}})),
+            {reply, {ok, ConnPid, Protocol, Lease}, NewState};
+        {error, Reason} ->
+            {reply, {error, Reason}, State}
+    end.
+
+%% Gives room to waiting requests, oldest first. A request whose caller
+%% stopped is dropped.
+serve_waiting(State = #{waiting := Waiting}) ->
+    Alive = [W || W = #{from := {Pid, _Tag}} <- Waiting, erlang:is_process_alive(Pid)],
+    serve_waiting(Alive, [], State#{waiting := []}).
+
+serve_waiting([], Kept, State) ->
+    State#{waiting := lists:reverse(Kept)};
+serve_waiting([Request = #{from := From} | Rest], Kept, State) ->
+    case attempt(Request, State) of
+        {reply, Reply, NewState} ->
+            gen_server:reply(From, Reply),
+            serve_waiting(Rest, Kept, NewState);
+        wait ->
+            serve_waiting(Rest, [Request | Kept], State)
+    end.
+
+%% The number of leases a connection may carry. `infinity` is larger than
+%% every integer in Erlang term order.
+capacity(ConnPid, http, Limits) -> min(1, limit_value(maps:get(ConnPid, Limits, 1)));
+capacity(ConnPid, http2, Limits) -> limit_value(maps:get(ConnPid, Limits, retired)).
+
+limit_value(retired) -> 0;
+limit_value(Limit) -> Limit.
+
+%% The server's SETTINGS_MAX_CONCURRENT_STREAMS. A server that sets none
+%% allows any number of streams.
+stream_limit(Settings) ->
+    maps:get(max_concurrent_streams, Settings, infinity).
+
+%% Monitors the holder. The monitor reference is the lease.
+lease(Holder, ConnPid, Protocol, State = #{leases := Leases}) ->
+    Lease = erlang:monitor(process, Holder),
+    {Lease, State#{leases := Leases#{Lease => {ConnPid, Protocol}}}}.
+
+lease_count(ConnPid, Leases) ->
+    length([Lease || Lease := {Pid, _} <- Leases, Pid =:= ConnPid]).
+
+%% Removes a lease. A retired connection with no lease left is closed.
+end_lease(Lease, State = #{leases := Leases, limits := Limits}) ->
+    Rest = maps:remove(Lease, Leases),
+    [close(ConnPid) || {ConnPid, _Protocol} <- maps:values(maps:with([Lease], Leases)),
+                       maps:get(ConnPid, Limits, 1) =:= retired,
+                       lease_count(ConnPid, Rest) =:= 0],
+    State#{leases := Rest}.
+
+%% Removes an abandoned lease. An HTTP/1.1 connection still carries the rest
+%% of the response, so the pool closes it.
+abandon_lease(Lease, State = #{leases := Leases}) ->
+    [close(ConnPid) || {ConnPid, http} <- maps:values(maps:with([Lease], Leases))],
+    end_lease(Lease, State).
+
+close(ConnPid) ->
+    stop_connection(ConnPid),
+    ets:match_delete(?TABLE, {'_', ConnPid, '_', '_', '_'}).
 
 open_connection(Scheme, Host, Port, GunOpts) ->
     Transport = case Scheme of
         https -> tls;
         _ -> tcp
     end,
-    ConnectTimeout = maps:get(connect_timeout, GunOpts, 15000),
-    HostStr = case is_binary(Host) of
-        true -> binary_to_list(Host);
-        false -> Host
-    end,
-    Protocols = maps:get(protocols, GunOpts, case Transport of
-        tls -> [http2, http];
-        tcp -> [http]
-    end),
+    ConnectTimeout = maps:get(connect_timeout, GunOpts),
+    Protocols = maps:get(protocols, GunOpts),
     BaseOpts = #{
         transport => Transport,
         connect_timeout => ConnectTimeout,
         protocols => Protocols,
-        retry => maps:get(retry, GunOpts, 3),
-        retry_timeout => maps:get(retry_timeout, GunOpts, 1000),
-        domain_lookup_timeout => maps:get(domain_lookup_timeout, GunOpts, 5000),
-        tls_handshake_timeout => maps:get(tls_handshake_timeout, GunOpts, 10000)
+        %% A connection in the pool never connects again by itself. When it
+        %% loses its socket, gun stops, the pool removes it, and the next
+        %% request gets a new connection. With a retry, gun would hold new
+        %% requests while it connects again, and a held request can get
+        %% response headers and no body.
+        retry => 0,
+        domain_lookup_timeout => maps:get(domain_lookup_timeout, GunOpts),
+        tls_handshake_timeout => maps:get(tls_handshake_timeout, GunOpts),
+        %% gun tells the owner (this process) about every SETTINGS frame of
+        %% the server, so the pool knows its stream limit.
+        http2_opts => (maps:with([keepalive, keepalive_tolerance, max_concurrent_streams,
+                                  initial_connection_window_size, initial_stream_window_size,
+                                  closing_timeout], GunOpts))#{notify_settings_changed => true}
     },
-    Http2Opts = build_http2_opts(GunOpts),
-    Opts = case maps:size(Http2Opts) of
-        0 -> BaseOpts;
-        _ -> BaseOpts#{http2_opts => Http2Opts}
-    end,
     TlsOpts = case Transport of
         tls ->
             AlpnProtocols = resolve_alpn(Protocols),
@@ -187,26 +334,25 @@ open_connection(Scheme, Host, Port, GunOpts) ->
                 system -> {cacerts, public_key:cacerts_get()};
                 File -> {cacertfile, File}
             end,
-            Opts#{tls_opts => [
+            BaseOpts#{tls_opts => [
                 {verify, verify_peer},
                 Trusted,
                 {depth, 3},
                 {customize_hostname_check, [{match_fun, public_key:pkix_verify_hostname_match_fun(https)}]},
                 {alpn_advertised_protocols, AlpnProtocols}
             ]};
-        tcp -> Opts
+        tcp -> BaseOpts
     end,
-    case gun:open(HostStr, Port, TlsOpts) of
+    Deadline = erlang:monotonic_time(millisecond) + ConnectTimeout,
+    case gun:open(Host, Port, TlsOpts) of
         {ok, ConnPid} ->
             case gun:await_up(ConnPid, ConnectTimeout) of
                 {ok, Protocol} ->
-                    {ok, ConnPid, Protocol};
+                    await_limit(ConnPid, Protocol, Deadline);
                 {error, {down, {shutdown, Reason}}} ->
                     {error, Reason};
-                {error, timeout} ->
-                    gun:close(ConnPid),
-                    {error, connect_timeout};
                 {error, Reason} ->
+                    %% `timeout`, or the connection process stopped.
                     gun:close(ConnPid),
                     {error, Reason}
             end;
@@ -214,76 +360,80 @@ open_connection(Scheme, Host, Port, GunOpts) ->
             {error, Reason}
     end.
 
-build_http2_opts(GunOpts) ->
-    Pairs = [
-        {keepalive, maps:get(keepalive, GunOpts, undefined)},
-        {keepalive_tolerance, maps:get(keepalive_tolerance, GunOpts, undefined)},
-        {max_concurrent_streams, maps:get(max_concurrent_streams, GunOpts, undefined)},
-        {initial_connection_window_size, maps:get(initial_connection_window_size, GunOpts, undefined)},
-        {initial_stream_window_size, maps:get(initial_stream_window_size, GunOpts, undefined)},
-        {closing_timeout, maps:get(closing_timeout, GunOpts, undefined)}
-    ],
-    maps:from_list([{K, V} || {K, V} <- Pairs, V =/= undefined]).
-
-recover_connections() ->
-    try
-        All = ets:tab2list(?TABLE),
-        lists:foreach(fun({Key, ConnPid, OldMonRef, Protocol, LastUsed}) ->
-            catch erlang:demonitor(OldMonRef, [flush]),
-            case erlang:is_process_alive(ConnPid) of
-                true ->
-                    NewMonRef = erlang:monitor(process, ConnPid),
-                    ets:match_delete(?TABLE, {Key, ConnPid, '_', '_', '_'}),
-                    ets:insert(?TABLE, {Key, ConnPid, NewMonRef, Protocol, LastUsed});
-                false ->
-                    ets:match_delete(?TABLE, {Key, ConnPid, '_', '_', '_'})
-            end
-        end, All)
-    catch
-        error:badarg -> ok
+%% Returns {ok, ConnPid, Protocol, Limit}. An HTTP/2 server must send
+%% SETTINGS as its first frame (RFC 9113, section 3.4). The pool waits for
+%% it until the connect deadline, so the stream limit is known before the
+%% first request.
+await_limit(ConnPid, http, _Deadline) ->
+    {ok, ConnPid, http, 1};
+await_limit(ConnPid, http2, Deadline) ->
+    receive
+        {gun_notify, ConnPid, settings_changed, Settings} ->
+            {ok, ConnPid, http2, stream_limit(Settings)}
+    after max(0, Deadline - erlang:monotonic_time(millisecond)) ->
+        gun:close(ConnPid),
+        {error, timeout}
     end.
 
+%% Stops a connection that the pool no longer uses, after the connection
+%% has handled the messages that it already got.
+%%
+%% The server can close the socket just before the pool stops the
+%% connection: gun then has the message of the closed socket in its
+%% mailbox, and it reports the lost socket (gun_down, which the pool logs
+%% as a warning) when it handles that message. gun:close/1 stops gun with
+%% an exit signal, which takes effect before gun handles its messages, so
+%% the report and the warning would be lost. sys:terminate/3 is a message,
+%% so gun handles it after the messages before it. It runs in its own
+%% process, because it waits for gun to stop. When gun stopped first, or
+%% does not stop in time, gun:close/1 makes sure that it is gone.
+stop_connection(ConnPid) ->
+    proc_lib:spawn(fun() -> terminate_connection(ConnPid) end),
+    ok.
+
+terminate_connection(ConnPid) ->
+    try
+        sys:terminate(ConnPid, shutdown, ?STOP_TIMEOUT)
+    catch
+        exit:_ -> gun:close(ConnPid)
+    end.
+
+%% Returns the reference of the timer.
 schedule_idle_check() ->
     IdleTimeout = get_idle_timeout(),
-    erlang:send_after(IdleTimeout, self(), check_idle).
+    erlang:start_timer(IdleTimeout, self(), check_idle).
 
-reap_idle_connections() ->
+%% Closes each connection that has no lease and was not used for longer
+%% than the idle timeout. A connection that serves a long response is busy,
+%% not idle.
+reap_idle_connections(#{leases := Leases, last_used := LastUsed}) ->
     IdleTimeout = get_idle_timeout(),
     Now = erlang:monotonic_time(millisecond),
-    try
-        All = ets:tab2list(?TABLE),
-        lists:foreach(fun({_Key, ConnPid, _MonRef, _Protocol, LastUsed}) ->
-            case Now - LastUsed > IdleTimeout of
-                true ->
-                    gun:close(ConnPid),
-                    ets:match_delete(?TABLE, {'_', ConnPid, '_', '_', '_'});
-                false ->
-                    ok
-            end
-        end, All)
-    catch
-        error:badarg -> ok
-    end.
+    lists:foreach(fun({_Key, ConnPid, _MonRef, _Protocol, Opened}) ->
+        Used = maps:get(ConnPid, LastUsed, Opened),
+        case Now - Used > IdleTimeout andalso lease_count(ConnPid, Leases) =:= 0 of
+            true ->
+                stop_connection(ConnPid),
+                ets:match_delete(?TABLE, {'_', ConnPid, '_', '_', '_'});
+            false ->
+                ok
+        end
+    end, ets:tab2list(?TABLE)).
 
-log_gun_down(ConnPid, Protocol, Reason, Killed, Unprocessed) ->
+log_gun_down(ConnPid, Protocol, Reason, Killed) ->
     case is_expected_disconnect(Reason, Killed) of
         true ->
-            logger:info(
+            dream_http_client_log:info(
                 "[dream_http] connection closed: pid=~p protocol=~p reason=~p",
                 [ConnPid, Protocol, Reason]);
-        false when Unprocessed > 0 ->
-            logger:warning(
-                "[dream_http] connection down: pid=~p protocol=~p reason=~p killed=~p unprocessed=~p",
-                [ConnPid, Protocol, Reason, Killed, Unprocessed]);
         false ->
-            logger:warning(
+            dream_http_client_log:warning(
                 "[dream_http] connection down: pid=~p protocol=~p reason=~p killed_streams=~p",
                 [ConnPid, Protocol, Reason, Killed])
     end.
 
-is_expected_disconnect(closed, 0) -> true;
-is_expected_disconnect(normal, 0) -> true;
-is_expected_disconnect(_, _) -> false.
+is_expected_disconnect(Reason, 0) when Reason =:= closed; Reason =:= normal -> true;
+is_expected_disconnect(_Reason, _Killed) -> false.
 
 resolve_protocols(GunOpts, Transport) ->
     case maps:get(protocols, GunOpts, default) of
@@ -298,11 +448,10 @@ resolve_protocols(GunOpts, Transport) ->
     end.
 
 resolve_alpn(Protocols) ->
-    lists:filtermap(fun
-        (http2) -> {true, <<"h2">>};
-        (http) -> {true, <<"http/1.1">>};
-        (_) -> false
-    end, Protocols).
+    [alpn_protocol(Protocol) || Protocol <- Protocols].
+
+alpn_protocol(http2) -> <<"h2">>;
+alpn_protocol(http) -> <<"http/1.1">>.
 
 get_idle_timeout() ->
     case ets:lookup(dream_http_client_transport_config, config) of

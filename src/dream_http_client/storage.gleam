@@ -30,13 +30,20 @@ import simplifile
 ///
 /// ## Examples
 ///
+/// ### Load recordings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_storage_load.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// // Load recordings for inspection
-/// case storage.load_recordings("mocks/api") {
-///   Ok(recordings) -> {
-///     io.println("Loaded " <> int.to_string(list.length(recordings)) <> " recordings")
+/// import dream_http_client/storage
+/// import gleam/int
+/// import gleam/list
+///
+/// pub fn describe_recordings(mocks_directory: String) -> String {
+///   // Load recordings for inspection
+///   case storage.load_recordings(mocks_directory) {
+///     Ok(recordings) ->
+///       "Loaded " <> int.to_string(list.length(recordings)) <> " recordings"
+///     Error(reason) -> "Failed to load: " <> reason
 ///   }
-///   Error(reason) -> io.println_error("Failed to load: " <> reason)
 /// }
 /// ```
 ///
@@ -48,6 +55,18 @@ import simplifile
 pub fn load_recordings(
   directory: String,
 ) -> Result(List(recording.Recording), String) {
+  load_recording_files(directory)
+  |> result.map(list.map(_, fn(file) { file.1 }))
+}
+
+/// Load every recording of a directory with the path of its file.
+///
+/// The recorder uses it in Record mode to find the files of a request
+/// that it records again. The errors are those of `load_recordings`.
+@internal
+pub fn load_recording_files(
+  directory: String,
+) -> Result(List(#(String, recording.Recording)), String) {
   // List all .json files in directory
   case simplifile.read_directory(directory) {
     Ok(files) -> {
@@ -65,7 +84,7 @@ pub fn load_recordings(
               Ok(file) -> {
                 // Extract first entry (should only be one per file)
                 case list.first(file.entries) {
-                  Ok(entry) -> Ok(entry)
+                  Ok(entry) -> Ok(#(file_path, entry))
                   Error(_) ->
                     Error("Recording file contains no entries: " <> file_path)
                 }
@@ -99,13 +118,30 @@ pub fn load_recordings(
   }
 }
 
+/// Remove a recording file. A file that is already gone is not an error,
+/// because another recorder can remove it first.
+@internal
+pub fn remove_recording_file(file_path: String) -> Result(Nil, String) {
+  case simplifile.delete(file_path) {
+    Ok(Nil) | Error(simplifile.Enoent) -> Ok(Nil)
+    Error(delete_error) ->
+      Error(
+        "Failed to remove recording file "
+        <> file_path
+        <> ": "
+        <> string.inspect(delete_error),
+      )
+  }
+}
+
 /// Save a single recording immediately to its own file
 ///
 /// Writes a single recording to an individual file.
 ///
-/// The filename includes human-readable parts (method/host/path) plus a short
-/// hash of the **match key** and a short hash of the **file content**. This
-/// avoids overwriting when multiple recordings share the same key.
+/// The file name has human-readable parts (method, host and path) and a
+/// hash of the **match key**. The name does not depend on the response, so
+/// a request keeps its file name, and a new recording of the same key
+/// replaces the file.
 ///
 /// ## Parameters
 ///
@@ -120,23 +156,34 @@ pub fn load_recordings(
 ///
 /// ## Examples
 ///
+/// ### Save one recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_storage_save_one.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let rec = recording.Recording(request: req, response: resp)
+/// import dream_http_client/matching
+/// import dream_http_client/recording
+/// import dream_http_client/storage
 ///
-/// // Compute a key string using the same key policy you use for playback:
-/// let key_fn = matching.request_key(method: True, url: True, headers: False, body: False)
-/// let key = key_fn(rec.request)
+/// pub fn save_one(
+///   mocks_directory: String,
+///   recorded: recording.Recording,
+/// ) -> String {
+///   // Compute the key with the same key policy you use for playback
+///   let key_fn =
+///     matching.request_key(method: True, url: True, headers: False, body: False)
+///   let key = key_fn(recorded.request)
 ///
-/// case storage.save_recording_immediately("mocks/api", rec, key) {
-///   Ok(_) -> io.println("Saved recording")
-///   Error(reason) -> io.println_error("Failed to save: " <> reason)
+///   case storage.save_recording_immediately(mocks_directory, recorded, key) {
+///     Ok(_) -> "Saved recording"
+///     Error(reason) -> "Failed to save: " <> reason
+///   }
 /// }
 /// ```
 ///
 /// ## Notes
 ///
 /// - Each recording is saved to its own file for O(1) write performance
-/// - Filenames include human-readable parts (method, host, path) plus a hash for uniqueness
+/// - File names have human-readable parts (method, host, path) and a hash of the key
+/// - A file with the same name is replaced
 /// - Concurrent tests can record safely without file contention
 pub fn save_recording_immediately(
   directory: String,
@@ -144,21 +191,14 @@ pub fn save_recording_immediately(
   key: String,
 ) -> Result(Nil, String) {
   // Create directory if it doesn't exist
-  case simplifile.create_directory_all(directory) {
-    Ok(Nil) -> Ok(Nil)
-    Error(simplifile.Eexist) -> {
-      // Directory already exists - that's fine
-      Ok(Nil)
-    }
-    Error(directory_error) -> {
-      Error(
-        "Failed to create directory "
-        <> directory
-        <> ": "
-        <> string.inspect(directory_error),
-      )
-    }
-  }
+  // An existing directory is fine: create_directory_all returns Ok for it.
+  simplifile.create_directory_all(directory)
+  |> result.map_error(fn(directory_error) {
+    "Failed to create directory "
+    <> directory
+    <> ": "
+    <> string.inspect(directory_error)
+  })
   |> result.try(fn(_) {
     // Create recording file with single entry
     let recording_file = recording.RecordingFile(version: "1.0", entries: [rec])
@@ -167,10 +207,9 @@ pub fn save_recording_immediately(
     let json_value = recording.encode_recording_file(recording_file)
     let json_string = json.to_string(json_value)
 
-    // Build filename from the key + content to avoid overwriting when multiple
-    // recordings share the same key (which will later be treated as ambiguous
-    // during playback).
-    let filename = build_filename(rec.request, key, json_string)
+    // The name comes from the request and its key only, so a request keeps
+    // its file name when its response changes.
+    let filename = build_filename(rec.request, key)
     let file_path = directory <> "/" <> filename
 
     // Write to file atomically so readers never see partial content
@@ -206,16 +245,24 @@ pub fn save_recording_immediately(
 ///
 /// ## Examples
 ///
-/// ```gleam
-/// let recordings = [
-///   create_test_recording(),
-///   create_another_recording(),
-/// ]
-/// let key_fn = matching.request_key(method: True, url: True, headers: False, body: False)
+/// ### Save many recordings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_storage_save_many.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// case storage.save_recordings("mocks/api", recordings, key_fn) {
-///   Ok(_) -> io.println("Saved recordings successfully")
-///   Error(reason) -> io.println_error("Failed to save: " <> reason)
+/// ```gleam
+/// import dream_http_client/matching
+/// import dream_http_client/recording
+/// import dream_http_client/storage
+///
+/// pub fn save_all(
+///   mocks_directory: String,
+///   recordings: List(recording.Recording),
+/// ) -> String {
+///   let key_fn =
+///     matching.request_key(method: True, url: True, headers: False, body: False)
+///
+///   case storage.save_recordings(mocks_directory, recordings, key_fn) {
+///     Ok(_) -> "Saved recordings successfully"
+///     Error(reason) -> "Failed to save: " <> reason
+///   }
 /// }
 /// ```
 ///
@@ -223,28 +270,22 @@ pub fn save_recording_immediately(
 ///
 /// - Directory is created automatically if it doesn't exist
 /// - Each recording is saved to its own file (no file contention)
-/// - Existing files with the same name are overwritten
+/// - Existing files with the same name are overwritten, so of two recordings
+///   with the same key, the last one stays
 pub fn save_recordings(
   directory: String,
   recordings: List(recording.Recording),
   key_fn: matching.MatchKey,
 ) -> Result(Nil, String) {
   // Create directory if it doesn't exist
-  case simplifile.create_directory_all(directory) {
-    Ok(Nil) -> Ok(Nil)
-    Error(simplifile.Eexist) -> {
-      // Directory already exists - that's fine
-      Ok(Nil)
-    }
-    Error(directory_error) -> {
-      Error(
-        "Failed to create directory "
-        <> directory
-        <> ": "
-        <> string.inspect(directory_error),
-      )
-    }
-  }
+  // An existing directory is fine: create_directory_all returns Ok for it.
+  simplifile.create_directory_all(directory)
+  |> result.map_error(fn(directory_error) {
+    "Failed to create directory "
+    <> directory
+    <> ": "
+    <> string.inspect(directory_error)
+  })
   |> result.try(fn(_) {
     // Save each recording to its own file
     recordings
@@ -255,35 +296,19 @@ pub fn save_recordings(
   })
 }
 
-/// Build a unique filename for a recording based on the request
+/// Build the file name of a recording from its request and its key
 ///
-/// Creates a filename with the format:
+/// Creates a file name with the format:
 ///
-/// `{method}_{host}_{path}_{key_hash}_{content_hash}.json`
+/// `{method}_{host}_{path}_{key_hash}.json`
 ///
-/// - `key_hash` groups recordings by match key
-/// - `content_hash` prevents overwrites when multiple recordings share the same key
-///
-/// ## Parameters
-///
-/// - `request`: The request to generate a filename for
-/// - `key`: The match key string used for grouping
-/// - `content`: The JSON file content (used for the content hash)
-///
-/// ## Returns
-///
-/// A safe filename string ending in `.json`
+/// - `key_hash` is the first 16 hex characters of the SHA-256 of the match
+///   key, so one key always gets the same name
 ///
 /// ## Examples
 ///
-/// - `GET_api.example.com_users_a3f5b2.json`
-/// - `POST_api.example.com_users_c7d8e9.json`
-/// - `GET_localhost_text_f1a2b3.json`
-fn build_filename(
-  request: recording.RecordedRequest,
-  key: String,
-  content: String,
-) -> String {
+/// - `GET_localhost__text_7646ad0d38469745.json`
+fn build_filename(request: recording.RecordedRequest, key: String) -> String {
   // Build human-readable part from method + host + path
   let method_part = sanitize_for_filename(method_to_string(request.method))
   let host_part = sanitize_for_filename(request.host)
@@ -293,11 +318,9 @@ fn build_filename(
     |> sanitize_for_filename()
     |> truncate_string(50)
 
-  // Generate hashes for uniqueness.
-  // - key hash groups requests by matching key
-  // - content hash differentiates multiple recordings with the same key
-  let key_hash_short = string.slice(generate_hash(key), 0, 6)
-  let content_hash_short = string.slice(generate_hash(content), 0, 6)
+  // 16 hex characters (64 bits) keep two keys with the same method, host
+  // and path apart.
+  let key_hash = string.slice(generate_hash(key), 0, 16)
 
   // Combine parts
   method_part
@@ -306,9 +329,7 @@ fn build_filename(
   <> "_"
   <> path_part
   <> "_"
-  <> key_hash_short
-  <> "_"
-  <> content_hash_short
+  <> key_hash
   <> ".json"
 }
 

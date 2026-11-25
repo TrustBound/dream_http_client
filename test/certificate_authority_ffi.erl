@@ -1,5 +1,5 @@
 -module(certificate_authority_ffi).
--export([write_certificates/1]).
+-export([write_certificates/1, stop_supervisor/1]).
 
 -include_lib("public_key/include/public_key.hrl").
 
@@ -44,3 +44,16 @@ generate() ->
 
 pem(Entries) ->
     public_key:pem_encode(Entries).
+
+%% Stops the supervisor that mist:start/1 returns, from any process, and
+%% returns nil when the supervisor is down. gen_server:stop/1 stops it
+%% through the sys protocol with reason normal, so the linked caller does
+%% not exit, and it returns only after the supervisor and its listener are
+%% down, so the port is closed when it returns. It exits the caller only
+%% when the supervisor is not running, which is also the wanted result.
+stop_supervisor(Pid) when is_pid(Pid) ->
+    try gen_server:stop(Pid) of
+        ok -> nil
+    catch
+        exit:_SupervisorIsAlreadyDown -> nil
+    end.

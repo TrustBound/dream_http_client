@@ -158,7 +158,7 @@ You can now remove `stop()` calls if you only needed them for saving. However, i
 
 All 112 tests pass:
 
-```
+```text
 112 passed, no failures
 ```
 
@@ -170,15 +170,15 @@ New tests added:
 ## Documentation
 
 - [dream_http_client](https://hexdocs.pm/dream_http_client) - v2.2.0
-- [Full Documentation](https://github.com/TrustBound/dream/tree/main/modules/http_client)
+- [Full Documentation](https://github.com/TrustBound/dream_http_client/tree/main)
 
 ## Community
 
-- 📖 [Full Documentation](https://github.com/TrustBound/dream/tree/main/modules/http_client)
+- 📖 [Full Documentation](https://github.com/TrustBound/dream_http_client/tree/main)
 - 💬 [Discussions](https://github.com/TrustBound/dream/discussions)
 - 🐛 [Report Issues](https://github.com/TrustBound/dream/issues)
 - 🤝 [Contributing Guide](https://github.com/TrustBound/dream/blob/main/CONTRIBUTING.md)
 
 ---
 
-**Full Changelog:** [CHANGELOG.md](https://github.com/TrustBound/dream/blob/main/modules/http_client/CHANGELOG.md)
+**Full Changelog:** [CHANGELOG.md](https://github.com/TrustBound/dream_http_client/blob/main/CHANGELOG.md)

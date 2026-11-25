@@ -128,7 +128,7 @@ case client.send(request) {
 
 In 4.x, calling `start_stream()` with a recorder in playback mode returned:
 
-```
+```text
 Error("Message-based streaming does not support playback mode. Use stream_yielder() instead.")
 ```
 
@@ -319,7 +319,7 @@ case client.send(request) {
 
 All 134 tests pass:
 
-```
+```text
 134 passed, no failures
 ```
 
@@ -374,16 +374,16 @@ continues to return `Result(String, String)` by extracting the body internally.
 ## Documentation
 
 - [dream_http_client hexdocs](https://hexdocs.pm/dream_http_client) — v5.0.0
-- [README](https://github.com/TrustBound/dream/tree/main/modules/http_client)
-- [Tested snippets](https://github.com/TrustBound/dream/tree/main/modules/http_client/test/snippets)
+- [README](https://github.com/TrustBound/dream_http_client/tree/main)
+- [Tested snippets](https://github.com/TrustBound/dream_http_client/tree/main/test/snippets)
 
 ## Community
 
-- [Full Documentation](https://github.com/TrustBound/dream/tree/main/modules/http_client)
+- [Full Documentation](https://github.com/TrustBound/dream_http_client/tree/main)
 - [Discussions](https://github.com/TrustBound/dream/discussions)
 - [Report Issues](https://github.com/TrustBound/dream/issues)
 - [Contributing Guide](https://github.com/TrustBound/dream/blob/main/CONTRIBUTING.md)
 
 ---
 
-**Full Changelog:** [CHANGELOG.md](https://github.com/TrustBound/dream/blob/main/modules/http_client/CHANGELOG.md)
+**Full Changelog:** [CHANGELOG.md](https://github.com/TrustBound/dream_http_client/blob/main/CHANGELOG.md)

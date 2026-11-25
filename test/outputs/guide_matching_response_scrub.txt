@@ -1,0 +1,3 @@
+the response your code gets while recording   -> headers set-cookie: session=abc123, content-length: 2
+the saved file contains "session=abc123"      -> no
+playback of the recording                       -> headers content-length: 2, body "ok"

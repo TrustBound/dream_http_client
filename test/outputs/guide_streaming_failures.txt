@@ -1,0 +1,5 @@
+/stream/fast                     -> Ok(81)
+/stream/error                    -> Error(Refused(status: 500, body: <<"Error test chunk 1\nError test chunk 2\nError test chunk 3\n">>))
+/stream/drop                     -> Error(Broken(received: 26, reason: "Remote closed connection"))
+/stream/slow with timeout(500)   -> Error(Stalled(received: 0, waited_ms: 500))
+port 1, where nothing listens    -> Error(Unreachable(reason: "Connection refused"))

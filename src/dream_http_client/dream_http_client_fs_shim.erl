@@ -20,10 +20,7 @@ atomic_write(Path, Content) when is_binary(Path), is_binary(Content) ->
             end;
         {error, Reason} ->
             {error, format_reason(Reason)}
-    end;
-atomic_write(Path, Content) ->
-    %% Normalize non-binary inputs to binaries for safety
-    atomic_write(iolist_to_binary(Path), iolist_to_binary(Content)).
+    end.
 
 format_reason(Reason) ->
     iolist_to_binary(io_lib:format("~p", [Reason])).

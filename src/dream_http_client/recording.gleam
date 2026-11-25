@@ -3,10 +3,10 @@
 //// Defines the structure for storing HTTP request/response recordings
 //// in a custom JSON format that supports both blocking and streaming responses.
 
+import dream_http_client/internal
 import gleam/bit_array
 import gleam/dynamic/decode
 import gleam/http
-import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option
@@ -32,17 +32,25 @@ import gleam/string
 ///
 /// ## Examples
 ///
+/// ### Describe a request <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_request.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let request = recording.RecordedRequest(
-///   method: http.Get,
-///   scheme: http.Https,
-///   host: "api.example.com",
-///   port: option.None,
-///   path: "/users/123",
-///   query: option.Some("fields=name,email"),
-///   headers: [#("Authorization", "Bearer token123")],
-///   body: "",
-/// )
+/// import dream_http_client/recording
+/// import gleam/http
+/// import gleam/option
+///
+/// pub fn user_request() -> recording.RecordedRequest {
+///   recording.RecordedRequest(
+///     method: http.Get,
+///     scheme: http.Https,
+///     host: "api.example.com",
+///     port: option.None,
+///     path: "/users/123",
+///     query: option.Some("fields=name,email"),
+///     headers: [#("Authorization", "Bearer token123")],
+///     body: <<>>,
+///   )
+/// }
 /// ```
 pub type RecordedRequest {
   RecordedRequest(
@@ -53,7 +61,7 @@ pub type RecordedRequest {
     path: String,
     query: option.Option(String),
     headers: List(#(String, String)),
-    body: String,
+    body: BitArray,
   )
 }
 
@@ -65,30 +73,42 @@ pub type RecordedRequest {
 /// ## Variants
 ///
 /// - `BlockingResponse(status, headers, body)`: Complete response body received at once
-/// - `StreamingResponse(status, headers, chunks)`: Response delivered in chunks with timing
+/// - `StreamingResponse(status, headers, chunks)`: Response delivered in chunks with timing.
+///   Playback of a status outside 2xx gives `HttpFailure` with the status,
+///   the headers and all chunks joined as the body, as a live stream does.
 ///
 /// ## Examples
 ///
-/// ```gleam
-/// // Blocking response
-/// let blocking = recording.BlockingResponse(
-///   status: 200,
-///   headers: [#("Content-Type", "application/json")],
-///   body: "{\"users\": []}",
-/// )
+/// ### Describe responses <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_response.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// // Streaming response
-/// let streaming = recording.StreamingResponse(
-///   status: 200,
-///   headers: [#("Content-Type", "text/event-stream")],
-///   chunks: [
-///     recording.Chunk(data: <<"chunk1":utf8>>, delay_ms: 100),
-///     recording.Chunk(data: <<"chunk2":utf8>>, delay_ms: 100),
-///   ],
-/// )
+/// ```gleam
+/// import dream_http_client/recording
+///
+/// pub fn blocking() -> recording.RecordedResponse {
+///   recording.BlockingResponse(
+///     status: 200,
+///     headers: [#("Content-Type", "application/json")],
+///     body: <<"{\"users\": []}">>,
+///   )
+/// }
+///
+/// pub fn streaming() -> recording.RecordedResponse {
+///   recording.StreamingResponse(
+///     status: 200,
+///     headers: [#("Content-Type", "text/event-stream")],
+///     chunks: [
+///       recording.Chunk(data: <<"chunk1":utf8>>, delay_ms: 100),
+///       recording.Chunk(data: <<"chunk2":utf8>>, delay_ms: 100),
+///     ],
+///   )
+/// }
 /// ```
 pub type RecordedResponse {
-  BlockingResponse(status: Int, headers: List(#(String, String)), body: String)
+  BlockingResponse(
+    status: Int,
+    headers: List(#(String, String)),
+    body: BitArray,
+  )
   StreamingResponse(
     status: Int,
     headers: List(#(String, String)),
@@ -99,21 +119,34 @@ pub type RecordedResponse {
 /// A streaming chunk with timing information
 ///
 /// Represents a single chunk of data from a streaming HTTP response, along with
-/// the delay (in milliseconds) since the previous chunk. This timing information
-/// is used during playback to recreate the original streaming behavior.
+/// the delay (in milliseconds) since the previous chunk. Playback uses this
+/// timing to recreate the original streaming behavior: each chunk comes
+/// `delay_ms` after the previous chunk came. The timeout of the request
+/// limits each wait, as in a live stream. A delay longer than the timeout
+/// ends the stream with a `TimedOut` failure.
 ///
 /// ## Fields
 ///
 /// - `data`: The chunk data as a `BitArray`
-/// - `delay_ms`: Milliseconds since the previous chunk (0 for the first chunk)
+/// - `delay_ms`: Milliseconds from the arrival of the previous chunk to the
+///   arrival of this chunk. Record mode saves 0 for the first chunk. In
+///   playback, the delay of the first chunk counts from the start of the
+///   stream.
 ///
 /// ## Examples
 ///
+/// ### Describe a chunk <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_chunk.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let chunk = recording.Chunk(
-///   data: <<"Hello, ":utf8>>,
-///   delay_ms: 50,  // 50ms delay before this chunk
-/// )
+/// import dream_http_client/recording
+///
+/// pub fn greeting_chunk() -> recording.Chunk {
+///   recording.Chunk(
+///     data: <<"Hello, ":utf8>>,
+///     // 50ms delay before this chunk
+///     delay_ms: 50,
+///   )
+/// }
 /// ```
 pub type Chunk {
   Chunk(data: BitArray, delay_ms: Int)
@@ -131,11 +164,17 @@ pub type Chunk {
 ///
 /// ## Examples
 ///
+/// ### Pair a request with a response <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_recording.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let recording = recording.Recording(
-///   request: recorded_request,
-///   response: recorded_response,
-/// )
+/// import dream_http_client/recording
+///
+/// pub fn pair(
+///   recorded_request: recording.RecordedRequest,
+///   recorded_response: recording.RecordedResponse,
+/// ) -> recording.Recording {
+///   recording.Recording(request: recorded_request, response: recorded_response)
+/// }
 /// ```
 pub type Recording {
   Recording(request: RecordedRequest, response: RecordedResponse)
@@ -154,11 +193,14 @@ pub type Recording {
 ///
 /// ## Examples
 ///
+/// ### Build a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_file.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+///
 /// ```gleam
-/// let file = recording.RecordingFile(
-///   version: "1.0",
-///   entries: [recording1, recording2, recording3],
-/// )
+/// import dream_http_client/recording
+///
+/// pub fn file_of(entries: List(recording.Recording)) -> recording.RecordingFile {
+///   recording.RecordingFile(version: "1.0", entries: entries)
+/// }
 /// ```
 ///
 /// ## Notes
@@ -190,15 +232,18 @@ pub type RecordingFile {
 ///
 /// ## Examples
 ///
-/// ```gleam
-/// let file = recording.RecordingFile(
-///   version: "1.0",
-///   entries: [recording1, recording2],
-/// )
+/// ### Encode a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_encode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// let json_value = recording.encode_recording_file(file)
-/// let json_string = json.to_string(json_value)
-/// // Now write json_string to disk
+/// ```gleam
+/// import dream_http_client/recording
+/// import gleam/json
+///
+/// pub fn to_json_string(entries: List(recording.Recording)) -> String {
+///   let file = recording.RecordingFile(version: "1.0", entries: entries)
+///   let json_value = recording.encode_recording_file(file)
+///   // Now write the string to disk
+///   json.to_string(json_value)
+/// }
 /// ```
 ///
 /// ## Notes
@@ -271,22 +316,18 @@ fn encode_recorded_response(resp: RecordedResponse) -> json.Json {
   }
 }
 
-/// Encode a request/response body for JSON storage.
+/// Encode a request or response body for JSON storage.
 ///
-/// JSON strings can only carry UTF-8 (gleam/json raises `invalid_byte`
-/// on anything else), but recorded bodies may hold raw binary — S3
-/// objects, PDFs, images. Valid UTF-8 bodies are stored verbatim so
-/// existing fixtures stay byte-identical and reviewable; binary bodies
-/// are base64-encoded and tagged with `"body_encoding": "base64"` so
-/// the decoder can restore the exact bytes.
-fn encode_body_fields(body: String) -> List(#(String, json.Json)) {
-  case bit_array.to_string(bit_array.from_string(body)) {
-    Ok(_) -> [#("body", json.string(body))]
-    Error(_) -> [
-      #(
-        "body",
-        json.string(bit_array.base64_encode(bit_array.from_string(body), True)),
-      ),
+/// JSON strings can only carry UTF-8, but a body can be any bytes:
+/// S3 objects, PDFs, images. A body that is valid UTF-8 is stored as text,
+/// so fixtures stay easy to read. Any other body is base64-encoded and
+/// tagged with `"body_encoding": "base64"`, so the decoder restores the
+/// exact bytes.
+fn encode_body_fields(body: BitArray) -> List(#(String, json.Json)) {
+  case bit_array.to_string(body) {
+    Ok(text) -> [#("body", json.string(text))]
+    Error(Nil) -> [
+      #("body", json.string(bit_array.base64_encode(body, True))),
       #("body_encoding", json.string("base64")),
     ]
   }
@@ -369,16 +410,30 @@ fn encode_scheme(scheme: http.Scheme) -> json.Json {
 ///
 /// ## Examples
 ///
-/// ```gleam
-/// // Read JSON from an individual recording file
-/// let assert Ok(json_content) = simplifile.read("mocks/GET_api.example.com_users_a3f5b2.json")
+/// ### Decode a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_decode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
-/// // Decode to RecordingFile (each file contains one entry)
-/// case recording.decode_recording_file(json_content) {
-///   Ok(file) -> {
-///     io.println("Loaded " <> int.to_string(list.length(file.entries)) <> " recording(s)")
+/// ```gleam
+/// import dream_http_client/recording
+/// import gleam/int
+/// import gleam/list
+/// import gleam/result
+/// import gleam/string
+/// import simplifile
+///
+/// pub fn count_entries(path: String) -> Result(String, String) {
+///   // Read JSON from one recording file
+///   use json_content <- result.try(
+///     simplifile.read(path) |> result.map_error(string.inspect),
+///   )
+///
+///   // Decode it to a RecordingFile (each file holds one entry)
+///   case recording.decode_recording_file(json_content) {
+///     Ok(file) ->
+///       Ok(
+///         "Loaded " <> int.to_string(list.length(file.entries)) <> " recording(s)",
+///       )
+///     Error(reason) -> Error("Failed to decode: " <> reason)
 ///   }
-///   Error(reason) -> io.println_error("Failed to decode: " <> reason)
 /// }
 /// ```
 ///
@@ -391,12 +446,8 @@ fn encode_scheme(scheme: http.Scheme) -> json.Json {
 pub fn decode_recording_file(
   json_string: String,
 ) -> Result(RecordingFile, String) {
-  use json_value <- result.try(
-    json.parse(json_string, decode.dynamic)
-    |> result.map_error(format_json_error),
-  )
-  decode.run(json_value, decode_recording_file_decoder())
-  |> result.map_error(format_decode_errors)
+  json.parse(json_string, decode_recording_file_decoder())
+  |> result.map_error(format_json_error)
 }
 
 fn decode_recording_file_decoder() -> decode.Decoder(RecordingFile) {
@@ -413,24 +464,16 @@ fn format_json_error(error: json.DecodeError) -> String {
     json.UnexpectedEndOfInput -> "Unexpected end of JSON input"
     json.UnexpectedByte(msg) -> "Unexpected byte: " <> msg
     json.UnexpectedSequence(msg) -> "Unexpected sequence: " <> msg
-    json.UnableToDecode(errors) ->
-      "Unable to decode: " <> string.inspect(errors)
+    json.UnableToDecode(errors) -> format_decode_errors(errors)
   }
 }
 
+// decode.run gives at least one error. The message names the first one.
 fn format_decode_errors(errors: List(decode.DecodeError)) -> String {
-  case list.first(errors) {
-    Ok(error) -> format_single_decode_error(error)
-    Error(empty_list_error) -> {
-      // We did not get any concrete decode errors back; log that situation so
-      // it is visible when troubleshooting.
-      io.println_error(
-        "Decode error with no details in recording file: "
-        <> string.inspect(empty_list_error),
-      )
-      "Decode error with no details"
-    }
-  }
+  errors
+  |> list.take(1)
+  |> list.map(format_single_decode_error)
+  |> string.concat
 }
 
 fn format_single_decode_error(error: decode.DecodeError) -> String {
@@ -472,7 +515,7 @@ fn decode_recorded_request_decoder() -> decode.Decoder(RecordedRequest) {
     Error(parse_error) -> {
       // Preserve the original method string but log the parse error so it is
       // not silently discarded.
-      io.println_error(
+      internal.log_warning(
         "Failed to parse HTTP method in recording: " <> parse_error,
       )
       http.Other(method_str)
@@ -494,7 +537,7 @@ fn decode_recorded_request_decoder() -> decode.Decoder(RecordedRequest) {
     Error(parse_error) -> {
       // Invalid scheme in recording - fall back to http and log the error so
       // it is visible when inspecting corrupted recording files.
-      io.println_error(
+      internal.log_warning(
         "Unknown scheme in recording; defaulting to http: " <> parse_error,
       )
       decode.success(RecordedRequest(
@@ -543,33 +586,26 @@ fn decode_blocking_response_decoder(
   ))
 }
 
-/// Restore a stored body to its original bytes. `"base64"`-tagged
-/// bodies decode back to the exact recorded binary; everything else
-/// (including fixtures written before the tag existed) is verbatim
-/// UTF-8. A corrupt base64 payload falls back to the stored string
-/// with a logged error, matching this module's lenient decode style.
-fn decode_stored_body(stored: String, encoding: String) -> String {
+/// Restore a stored request or response body to its original bytes. A body tagged
+/// `"base64"` decodes to the exact recorded bytes. Any other body
+/// (including fixtures written before the tag existed) is UTF-8 text. A
+/// base64 body that cannot be decoded is an error in the fixture: the
+/// stored text is used, and the error is logged.
+fn decode_stored_body(stored: String, encoding: String) -> BitArray {
   case encoding {
     "base64" ->
       case bit_array.base64_decode(stored) {
-        Ok(bits) -> unchecked_bits_to_string(bits)
+        Ok(bits) -> bits
         Error(_) -> {
-          io.println_error(
+          internal.log_warning(
             "Recording body tagged base64 failed to decode; using raw value",
           )
-          stored
+          bit_array.from_string(stored)
         }
       }
-    _ -> stored
+    _ -> bit_array.from_string(stored)
   }
 }
-
-/// Reinterpret raw bytes as a String without UTF-8 validation. On the
-/// BEAM a String IS a binary; recorded bodies must round-trip
-/// byte-exact even when they are not valid UTF-8 (PDFs, images), which
-/// `bit_array.to_string` would reject.
-@external(erlang, "gleam_stdlib", "identity")
-fn unchecked_bits_to_string(bits: BitArray) -> String
 
 fn decode_streaming_response_decoder(
   status: Int,
@@ -596,7 +632,7 @@ fn decode_chunk_decoder() -> decode.Decoder(Chunk) {
       case bit_array.base64_decode(data_str) {
         Ok(bits) -> bits
         Error(_) -> {
-          io.println_error(
+          internal.log_warning(
             "Recording chunk tagged base64 failed to decode; using raw value",
           )
           <<data_str:utf8>>

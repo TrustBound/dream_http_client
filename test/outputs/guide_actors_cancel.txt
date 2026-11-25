@@ -1,0 +1,1 @@
+Progress(bytes: 0, chunks: 0, finished: True, failure: Some("Cancelled"))

@@ -6,9 +6,9 @@ import gleam/http
 pub fn h2c_request() -> Result(HttpResponse, SendError) {
   client.new()
   |> client.scheme(http.Http)
-  |> client.host("internal-service.local")
-  |> client.port(8080)
-  |> client.path("/api/data")
+  |> client.host("localhost")
+  |> client.port(9876)
+  |> client.path("/text")
   |> client.protocols(Http2Only)
   |> client.send()
 }

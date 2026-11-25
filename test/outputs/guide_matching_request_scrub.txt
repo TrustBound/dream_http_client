@@ -1,0 +1,2 @@
+the saved file contains "test-token-123"         -> no
+playback with Authorization: Bearer other-token  -> Ok(response)  (status 200, body "ok")

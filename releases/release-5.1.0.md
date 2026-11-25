@@ -111,7 +111,7 @@ classes of messages:
 The complete response is now converted to a `stream_error` event with a formatted
 error message containing the HTTP status code and response body:
 
-```
+```text
 HTTP 401 Unauthorized: {"error":{"message":"Incorrect API key provided"}}
 ```
 
@@ -197,16 +197,16 @@ will fire `on_stream_error` instead of crashing.
 ## Documentation
 
 - [dream_http_client hexdocs](https://hexdocs.pm/dream_http_client) -- v5.1.0
-- [README](https://github.com/TrustBound/dream/tree/main/modules/http_client)
-- [CHANGELOG](https://github.com/TrustBound/dream/blob/main/modules/http_client/CHANGELOG.md)
+- [README](https://github.com/TrustBound/dream_http_client/tree/main)
+- [CHANGELOG](https://github.com/TrustBound/dream_http_client/blob/main/CHANGELOG.md)
 
 ## Community
 
-- [Full Documentation](https://github.com/TrustBound/dream/tree/main/modules/http_client)
+- [Full Documentation](https://github.com/TrustBound/dream_http_client/tree/main)
 - [Discussions](https://github.com/TrustBound/dream/discussions)
 - [Report Issues](https://github.com/TrustBound/dream/issues)
 - [Contributing Guide](https://github.com/TrustBound/dream/blob/main/CONTRIBUTING.md)
 
 ---
 
-**Full Changelog:** [CHANGELOG.md](https://github.com/TrustBound/dream/blob/main/modules/http_client/CHANGELOG.md)
+**Full Changelog:** [CHANGELOG.md](https://github.com/TrustBound/dream_http_client/blob/main/CHANGELOG.md)

@@ -1,0 +1,2 @@
+fetch_greeting(internal_api(service_port, "certs/internal-ca.pem"))
+  -> Ok(response)  (status 200, body "hello over tls")

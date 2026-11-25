@@ -1,38 +1,36 @@
-# dream_http_client Module Makefile
+# dream_http_client Makefile
 
-.PHONY: test clean build format docs check
+.PHONY: test build format check check-snippets docs clean
 
-# Run the test suite
+# Run the tests with line coverage (fails below 100%)
 test:
-	@if [ -z "$$CI" ]; then \
-		pkill -9 -f "dream_mock_server" 2>/dev/null || true; \
-		lsof -ti:9876 | xargs kill -9 2>/dev/null || true; \
-		sleep 1; \
-	fi
 	@gleam test
 
-# Clean build artifacts
-clean:
-	@gleam clean
-	@rm -rf coverage
-	@rm -f erl_crash.dump
-	@find build -name "*.beam" -type f -delete 2>/dev/null || true
-
-# Build the module
+# Build the package
 build:
 	@gleam build
 
 # Format code
 format:
-	@gleam format
+	@gleam format src test
+
+# Format check, build, tests, docs snippet check and docs build (what CI runs)
+check:
+	@gleam format --check src test
+	@gleam build
+	@gleam test
+	@$(MAKE) check-snippets
+	@gleam docs build
+
+# Check that every docs code block matches a tested snippet
+check-snippets:
+	@gleam run -m dream_snippets
 
 # Generate documentation
 docs:
 	@gleam docs build
 
-# Run format check and build (useful for CI)
-check:
-	@gleam format --check
-	@gleam build
-	@gleam test
-
+# Clean build artifacts
+clean:
+	@gleam clean
+	@rm -f erl_crash.dump

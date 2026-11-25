@@ -1,0 +1,2 @@
+send_all of four requests            -> [Ok(200), Ok(200), Ok(200), Ok(200)], 2 connections
+the same with timeout(500) on each   -> two Ok(200), two Error(RequestError(TimedOut(500)))

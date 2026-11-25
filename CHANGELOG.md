@@ -5,7 +5,7 @@ All notable changes to `dream_http_client` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 6.0.0 - Unreleased
+## [6.0.0] - 2026-11-25
 
 This release was first prepared as 5.2.0 and never published. It changes four
 public types (`SendError.RequestError`, `StreamMessage.StreamError`, the
@@ -14,19 +14,243 @@ version.
 
 ### Fixed
 
+- The connection pool now uses connections the way each protocol expects.
+  Before, it opened a new connection for every request until it held 50 for
+  a host, then picked one by round robin, so a request could wait behind a
+  long stream on the same HTTP/1.1 connection, and HTTP/2 never multiplexed.
+  Now:
+  - An HTTP/1.1 connection carries one request at a time.
+  - An HTTP/2 connection carries as many streams as the server allows with
+    `SETTINGS_MAX_CONCURRENT_STREAMS`. The pool waits for the server's first
+    SETTINGS frame before it uses a new connection, and follows every later
+    one. A server that never sends SETTINGS fails the connect with
+    `ConnectFailed("Connection timed out")`.
+  - The pool opens a new connection only when every connection to the host
+    is full. At `max_connections`, a request waits for room, up to its
+    timeout, and then gets `TimedOut`.
+  - A stream that the server refuses (`REFUSED_STREAM`, or gun's
+    `too_many_streams`) is sent once more on another connection.
+  - After a GOAWAY, the connection gets no new request, and the streams that
+    the server kept finish. Before, the retry closed the connection and
+    stopped them.
+- Streams now have flow control. The client reads the response from the
+  server only as fast as the caller takes chunks from `stream_yielder`, or
+  as fast as the `on_stream_chunk` callback returns. At most 16 chunks wait
+  in memory. Before, the client read the whole response as fast as the
+  server sent it, so a slow reader of a large response filled memory.
+- A stream that nobody reads any more (its caller stopped, or it timed out)
+  is now canceled at the server.
+- On HTTP/1.1, the connection of a stream of 16 chunks or more is closed
+  when the stream ends, because gun can have stopped reading it. A shorter
+  stream leaves its connection for the next request. HTTP/2 connections
+  are not closed.
+- A recorded stream now has the status that the server sent. Before, the
+  recorder wrote 206 for a response with `Content-Range` and 200 for every
+  other stream.
+- A stream that fails is no longer saved as a recording. Before, the chunks
+  that arrived were saved, and playback showed them as a whole response.
+- A connection in the pool no longer connects again by itself after it
+  loses its socket. The pool removes it, and the next request gets a new
+  connection. Before, gun connected again after a wait and held new requests
+  for that time, and a held request could get response headers and no body,
+  and then time out. A request that was sent on a connection that is gone is
+  sent once more on a new connection when that is safe (see the RFC 9110 item
+  below).
+- A 1xx response before the final response, for example 103 Early Hints, no
+  longer crashes `send` and the stream functions. The client skips it and
+  returns the final response.
+- An HTTP/2 GOAWAY now comes back as `Goaway(code, description)`. Before, it
+  was `Unexpected("{goaway,no_error,'The connection is going away.'}")`.
+  `Goaway` has no `last_stream_id` and no `debug_data`, because gun does not
+  give them.
+- The idle check no longer closes a connection that serves a long response.
+- A stream that stops before its end, for example after a cancel, now closes
+  its HTTP/1.1 connection, so the rest of that response never reaches the
+  next request. An HTTP/2 connection keeps running.
+- A streamed response with an empty body now ends at once: `stream_yielder`
+  yields nothing and `start_stream` calls `on_stream_end([])`. Before, the
+  stream waited until it timed out.
+- Transport errors now come back as the `TransportError` docs describe. An
+  HTTP/2 stream reset gives `StreamReset(code, description)`, an HTTP/2
+  connection error gives `ConnectionError`, a closed connection gives
+  `RemoteClosed`, and a killed connection gives `ProcessDown`. Before, most of
+  them came back as `Unexpected`. A stream that a GOAWAY ends was not
+  processed, so it gets the one retry on another connection.
+- A streamed redirect now works like `send`. A 3xx response with no Location
+  returns `HttpFailure` at once instead of waiting until it timed out, and a
+  redirect loop returns `Unexpected("Too many redirects (max 5)")` instead of
+  streaming the sixth response as a success.
+- A stream no longer leaves a process running after the process that started
+  it stops, and each stream has one timeout, so no late reply arrives.
 - Fixed PUT, POST, and PATCH requests hanging when sent with an empty body.
   The underlying gun dispatch now uses `gun:request/5` directly instead of
   method-specific functions that behave inconsistently for empty bodies.
+- A `stream_yielder` that yields an `Error` now ends. Before, it yielded more
+  errors on each later pull, and a stream that failed before its first chunk
+  sent the request again each time. So `yielder.to_list` never returned. The
+  stream also gives its connection back to the pool. In record mode, a stream
+  that does not start now yields its real error, not `ProcessDown`.
+- Playback of a recorded stream now waits the recorded `delay_ms` before it
+  hands over each chunk. Before, all chunks came at once. The request timeout
+  limits each wait, as it does live. A cancel, or a `stream_to` owner that
+  stops, ends the stream during a wait.
+- Playback of a recorded stream with a status outside 2xx now gives one
+  `HttpFailure` with the recorded status, headers and body, and no chunks.
+  Before, it played back as a successful stream. This applies to
+  `stream_yielder`, `start_stream` and `stream_to`, and also to a blocking
+  recording that one of them plays back.
+- A request whose connection closed before the response head is now sent
+  once more only when that is safe. Before, every method was sent again, so
+  a server that read a POST and then closed the connection got the POST
+  twice. Now the client follows RFC 9110, section 9.2.2, and RFC 9113,
+  sections 6.8 and 8.7:
+  - A GET, HEAD, OPTIONS, TRACE, PUT or DELETE request is sent once more on
+    another connection.
+  - A POST, PATCH or other request is sent once, and returns
+    `RemoteClosed`, or `ProcessDown("shutdown")` when its connection process
+    was stopped.
+  - A request that the server did not process is sent once more for every
+    method: a stream refused with `REFUSED_STREAM`, a stream above the last
+    stream identifier of a GOAWAY, and a request that the connection process
+    never took because it stopped after it lost its socket.
+  This applies to `send`, `stream_yielder`, `start_stream` and `stream_to`.
+- In playback mode, a request that no recording matches is no longer sent
+  to the network. Before, it went on to the live service, although the docs
+  said that playback uses no network. Now `send` returns
+  `Error(RequestError(NoRecording(method: "GET", url: "https://api.example.com/users/42", directory: "test/recordings", nearest: [])))`,
+  `stream_yielder` yields that error once and ends, `start_stream` calls
+  only `on_stream_error`, and `stream_to` sends only `StreamError`. The new
+  `TransportError` variant `NoRecording(method, url, directory, nearest)`
+  names the request, the directory that the recorder searched, and up to 3
+  recordings with the same method and path, nearest first, with the parts
+  that differ. `transport_error_to_string` gives
+  `No recording matches GET https://api.example.com/users/42` and then
+  either the nearest recordings or
+  `No recording in test/recordings has this method and path`. Record mode
+  does not change: a request with no recording goes to the network and is
+  recorded. `add_recording` still does nothing in playback mode.
+
+- `log_level` now applies to every log line of the client. Before, the
+  client logged with `logger:info/2` and `logger:warning/2`, which put no
+  module in the log metadata, so the module level that `log_level` set
+  never applied: `LogNone` still showed the `connection down` warnings, and
+  `LogDebug` did not show the `connection closed` info line. Now every line
+  goes through one module, `dream_http_client_log`, with the logger macros,
+  and `log_level` is the module level of that module. `LogDebug` and
+  `LogInfo` show the info line and the warnings, `LogWarning` (the default)
+  shows only the warnings, and `LogError` and `LogNone` show nothing. The
+  recorder and recording warnings that the client wrote to standard error
+  go through the same module, so `log_level` applies to them too. The
+  primary logger level and the logging of other applications do not change.
+- A recording is on disk when the recorded call returns. Before, the
+  recorder wrote the file after an asynchronous message, so a playback
+  recorder started right after `send` could miss it and give
+  `NoRecording`, although the docs said that recordings are saved at once.
+  Now `send` returns after the write, and a stream ends after the write.
+  A failed write is the error of the call:
+  `Error(RequestError(Unexpected("Failed to save recording: ...")))` from
+  `send`, and a `TransportFailure` with the same `Unexpected` as the last
+  item of `stream_yielder` and in `on_stream_error` and `StreamError`.
+  Before, a failed write printed a line to standard error and the call
+  returned the response. `recorder.add_recording` returns
+  `Result(Nil, String)`.
+- A new `idle_timeout` applies at once. Before, the idle check that was
+  scheduled with the old value (60 seconds by default) ran first, so a
+  shorter timeout applied only after it. Now `configure_transport` replaces
+  the scheduled check.
+- The `connection down` warning is no longer lost when the pool closes a
+  connection whose socket the server closed a moment before. gun reports
+  the lost socket while it handles the message of the socket, and the pool
+  stopped gun with an exit signal, which can take effect first. Now the
+  pool stops a connection with a message, after the messages that the
+  connection already got.
+- The doc of `max_concurrent_streams` says what the value is: the HTTP/2
+  `SETTINGS_MAX_CONCURRENT_STREAMS` that the client sends to the server.
+  The pool follows the limit that the server sends.
+
+### Added
+
+- A playback miss names the nearest recordings and shows what differs.
+  `NoRecording.nearest` holds up to 3 `recorder.NearestRecording(path,
+  differences)`: recordings with the same method and path as the request,
+  fewest differing parts first, then by path. Each
+  `recorder.Difference(part, recorded, requested)` is a part that the key
+  compares (`Origin`, `Query`, `Header(name)` or `Body`), compared after
+  the request transformer, so a scrubbed value never shows.
+  `transport_error_to_string` shows each one with `-` and `+` lines, or
+  names the directory when no recording has the method and path.
+- `client.new_pool(max_connections:)` makes a connection pool, and
+  `client.pool(request, pool)` sends a request through it. Requests share
+  connections only with requests that have the same pool, and the pool
+  opens at most `max_connections` connections to each host.
+  `client.get_pool()` and `client.get_pool_max_connections()` read the
+  settings, and `ConnectionPool` is the opaque type of a pool.
+- `Http2ErrorCode`, a type for the HTTP/2 error codes of RFC 9113
+  (`NoError`, `RefusedStream`, `EnhanceYourCalm` and the others, and
+  `UnknownErrorCode(name)` for a code outside them). `StreamReset`, `Goaway`
+  and `ConnectionError` carry it in `code`, so a caller matches on a
+  constructor, not on text.
+- `client.body_text(response)` reads a response body as a UTF-8 string.
+- `client.body_bits(request, bytes)` sets a request body that is not text,
+  such as a file.
 
 ### Changed
 
+- **BREAKING:** A record run replaces the recording of each request that it
+  records again. Before, a record run kept the old files: a changed response
+  went to a new file next to the old one, and playback then found two
+  recordings for one request and failed. Now a record recorder reads the
+  recordings in its directory at start. The first recording of a match key
+  in the run removes the files that held that key, then writes one file. A
+  second response for the key in the same run replaces the first. The files
+  of the keys that the run does not record stay. A file that the recorder
+  cannot read or decode stops `start` in record mode with
+  `Failed to load recordings in record mode: ...`.
+- **BREAKING:** A recording file name comes from the request and its match
+  key only: `{method}_{host}_{path}_{key_hash}.json`, with the first 16 hex
+  characters of the SHA-256 of the key. Before, the name also had a hash of
+  the file content, so a stream got a new name in each record run. Playback
+  reads every `.json` file of the directory whatever its name, so files with
+  the 5.x names still play back. The next record run of such a request
+  removes the old file and writes the file with the new name.
+- **BREAKING:** `recorder.add_recording` returns `Result(Nil, String)`:
+  `Ok(Nil)` when the recording is on disk, or the write error. Before, it
+  returned `Nil` before the write.
+- **BREAKING:** `HttpResponse.body` is a `BitArray`, the exact bytes the
+  server sent. Before, it was a `String` that could hold bytes that are not
+  UTF-8. Use `client.body_text(response)` for text. The body of an
+  `HttpFailure` of a stream now has the exact bytes too. Before, a body that
+  was not UTF-8 was read as Latin-1, and its bytes were lost.
+  `stream_failure_to_string` shows such a body as `<11 bytes, not UTF-8>`.
+- **BREAKING:** `recording.BlockingResponse.body` and
+  `recording.RecordedRequest.body` are `BitArray`. The fixture files do not
+  change: a UTF-8 body is stored as text, and any other body as base64.
+- **BREAKING:** `client.get_body(request)` returns a `BitArray`. A body set
+  with `client.body(String)` is the UTF-8 bytes of its string.
+- **BREAKING:** The recorder mode is a typed value, `recorder.Mode`, with
+  the constructors `Record`, `Playback` and `Passthrough`. `recorder.mode`
+  takes a `Mode`, and `RecorderBuilder.mode` is a `Mode`, so
+  `mode("playback")` becomes `mode(recorder.Playback)`. A wrong mode name is
+  a compile error, and `start` has no unknown-mode error any more. For a mode
+  in a text, for example from an environment variable, use
+  `recorder.parse_mode(text)`. It accepts `"record"`, `"playback"` and
+  `"passthrough"`, and gives the error that `start` gave before for any
+  other text.
+- A `MatchKey` with `body: True` has `base64:` and the base64 form of a
+  request body that is not UTF-8.
+- Moved to its own repository
+- `cancel_stream(request_id)` now works with the `RequestId` that
+  `stream_to()` returns. It stops the stream process, cancels the request, and
+  returns after the stream has stopped, so no message of the stream arrives
+  after it returns. A cancel of a stream that has ended, or a second cancel of
+  the same stream, does nothing and returns `Nil`.
 - Requests that trust different certificate authorities no longer share a
   pooled connection.
 - **HTTP backend replaced: `httpc` → `gun`.** The underlying HTTP client has
   been swapped from Erlang's `httpc` to [gun](https://github.com/ninenines/gun),
   a production-grade HTTP/1.1 and HTTP/2 client. This enables native HTTP/2
-  multiplexing for high-concurrency workloads (10k+ concurrent requests over
-  a single TCP connection to HTTP/2 servers). `send()`, `stream_yielder()`,
+  multiplexing for high-concurrency workloads (as many concurrent requests
+  over one TCP connection as the HTTP/2 server allows). `send()`, `stream_yielder()`,
   and `start_stream()` keep their behaviour, apart from the error type
   changes below.
 - **`SendError.RequestError` from `message: String` to `error: TransportError`**
@@ -42,12 +266,28 @@ version.
 - **`stream_yielder` error type from `String` to `StreamFailure`.** Error results
   now carry structured failure information instead of formatted strings.
 - **Logging uses OTP `logger` instead of `error_logger`/`io:format`.** Connection
-  events and decompression warnings now go through OTP's logger, enabling
-  level-based filtering. Use `log_level()` on `TransportConfig` to control
-  verbosity — defaults to `LogInfo`.
+  events, decompression warnings and recorder warnings go through OTP's
+  logger. Use `log_level()` on `TransportConfig` to choose which of them
+  appear. It defaults to `LogWarning`: a server that closes an idle
+  connection writes no line, and a connection that goes down with a request
+  on it writes a warning. Set `log_level(LogInfo)` to also see the
+  `connection closed` info line.
+- The package has nine guides in `docs/guides/`, each one a walk through
+  one task from a first request to tested code, and one settings reference.
+  Every code block in them is proven: each Gleam block is a tested snippet
+  that runs against a local server, and each output block is a file that a
+  test compares with the real output. The README is short and links to
+  them, and HexDocs shows them.
 
 ### Added
 
+- `stream_to(request, inbox)` starts a stream that sends typed
+  `StreamMessage` values to a `Subject(StreamMessage)`: `StreamStart`, a
+  `Chunk` for each part of the body, then exactly one `StreamEnd` or
+  `StreamError`. It returns the `RequestId` that each message carries. Use it
+  in an OTP actor: add the inbox to the actor selector with `process.select`.
+  The stream stops when the process that called `stream_to()` stops. Record
+  and playback work as with `start_stream()`.
 - `certificate_authority_file(request, path)` makes one request trust only the
   certificate authorities in a PEM file, in place of the system ones, the same
   as `curl --cacert`. Use it for services with a private certificate authority
@@ -73,14 +313,12 @@ version.
   previous behavior). Note: gun does not handle redirects natively; the shim
   implements manual redirect following (up to 5 hops).
 - **Global transport configuration.** `TransportConfig` opaque type with builder
-  functions for gun connection pool tuning (13 fields):
+  functions for gun connection pool tuning (11 fields):
   - `max_connections(count)` — TCP connections per host (default: 50)
   - `idle_timeout(ms)` — idle connection lifetime (default: 60000ms)
   - `default_connect_timeout(ms)` — TCP connect timeout (default: 15000ms)
   - `domain_lookup_timeout(ms)` — DNS resolution timeout (default: 5000ms)
   - `tls_handshake_timeout(ms)` — TLS negotiation timeout (default: 10000ms)
-  - `retry(count)` — connection retry attempts (default: 3)
-  - `retry_timeout(ms)` — delay between retries (default: 1000ms)
   - `keepalive(ms)` — HTTP/2 PING interval (default: 30000ms)
   - `keepalive_tolerance(count)` — missed PINGs before close (default: 3)
   - `max_concurrent_streams(count)` — HTTP/2 streams per connection (default: 100)
@@ -96,13 +334,15 @@ version.
   a per-host connection pool backed by an ETS `bag` table. Features round-robin
   selection, automatic dead-connection cleanup, idle connection reaping, and
   crash recovery on restart.
-- **Stale connection retry.** Requests that hit a server-closed connection
-  (`{stream_error, closed}`) are automatically retried once on a fresh
+- **Stale connection retry.** An idempotent request (GET, HEAD, OPTIONS,
+  TRACE, PUT, DELETE) that hits a server-closed connection
+  (`{stream_error, closed}`) is automatically retried once on a fresh
   connection, preventing spurious failures when connection pool entries outlive
   the server-side keep-alive.
-- **`TransportError` type (8 variants)** preserving all gun error details:
+- **`TransportError` type (9 variants)** preserving all gun error details:
   `StreamReset`, `Goaway`, `ConnectionError`, `RemoteClosed`, `TimedOut`,
-  `ProcessDown`, `ConnectFailed`, `Unexpected`. Each variant carries the full
+  `ProcessDown`, `ConnectFailed`, `Unexpected`, and `NoRecording` for a
+  playback request that no recording matches. Each variant carries the full
   structured information from gun (HTTP/2 error codes, human-readable
   descriptions, GOAWAY fields) instead of flattening to formatted strings.
 - **`StreamFailure` type** with `HttpFailure(response: HttpResponse)` and
@@ -117,17 +357,22 @@ version.
 - **`gun_down` connection events now logged.** The connection manager logs
   `gun_down` events with connection PID, protocol, reason, and killed/unprocessed
   stream counts via `error_logger:warning_msg`.
-- **Getter functions** for all 13 `TransportConfig` fields.
+- **Getter functions** for all 11 `TransportConfig` fields.
 - **24 new tests** covering structured error types, HttpFailure headers/body
   preservation, ConnectFailed variant checks, helper function output, plus
   builder/getter round-trips, default values, edge cases, builder chaining,
   transport application, and concurrent streaming scenarios.
 
+### Removed
+
+- `StreamMessage.DecodeError`. A typed message cannot fail to decode, so the
+  constructor had no use.
+
 ### Testing
 
-- 288 tests, 0 failed, in about 100 seconds (with the mock server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.17.0.
+- 781 tests, 0 failed, 100% line coverage (1314 of 1314 lines), in about 154 seconds (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
 
-## 5.1.3 - 2026-03-17
+## [5.1.3] - 2026-03-17
 
 ### Fixed
 
@@ -170,7 +415,7 @@ version.
   `ensure_recorder_table/0`, and `ensure_ets_tables/0` are removed. Tables
   exist from application start.
 
-## 5.1.2 - 2026-03-03
+## [5.1.2] - 2026-03-03
 
 ### Fixed
 
@@ -191,7 +436,7 @@ version.
   and the empty query string edge case. All assertions parse the JSON `query`
   field from the mock server's response for exact matching.
 
-## 5.1.1 - 2026-03-01
+## [5.1.1] - 2026-03-01
 
 ### Fixed
 
@@ -218,7 +463,7 @@ version.
   drop mid-stream), non-UTF-8 response bodies, and error string quality across
   all three execution modes (`send`, `start_stream`, `stream_yielder`).
 
-## 5.1.0 - 2026-02-28
+## [5.1.0] - 2026-02-28
 
 ### Added
 
@@ -262,7 +507,7 @@ version.
   `"HTTP 401 Unauthorized: {\"error\":{\"message\":\"Invalid API key\"}}"` instead of crashing
   or timing out.
 
-## 5.0.0 - 2026-02-16
+## [5.0.0] - 2026-02-16
 
 ### Breaking Changes
 
@@ -330,7 +575,7 @@ case client.send(request) {
 let assert Ok(client.HttpResponse(body: body, ..)) = client.send(request)
 ```
 
-## 4.1.0 - 2026-01-28
+## [4.1.0] - 2026-01-28
 
 ### Changed
 
@@ -340,7 +585,7 @@ let assert Ok(client.HttpResponse(body: body, ..)) = client.send(request)
 
 - Storage test coverage for atomic fixture writes and cleanup.
 
-## 4.0.0 - 2025-12-29
+## [4.0.0] - 2025-12-29
 
 ### Breaking Changes
 
@@ -368,7 +613,7 @@ let assert Ok(client.HttpResponse(body: body, ..)) = client.send(request)
   - **Blocking** recordings persist the response **status code** and **headers**
   - **Streaming** recordings persist response **headers** captured from `stream_start` (and trailing headers when available)
 
-## 3.0.1 - 2025-12-10
+## [3.0.1] - 2025-12-10
 
 ### Added
 
@@ -391,7 +636,7 @@ let assert Ok(client.HttpResponse(body: body, ..)) = client.send(request)
 
 **Note:** Backward compatible - existing recordings still load correctly. User-facing `recorder` API unchanged.
 
-## 3.0.0 - 2025-12-09
+## [3.0.0] - 2025-12-09
 
 ### Breaking Changes
 
@@ -482,7 +727,7 @@ let headers: List(Header) = client.get_headers(req)
 // Access with header.name and header.value
 ```
 
-## 2.1.1 - 2025-11-29
+## [2.1.1] - 2025-11-29
 
 ### Fixed
 
@@ -522,7 +767,7 @@ let headers: List(Header) = client.get_headers(req)
 - Recording only adds overhead when recorder is attached in Record mode - zero cost otherwise
 - ETS tables (`dream_http_client_stream_recorders`, `dream_http_client_ref_mapping`) are created on-demand
 
-## 2.1.0 - 2025-11-28
+## [2.1.0] - 2025-11-28
 
 ### Added
 
@@ -566,7 +811,7 @@ let headers: List(Header) = client.get_headers(req)
 - Added dependencies: `gleam_json`, `simplifile`, `gleam_otp` for recording functionality
 - Internal function `get_timeout` renamed to `resolve_timeout` to avoid naming conflict with public getter
 
-## 2.0.0 - 2025-11-24
+## [2.0.0] - 2025-11-24
 
 ### 🚨 Breaking Changes
 
@@ -650,20 +895,20 @@ let headers: List(Header) = client.get_headers(req)
 
 Special thanks to **Louis Pilfold** for bringing to our attention that the HTTP client did not support message-based streaming for OTP actors, which led to the comprehensive overhaul in this release.
 
-## 1.0.2 - 2025-11-21
+## [1.0.2] - 2025-11-21
 
 ### Changed
 
 - Added HexDocs documentation badge to README
 
-## 1.0.1 - 2025-11-22
+## [1.0.1] - 2025-11-22
 
 ### Fixed
 
 - Fixed logo display on hex.pm by using full GitHub URL
 - Added Dream logo to README
 
-## 1.0.0 - 2025-11-21
+## [1.0.0] - 2025-11-21
 
 ### Added
 

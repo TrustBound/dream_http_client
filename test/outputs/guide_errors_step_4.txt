@@ -1,0 +1,2 @@
+send_with_retry(GET request, 3, 10)    -> TryLater("HTTP 500"), and the server got 3 requests
+send_with_retry(POST request, 3, 10)   -> TryLater("HTTP 500"), and the server got 1 request

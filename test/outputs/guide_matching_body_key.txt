@@ -1,0 +1,2 @@
+search "milk" -> {"method":"POST","url":"/post","data":"milk"}
+search "eggs" -> {"method":"POST","url":"/post","data":"eggs"}

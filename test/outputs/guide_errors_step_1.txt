@@ -1,0 +1,6 @@
+send(api |> path("/text"))                  -> Done(response)  (status 200)
+send(api |> path("/status/404"))            -> GiveUp("HTTP 404")
+send(api |> path("/status/503"))            -> TryLater("HTTP 503")
+send(api |> port(1))                        -> TryLater("Connection failed: Connection refused")
+a server that closes the connection         -> TryLater("Remote closed connection")
+an HTTP/2 server that resets the stream     -> GiveUp("Stream reset (internal_error): Stream reset by server.")
