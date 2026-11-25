@@ -1,6 +1,6 @@
 # dream_http_client 6.0.0 Release Notes
 
-**Release Date:** not released yet (draft)
+**Release Date:** 2026-11-25
 
 This release moves `dream_http_client` from Erlang's `httpc` to [gun](https://github.com/ninenines/gun). Requests to one host now share HTTP/2 connections, and the number of streams on a connection follows what the server allows. Errors are typed values, a response body is bytes, and a stream can send typed messages to an OTP actor.
 

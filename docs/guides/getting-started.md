@@ -253,15 +253,13 @@ Because `fetch_greeting` takes the base request as a parameter, you can point it
 - `server.start(port)` starts a server with built-in endpoints, such as `/json`.
 - `server.start_with_config(port, routes)` starts a server that answers only the routes you give it, each with its own status and body. That's how you make an API that is down, or one that sends HTML.
 
-Add the test dependencies first. `dream_test` and `dream_mock_server` aren't on Hex yet, so add them from GitHub under `[dev-dependencies]` in your `gleam.toml`. These are the lines of this package's own `gleam.toml`, with the commits that it tests with:
+Add the test dependencies first, under `[dev-dependencies]` in your `gleam.toml`. These are the lines of this package's own `gleam.toml`:
 
-### The test dependencies <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/gleam.toml#L41-L44"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The test dependencies <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/gleam.toml#L41-L42"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```toml
-# Switched to a Hex version range once it is published.
-dream_mock_server = { git = "https://github.com/TrustBound/dream_mock_server.git", ref = "42f51b21bb89af7cd732dfa6f723dbca67c53672" }
-# Switched to a Hex version range once it is published.
-dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "1639959578a14ae3577f8e3ae5cac058f933aa53" }
+dream_mock_server = ">= 2.0.0 and < 3.0.0"
+dream_test = ">= 3.0.0 and < 4.0.0"
 ```
 
 Here's a test module for `fetch_greeting` with one test for the greeting and one for each failure that a server can cause. It uses [dream_test](https://hexdocs.pm/dream_test):

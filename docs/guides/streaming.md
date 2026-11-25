@@ -544,15 +544,13 @@ Your streaming code depends on two things you can't control in a unit test: what
 - **Against a mock server**, to test the whole path over a real connection, including failures. `dream_mock_server` sends known chunks with known delays, and has endpoints for an error status (`/stream/error`) and a dropped connection (`/stream/drop`).
 - **Against a recording**, to test exact chunk boundaries, the timing between chunks, and an error status, with no network at all. A recording of a stream holds each chunk as it arrived, so you can write one with a line split across two chunks, which no well-behaved test server will do for you.
 
-Add the test dependencies first. `dream_test` and `dream_mock_server` aren't on Hex yet, so add them from GitHub under `[dev-dependencies]` in your `gleam.toml`. These are the lines of this package's own `gleam.toml`, with the commits that it tests with:
+Add the test dependencies first, under `[dev-dependencies]` in your `gleam.toml`. These are the lines of this package's own `gleam.toml`:
 
-### The test dependencies <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/gleam.toml#L41-L44"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The test dependencies <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/gleam.toml#L41-L42"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```toml
-# Switched to a Hex version range once it is published.
-dream_mock_server = { git = "https://github.com/TrustBound/dream_mock_server.git", ref = "42f51b21bb89af7cd732dfa6f723dbca67c53672" }
-# Switched to a Hex version range once it is published.
-dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "1639959578a14ae3577f8e3ae5cac058f933aa53" }
+dream_mock_server = ">= 2.0.0 and < 3.0.0"
+dream_test = ">= 3.0.0 and < 4.0.0"
 ```
 
 Here's a test module for `print_events` from Step 2 that does both. It uses [dream_test](https://hexdocs.pm/dream_test):

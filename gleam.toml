@@ -38,12 +38,9 @@ application_start_module = "dream_http_client_app"
 
 [dev-dependencies]
 dream_http_server = ">= 2.1.0 and < 3.0.0"
-# Switched to a Hex version range once it is published.
-dream_mock_server = { git = "https://github.com/TrustBound/dream_mock_server.git", ref = "42f51b21bb89af7cd732dfa6f723dbca67c53672" }
-# Switched to a Hex version range once it is published.
-dream_test = { git = "https://github.com/TrustBound/dream_test.git", ref = "1639959578a14ae3577f8e3ae5cac058f933aa53" }
-# Switched to a Hex version range once it is published.
-dream_snippets = { git = "https://github.com/TrustBound/dream_snippets.git", ref = "96cf9a146a608e5cf82afab23600eec852de3d6b" }
+dream_mock_server = ">= 2.0.0 and < 3.0.0"
+dream_test = ">= 3.0.0 and < 4.0.0"
+dream_snippets = ">= 1.0.0 and < 2.0.0"
 
 [tools.dream_snippets]
 checked_from_version = "6.0.0"
