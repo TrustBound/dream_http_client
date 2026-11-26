@@ -26,12 +26,12 @@ It is a minor version: it only adds a function and a dependency.
 #### Write a log line for a transport error <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_client_to_error.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
-import dream_errors
-import dream_http_client/client.{type TransportError}
+import dream_errors.{kind_name, message}
+import dream_http_client/client.{type TransportError, to_error}
 
 pub fn log_line(error: TransportError) -> String {
-  let shared = client.to_error(error)
-  dream_errors.kind_name(shared) <> ": " <> dream_errors.message(shared)
+  let shared = to_error(error)
+  kind_name(shared) <> ": " <> message(shared)
 }
 ```
 

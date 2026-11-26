@@ -98,7 +98,7 @@
 //// }
 //// ```
 
-import dream_errors
+import dream_errors.{type Error, Failed, Timeout, Unavailable}
 import dream_http_client/internal
 import dream_http_client/recorder
 import dream_http_client/recording
@@ -110,7 +110,7 @@ import gleam/erlang/process
 import gleam/erlang/reference
 import gleam/http
 import gleam/http/request
-import gleam/int
+import gleam/int.{to_string}
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -493,23 +493,23 @@ pub fn transport_error_to_string(error: TransportError) -> String {
 /// ### Write a log line for a transport error <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_client_to_error.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
-/// import dream_errors
-/// import dream_http_client/client.{type TransportError}
+/// import dream_errors.{kind_name, message}
+/// import dream_http_client/client.{type TransportError, to_error}
 ///
 /// pub fn log_line(error: TransportError) -> String {
-///   let shared = client.to_error(error)
-///   dream_errors.kind_name(shared) <> ": " <> dream_errors.message(shared)
+///   let shared = to_error(error)
+///   kind_name(shared) <> ": " <> message(shared)
 /// }
 /// ```
-pub fn to_error(error: TransportError) -> dream_errors.Error(TransportError) {
+pub fn to_error(error: TransportError) -> Error(TransportError) {
   case error {
     TimedOut(timeout_ms: ms) ->
-      dream_errors.Timeout(
-        "the HTTP request got no response in " <> int.to_string(ms) <> " ms",
+      Timeout(
+        "the HTTP request got no response in " <> to_string(ms) <> " ms",
         error,
       )
     ConnectFailed(reason: reason) ->
-      dream_errors.Unavailable(
+      Unavailable(
         "the HTTP client could not connect to the server: " <> reason,
         error,
       )
@@ -520,7 +520,7 @@ pub fn to_error(error: TransportError) -> dream_errors.Error(TransportError) {
     | ProcessDown(..)
     | Unexpected(..)
     | NoRecording(..) ->
-      dream_errors.Failed(
+      Failed(
         "the HTTP request failed: " <> transport_error_to_string(error),
         error,
       )
