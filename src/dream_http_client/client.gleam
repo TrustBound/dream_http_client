@@ -98,24 +98,31 @@
 //// }
 //// ```
 
-import dream_errors.{type Error, Failed, Timeout, Unavailable}
-import dream_http_client/internal
+import dream_errors.{type Error, Timeout, Unavailable}
+import dream_http_client/internal.{
+  type ConnectionSettings, ConnectionSettings, atomize_method, fetch_next,
+  fetch_start_headers, grant_next, log_warning, start_gun_stream,
+}
 import dream_http_client/recorder
 import dream_http_client/recording
-import gleam/bit_array
-import gleam/bytes_tree
-import gleam/dynamic/decode as d
-import gleam/erlang/atom
-import gleam/erlang/process
-import gleam/erlang/reference
-import gleam/http
+import gleam/bit_array.{byte_size, concat}
+import gleam/bytes_tree.{type BytesTree, from_bit_array}
+import gleam/dynamic/decode.{type Dynamic}
+import gleam/erlang/atom.{type Atom, create, to_dynamic}
+import gleam/erlang/process.{
+  type Pid, type Selector, type Subject, is_alive, kill, monitor, new_selector,
+  select_record, select_specific_monitor, selector_receive,
+  selector_receive_forever, self, sleep, spawn_unlinked,
+}
+import gleam/erlang/reference.{type Reference}
+import gleam/http.{type Method, type Scheme, Get, Https, scheme_to_string}
 import gleam/http/request
-import gleam/int.{to_string}
-import gleam/list
-import gleam/option.{type Option, None, Some}
-import gleam/result
-import gleam/string
-import gleam/yielder
+import gleam/int.{max}
+import gleam/list.{flat_map, reverse}
+import gleam/option.{type Option, None, Some, then, unwrap}
+import gleam/result.{map_error, try}
+import gleam/string.{join}
+import gleam/yielder.{type Step, type Yielder, Next, single, unfold}
 
 /// HTTP header
 ///
@@ -505,7 +512,7 @@ pub fn to_error(error: TransportError) -> Error(TransportError) {
   case error {
     TimedOut(timeout_ms: ms) ->
       Timeout(
-        "the HTTP request got no response in " <> to_string(ms) <> " ms",
+        "the HTTP request got no response in " <> int.to_string(ms) <> " ms",
         error,
       )
     ConnectFailed(reason: reason) ->
@@ -520,7 +527,7 @@ pub fn to_error(error: TransportError) -> Error(TransportError) {
     | ProcessDown(..)
     | Unexpected(..)
     | NoRecording(..) ->
-      Failed(
+      dream_errors.Failed(
         "the HTTP request failed: " <> transport_error_to_string(error),
         error,
       )
@@ -540,7 +547,7 @@ fn describe_nearest(
         describe_candidate("Nearest recording: ", first),
         ..list.map(rest, describe_candidate("Next nearest recording: ", _))
       ]
-      |> string.join("\n")
+      |> join("\n")
   }
 }
 
@@ -550,9 +557,9 @@ fn describe_candidate(
 ) -> String {
   [
     label <> candidate.path,
-    ..list.flat_map(candidate.differences, describe_difference)
+    ..flat_map(candidate.differences, describe_difference)
   ]
-  |> string.join("\n")
+  |> join("\n")
 }
 
 fn describe_difference(difference: recorder.Difference) -> List(String) {
@@ -635,8 +642,7 @@ pub fn stream_failure_to_string(failure: StreamFailure) -> String {
 fn body_for_display(body: BitArray) -> String {
   case bit_array.to_string(body) {
     Ok(text) -> text
-    Error(Nil) ->
-      "<" <> int.to_string(bit_array.byte_size(body)) <> " bytes, not UTF-8>"
+    Error(Nil) -> "<" <> int.to_string(byte_size(body)) <> " bytes, not UTF-8>"
   }
 }
 
@@ -792,8 +798,8 @@ pub type LogLevel {
 /// to construct requests, and the getter functions to inspect request properties.
 pub opaque type ClientRequest {
   ClientRequest(
-    method: http.Method,
-    scheme: http.Scheme,
+    method: Method,
+    scheme: Scheme,
     host: String,
     port: Option(Int),
     path: String,
@@ -853,7 +859,7 @@ pub opaque type ClientRequest {
 /// }
 /// ```
 pub opaque type ConnectionPool {
-  ConnectionPool(id: reference.Reference, max_connections: Int)
+  ConnectionPool(id: Reference, max_connections: Int)
 }
 
 /// Make a connection pool
@@ -978,8 +984,8 @@ pub fn get_pool_max_connections(pool: ConnectionPool) -> Int {
 /// ```
 pub fn new() -> ClientRequest {
   ClientRequest(
-    method: http.Get,
-    scheme: http.Https,
+    method: Get,
+    scheme: Https,
     host: "localhost",
     port: None,
     path: "",
@@ -1028,7 +1034,7 @@ pub fn new() -> ClientRequest {
 /// ```
 pub fn method(
   client_request: ClientRequest,
-  method_value: http.Method,
+  method_value: Method,
 ) -> ClientRequest {
   ClientRequest(..client_request, method: method_value)
 }
@@ -1061,7 +1067,7 @@ pub fn method(
 /// ```
 pub fn scheme(
   client_request: ClientRequest,
-  scheme_value: http.Scheme,
+  scheme_value: Scheme,
 ) -> ClientRequest {
   ClientRequest(..client_request, scheme: scheme_value)
 }
@@ -2887,7 +2893,7 @@ pub fn add_header(
 ///   client.get_method(request)
 /// }
 /// ```
-pub fn get_method(client_request: ClientRequest) -> http.Method {
+pub fn get_method(client_request: ClientRequest) -> Method {
   client_request.method
 }
 
@@ -2908,7 +2914,7 @@ pub fn get_method(client_request: ClientRequest) -> http.Method {
 ///   client.get_scheme(request)
 /// }
 /// ```
-pub fn get_scheme(client_request: ClientRequest) -> http.Scheme {
+pub fn get_scheme(client_request: ClientRequest) -> Scheme {
   client_request.scheme
 }
 
@@ -3311,7 +3317,7 @@ pub fn get_recorder(
 /// - `stream_to()`: starts a stream and returns its `RequestId`
 /// - `cancel_stream()`: stops the stream of a `RequestId`
 pub opaque type RequestId {
-  RequestId(stream: process.Pid)
+  RequestId(stream: Pid)
 }
 
 /// A message that a stream of `stream_to()` sends to its inbox
@@ -3416,7 +3422,7 @@ pub type StreamMessage {
 /// }
 /// ```
 pub opaque type StreamHandle {
-  StreamHandle(pid: process.Pid)
+  StreamHandle(pid: Pid)
 }
 
 // ============================================================================
@@ -3598,8 +3604,8 @@ fn send_and_maybe_record(
         recorded_request,
         response_for_recording,
       )
-      |> result.map_error(fn(reason) { RequestError(Unexpected(raw: reason)) })
-      |> result.try(fn(_saved) { response_result(status, headers, body) })
+      |> map_error(fn(reason) { RequestError(Unexpected(raw: reason)) })
+      |> try(fn(_saved) { response_result(status, headers, body) })
     }
     Error(error) -> Error(RequestError(error: error))
   }
@@ -3636,8 +3642,8 @@ fn send_client_request_via_gun_with_meta(
 ) -> Result(#(Int, List(#(String, String)), BitArray), TransportError) {
   let http_request = to_http_request(client_request)
   let url = build_url(http_request)
-  let method_atom = internal.atomize_method(http_request.method)
-  let method_dynamic = atom.to_dynamic(method_atom)
+  let method_atom = atomize_method(http_request.method)
+  let method_dynamic = to_dynamic(method_atom)
   let body = http_request.body
   let timeout_value = resolve_timeout(client_request)
   let connect_timeout_value = resolve_connect_timeout(client_request)
@@ -3692,16 +3698,14 @@ fn resolve_auto_redirect(client_request: ClientRequest) -> Bool {
   }
 }
 
-fn resolve_connection_settings(
-  request: ClientRequest,
-) -> internal.ConnectionSettings {
+fn resolve_connection_settings(request: ClientRequest) -> ConnectionSettings {
   let protocols = case request.protocols {
-    option.Some(Http1Only) -> atom.create("http1_only")
-    option.Some(Http2Only) -> atom.create("http2_only")
-    option.Some(Http2Preferred) -> atom.create("http2_preferred")
-    option.None -> atom.create("default")
+    option.Some(Http1Only) -> create("http1_only")
+    option.Some(Http2Only) -> create("http2_only")
+    option.Some(Http2Preferred) -> create("http2_preferred")
+    option.None -> create("default")
   }
-  internal.ConnectionSettings(
+  ConnectionSettings(
     protocols: protocols,
     certificate_authority_file: request.certificate_authority_file,
     pool: option.map(request.pool, fn(pool) { #(pool.id, pool.max_connections) }),
@@ -3710,14 +3714,14 @@ fn resolve_connection_settings(
 
 @external(erlang, "dream_http_shim", "request_sync")
 fn send_sync(
-  method: d.Dynamic,
+  method: Dynamic,
   url: String,
   headers: List(#(String, String)),
   body: BitArray,
   timeout_ms: Int,
   connect_timeout_ms: Int,
   autoredirect: Bool,
-  connection_settings: internal.ConnectionSettings,
+  connection_settings: ConnectionSettings,
 ) -> Result(#(Int, List(#(String, String)), BitArray), TransportError)
 
 /// Stream HTTP response chunks using a yielder
@@ -3862,7 +3866,7 @@ fn send_sync(
 /// ```
 pub fn stream_yielder(
   client_request: ClientRequest,
-) -> yielder.Yielder(Result(bytes_tree.BytesTree, StreamFailure)) {
+) -> Yielder(Result(BytesTree, StreamFailure)) {
   case client_request.recorder {
     option.Some(recorder_instance) ->
       stream_yielder_with_recorder(client_request, recorder_instance)
@@ -3873,12 +3877,12 @@ pub fn stream_yielder(
 fn stream_yielder_with_recorder(
   client_request: ClientRequest,
   recorder_instance: recorder.Recorder,
-) -> yielder.Yielder(Result(bytes_tree.BytesTree, StreamFailure)) {
+) -> Yielder(Result(BytesTree, StreamFailure)) {
   let recorded_request = client_request_to_recorded_request(client_request)
 
   case ask_recorder(recorder_instance, recorded_request) {
     PlayRecording(response) ->
-      yielder.unfold(
+      unfold(
         YielderPlaybackNotStarted(
           playback: recorded_playback(response),
           timeout_ms: resolve_timeout(client_request),
@@ -3886,13 +3890,13 @@ fn stream_yielder_with_recorder(
         next_yielder_step,
       )
     SendLive -> create_stream_yielder_from_client_request(client_request)
-    RecorderFailure(error) -> yielder.single(Error(TransportFailure(error:)))
+    RecorderFailure(error) -> single(Error(TransportFailure(error:)))
   }
 }
 
 fn create_stream_yielder_from_client_request(
   client_request: ClientRequest,
-) -> yielder.Yielder(Result(bytes_tree.BytesTree, StreamFailure)) {
+) -> Yielder(Result(BytesTree, StreamFailure)) {
   let pull_request =
     PullRequest(
       http_req: to_http_request(client_request),
@@ -3902,13 +3906,13 @@ fn create_stream_yielder_from_client_request(
       connection_settings: resolve_connection_settings(client_request),
     )
   let stream_recording =
-    option.then(client_request.recorder, fn(recorder_instance) {
+    then(client_request.recorder, fn(recorder_instance) {
       new_stream_recording(
         recorder_instance,
         client_request_to_recorded_request(client_request),
       )
     })
-  yielder.unfold(
+  unfold(
     YielderNotStarted(request: pull_request, recording: stream_recording),
     next_yielder_step,
   )
@@ -3921,7 +3925,7 @@ type PullRequest {
     timeout_ms: Int,
     connect_timeout_ms: Int,
     auto_redirect: Bool,
-    connection_settings: internal.ConnectionSettings,
+    connection_settings: ConnectionSettings,
   )
 }
 
@@ -3945,7 +3949,7 @@ type PullRequest {
 // stream ends. A stream that fails is not saved.
 type YielderState {
   YielderNotStarted(request: PullRequest, recording: Option(StreamRecording))
-  YielderStreaming(owner: process.Pid, recording: Option(StreamRecording))
+  YielderStreaming(owner: Pid, recording: Option(StreamRecording))
   YielderFailed
   YielderPlaybackNotStarted(playback: Playback, timeout_ms: Int)
   YielderPlayback(
@@ -3957,7 +3961,7 @@ type YielderState {
 
 fn next_yielder_step(
   state: YielderState,
-) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
+) -> Step(Result(BytesTree, StreamFailure), YielderState) {
   case state {
     YielderNotStarted(request: pull_request, recording: stream_recording) ->
       start_yielder_stream(pull_request, stream_recording)
@@ -3979,9 +3983,9 @@ fn next_yielder_step(
 fn start_yielder_playback(
   playback: Playback,
   timeout_ms: Int,
-) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
+) -> Step(Result(BytesTree, StreamFailure), YielderState) {
   case playback {
-    PlaybackFailure(failure) -> yielder.Next(Error(failure), YielderFailed)
+    PlaybackFailure(failure) -> Next(Error(failure), YielderFailed)
     PlaybackStream(headers: _, chunks: chunks) ->
       yield_recorded_chunk(chunks, get_time_ms(), timeout_ms)
   }
@@ -3994,13 +3998,13 @@ fn yield_recorded_chunk(
   chunks: List(recording.Chunk),
   previous_due: Int,
   timeout_ms: Int,
-) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
+) -> Step(Result(BytesTree, StreamFailure), YielderState) {
   case chunks {
     [] -> yielder.Done
     [chunk, ..rest] -> {
       let due = previous_due + chunk.delay_ms
       let wait = recorded_chunk_wait(due, timeout_ms)
-      process.sleep(wait_milliseconds(wait))
+      sleep(wait_milliseconds(wait))
       yield_after_wait(wait, chunk, rest, due, timeout_ms)
     }
   }
@@ -4012,24 +4016,24 @@ fn yield_after_wait(
   rest: List(recording.Chunk),
   due: Int,
   timeout_ms: Int,
-) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
+) -> Step(Result(BytesTree, StreamFailure), YielderState) {
   case wait {
     ChunkAfter(_wait_ms) ->
-      yielder.Next(
-        Ok(bytes_tree.from_bit_array(chunk.data)),
+      Next(
+        Ok(from_bit_array(chunk.data)),
         YielderPlayback(chunks: rest, previous_due: due, timeout_ms: timeout_ms),
       )
     TimeoutAfter(timeout_ms: waited_ms) ->
-      yielder.Next(Error(recorded_timeout(waited_ms)), YielderFailed)
+      Next(Error(recorded_timeout(waited_ms)), YielderFailed)
   }
 }
 
 fn start_yielder_stream(
   pull_request: PullRequest,
   stream_recording: Option(StreamRecording),
-) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
+) -> Step(Result(BytesTree, StreamFailure), YielderState) {
   let owner =
-    internal.start_gun_stream(
+    start_gun_stream(
       pull_request.http_req,
       pull_request.timeout_ms,
       pull_request.connect_timeout_ms,
@@ -4046,10 +4050,10 @@ fn start_yielder_stream(
 // it gets them before the first event. A stream that did not start gives
 // its failure here.
 fn yield_first_recorded_event(
-  owner: process.Pid,
+  owner: Pid,
   stream_recording: StreamRecording,
-) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
-  case internal.fetch_start_headers(owner) {
+) -> Step(Result(BytesTree, StreamFailure), YielderState) {
+  case fetch_start_headers(owner) {
     Ok(#(status, headers)) ->
       yield_next_event(
         owner,
@@ -4057,18 +4061,18 @@ fn yield_first_recorded_event(
           StreamRecording(..stream_recording, status: status, headers: headers),
         ),
       )
-    Error(failure) -> yielder.Next(Error(failure), YielderFailed)
+    Error(failure) -> Next(Error(failure), YielderFailed)
   }
 }
 
 fn yield_next_event(
-  owner: process.Pid,
+  owner: Pid,
   stream_recording: Option(StreamRecording),
-) -> yielder.Step(Result(bytes_tree.BytesTree, StreamFailure), YielderState) {
-  case internal.fetch_next(owner) {
+) -> Step(Result(BytesTree, StreamFailure), YielderState) {
+  case fetch_next(owner) {
     internal.Chunk(data) ->
-      yielder.Next(
-        Ok(bytes_tree.from_bit_array(data)),
+      Next(
+        Ok(from_bit_array(data)),
         YielderStreaming(
           owner: owner,
           recording: record_stream_chunk(stream_recording, data),
@@ -4080,11 +4084,11 @@ fn yield_next_event(
     internal.Done(_trailers) ->
       case record_stream_end(stream_recording, []) {
         Ok(Nil) -> yielder.Done
-        Error(failure) -> yielder.Next(Error(failure), YielderFailed)
+        Error(failure) -> Next(Error(failure), YielderFailed)
       }
     // The stream owner gave the lease back and stopped before it gave the
     // failure.
-    internal.Failed(failure) -> yielder.Next(Error(failure), YielderFailed)
+    internal.Failed(failure) -> Next(Error(failure), YielderFailed)
   }
 }
 
@@ -4134,11 +4138,11 @@ fn get_time_ms() -> Int {
   // Convert native time units to milliseconds
   let native = monotonic_time_native()
   // erlang:convert_time_unit(native, native, millisecond)
-  convert_time_unit(native, atom.create("native"), atom.create("millisecond"))
+  convert_time_unit(native, create("native"), create("millisecond"))
 }
 
 @external(erlang, "erlang", "convert_time_unit")
-fn convert_time_unit(time: Int, from_unit: atom.Atom, to_unit: atom.Atom) -> Int
+fn convert_time_unit(time: Int, from_unit: Atom, to_unit: Atom) -> Int
 
 // Saves a streamed response and returns when it is on disk.
 // `reversed_chunks` holds the chunks newest first.
@@ -4153,7 +4157,7 @@ fn save_stream_recording(
     recording.StreamingResponse(
       status: status,
       headers: headers,
-      chunks: list.reverse(reversed_chunks),
+      chunks: reverse(reversed_chunks),
     )
 
   recorder.add_recording(
@@ -4165,10 +4169,10 @@ fn save_stream_recording(
 // Starts the low-level HTTP stream via gun. A translator process sends the
 // stream to the calling process as `{http, TranslatorMessage}` messages.
 // Returns the translator.
-fn start_stream_messages(client_request: ClientRequest) -> process.Pid {
+fn start_stream_messages(client_request: ClientRequest) -> Pid {
   let http_request = to_http_request(client_request)
   internal.start_stream_messages(
-    internal.atomize_method(http_request.method),
+    atomize_method(http_request.method),
     build_url(http_request),
     http_request.headers,
     http_request.body,
@@ -4188,7 +4192,7 @@ fn build_url(request: request.Request(BitArray)) -> String {
     option.Some(query) -> "?" <> query
     option.None -> ""
   }
-  http.scheme_to_string(request.scheme)
+  scheme_to_string(request.scheme)
   <> "://"
   <> request.host
   <> port_string
@@ -4236,23 +4240,23 @@ type StreamRecording {
 }
 
 fn select_translator_messages(
-  selector: process.Selector(StreamProcessMessage),
-) -> process.Selector(StreamProcessMessage) {
-  process.select_record(
+  selector: Selector(StreamProcessMessage),
+) -> Selector(StreamProcessMessage) {
+  select_record(
     selector,
-    tag: atom.create("http"),
+    tag: create("http"),
     fields: 1,
     mapping: translator_message,
   )
 }
 
 // The selector gives the whole `{http, TranslatorMessage}` record.
-fn translator_message(record: d.Dynamic) -> StreamProcessMessage {
+fn translator_message(record: Dynamic) -> StreamProcessMessage {
   FromTranslator(message: record_element(2, record))
 }
 
 @external(erlang, "erlang", "element")
-fn record_element(index: Int, record: d.Dynamic) -> TranslatorMessage
+fn record_element(index: Int, record: Dynamic) -> TranslatorMessage
 
 /// Start an HTTP stream with callback handlers
 ///
@@ -4350,12 +4354,8 @@ fn record_element(index: Int, record: d.Dynamic) -> TranslatorMessage
 /// ```
 pub fn start_stream(request: ClientRequest) -> Result(StreamHandle, String) {
   let stream_pid =
-    process.spawn_unlinked(fn() {
-      run_stream_process(
-        request,
-        callback_handlers(request),
-        process.new_selector(),
-      )
+    spawn_unlinked(fn() {
+      run_stream_process(request, callback_handlers(request), new_selector())
     })
 
   Ok(StreamHandle(pid: stream_pid))
@@ -4503,18 +4503,16 @@ pub fn start_stream(request: ClientRequest) -> Result(StreamHandle, String) {
 /// - `start_stream()`: a stream with callbacks
 pub fn stream_to(
   request: ClientRequest,
-  inbox: process.Subject(StreamMessage),
+  inbox: Subject(StreamMessage),
 ) -> Result(RequestId, String) {
-  let owner = process.self()
+  let owner = self()
   let stream_pid =
-    process.spawn_unlinked(fn() {
-      let owner_monitor = process.monitor(owner)
+    spawn_unlinked(fn() {
+      let owner_monitor = monitor(owner)
       let owner_selector =
-        process.new_selector()
-        |> process.select_specific_monitor(owner_monitor, fn(_down) {
-          OwnerStopped
-        })
-      let handlers = inbox_handlers(inbox, RequestId(stream: process.self()))
+        new_selector()
+        |> select_specific_monitor(owner_monitor, fn(_down) { OwnerStopped })
+      let handlers = inbox_handlers(inbox, RequestId(stream: self()))
       run_stream_process(request, handlers, owner_selector)
     })
 
@@ -4523,10 +4521,10 @@ pub fn stream_to(
 
 fn callback_handlers(request: ClientRequest) -> StreamHandlers {
   StreamHandlers(
-    on_start: option.unwrap(request.on_stream_start, ignore_headers),
-    on_chunk: option.unwrap(request.on_stream_chunk, ignore_chunk),
-    on_end: option.unwrap(request.on_stream_end, ignore_headers),
-    on_error: option.unwrap(request.on_stream_error, ignore_failure),
+    on_start: unwrap(request.on_stream_start, ignore_headers),
+    on_chunk: unwrap(request.on_stream_chunk, ignore_chunk),
+    on_end: unwrap(request.on_stream_end, ignore_headers),
+    on_error: unwrap(request.on_stream_error, ignore_failure),
   )
 }
 
@@ -4543,7 +4541,7 @@ fn ignore_failure(_failure: StreamFailure) -> Nil {
 }
 
 fn inbox_handlers(
-  inbox: process.Subject(StreamMessage),
+  inbox: Subject(StreamMessage),
   request_id: RequestId,
 ) -> StreamHandlers {
   StreamHandlers(
@@ -4567,7 +4565,7 @@ fn inbox_handlers(
 fn run_stream_process(
   request: ClientRequest,
   handlers: StreamHandlers,
-  stop_selector: process.Selector(StreamProcessMessage),
+  stop_selector: Selector(StreamProcessMessage),
 ) -> Nil {
   case request.recorder {
     None -> stream_live(request, handlers, stop_selector, None)
@@ -4579,7 +4577,7 @@ fn run_stream_process(
 fn stream_with_recorder(
   request: ClientRequest,
   handlers: StreamHandlers,
-  stop_selector: process.Selector(StreamProcessMessage),
+  stop_selector: Selector(StreamProcessMessage),
   recorder_instance: recorder.Recorder,
 ) -> Nil {
   let recorded_request = client_request_to_recorded_request(request)
@@ -4623,7 +4621,7 @@ fn new_stream_recording(
 fn stream_live(
   request: ClientRequest,
   handlers: StreamHandlers,
-  stop_selector: process.Selector(StreamProcessMessage),
+  stop_selector: Selector(StreamProcessMessage),
   stream_recording: Option(StreamRecording),
 ) -> Nil {
   let selector = select_translator_messages(stop_selector)
@@ -4666,7 +4664,7 @@ fn playback_of(
         HttpFailure(response: HttpResponse(
           status: status,
           headers: tuples_to_headers(headers),
-          body: bit_array.concat(list.map(chunks, fn(chunk) { chunk.data })),
+          body: concat(list.map(chunks, fn(chunk) { chunk.data })),
         )),
       )
   }
@@ -4689,7 +4687,7 @@ type RecordedChunkWait {
 }
 
 fn recorded_chunk_wait(due: Int, timeout_ms: Int) -> RecordedChunkWait {
-  let wait_ms = int.max(due - get_time_ms(), 0)
+  let wait_ms = max(due - get_time_ms(), 0)
   case wait_ms > timeout_ms {
     True -> TimeoutAfter(timeout_ms: timeout_ms)
     False -> ChunkAfter(wait_ms: wait_ms)
@@ -4712,7 +4710,7 @@ fn recorded_timeout(timeout_ms: Int) -> StreamFailure {
 // due after its delay, counted from the start.
 fn replay_recorded_stream(
   handlers: StreamHandlers,
-  stop_selector: process.Selector(StreamProcessMessage),
+  stop_selector: Selector(StreamProcessMessage),
   playback: Playback,
   timeout_ms: Int,
 ) -> Nil {
@@ -4737,7 +4735,7 @@ fn replay_recorded_stream(
 // stream process, also in a wait.
 fn replay_recorded_chunks(
   handlers: StreamHandlers,
-  stop_selector: process.Selector(StreamProcessMessage),
+  stop_selector: Selector(StreamProcessMessage),
   chunks: List(recording.Chunk),
   previous_due: Int,
   timeout_ms: Int,
@@ -4747,7 +4745,7 @@ fn replay_recorded_chunks(
     [chunk, ..rest] -> {
       let due = previous_due + chunk.delay_ms
       let wait = recorded_chunk_wait(due, timeout_ms)
-      case process.selector_receive(stop_selector, wait_milliseconds(wait)) {
+      case selector_receive(stop_selector, wait_milliseconds(wait)) {
         Ok(_owner_stopped) -> Nil
         Error(Nil) ->
           replay_after_wait(
@@ -4766,7 +4764,7 @@ fn replay_recorded_chunks(
 
 fn replay_after_wait(
   handlers: StreamHandlers,
-  stop_selector: process.Selector(StreamProcessMessage),
+  stop_selector: Selector(StreamProcessMessage),
   wait: RecordedChunkWait,
   chunk: recording.Chunk,
   rest: List(recording.Chunk),
@@ -4793,12 +4791,12 @@ fn replay_after_wait(
 // loop calls when the chunk handler returned. A slow handler slows the
 // server down, and no chunks collect in the mailbox.
 fn process_stream_loop(
-  selector: process.Selector(StreamProcessMessage),
-  translator: process.Pid,
+  selector: Selector(StreamProcessMessage),
+  translator: Pid,
   handlers: StreamHandlers,
   stream_recording: Option(StreamRecording),
 ) -> Nil {
-  case process.selector_receive_forever(selector) {
+  case selector_receive_forever(selector) {
     FromTranslator(TranslatorStart(status, headers)) -> {
       let updated = record_stream_start(stream_recording, status, headers)
       handlers.on_start(headers)
@@ -4807,7 +4805,7 @@ fn process_stream_loop(
     FromTranslator(TranslatorChunk(data)) -> {
       let updated = record_stream_chunk(stream_recording, data)
       handlers.on_chunk(data)
-      internal.grant_next(translator)
+      grant_next(translator)
       process_stream_loop(selector, translator, handlers, updated)
     }
     FromTranslator(TranslatorEnd(headers)) ->
@@ -4877,7 +4875,7 @@ fn record_stream_end(
         recorded_end_headers(state.headers, trailers),
         state.chunks,
       )
-      |> result.map_error(fn(reason) {
+      |> map_error(fn(reason) {
         TransportFailure(error: Unexpected(raw: reason))
       })
     None -> Ok(Nil)
@@ -4904,7 +4902,7 @@ fn record_stream_error(
 ) -> Nil {
   case stream_recording {
     Some(_state) ->
-      internal.log_warning(
+      log_warning(
         "HTTP stream error while recording a stream, so the recording is not saved: "
         <> stream_failure_to_string(failure),
       )
@@ -4940,7 +4938,7 @@ fn record_stream_error(
 /// ```
 pub fn cancel_stream_handle(handle: StreamHandle) -> Nil {
   let StreamHandle(pid) = handle
-  process.kill(pid)
+  kill(pid)
 }
 
 /// Check if a stream is still active
@@ -4971,7 +4969,7 @@ pub fn cancel_stream_handle(handle: StreamHandle) -> Nil {
 /// ```
 pub fn is_stream_active(handle: StreamHandle) -> Bool {
   let StreamHandle(pid) = handle
-  process.is_alive(pid)
+  is_alive(pid)
 }
 
 /// Wait for a stream to complete
@@ -5011,9 +5009,9 @@ pub fn await_stream(handle: StreamHandle) -> Nil {
   let StreamHandle(pid) = handle
 
   // Poll until process exits
-  case process.is_alive(pid) {
+  case is_alive(pid) {
     True -> {
-      process.sleep(50)
+      sleep(50)
       await_stream(handle)
     }
     False -> Nil
@@ -5072,9 +5070,9 @@ pub fn await_stream(handle: StreamHandle) -> Nil {
 /// - `cancel_stream_handle()`: stops a stream of `start_stream()`
 pub fn cancel_stream(request_id: RequestId) -> Nil {
   let RequestId(stream: stream_pid) = request_id
-  let stream_monitor = process.monitor(stream_pid)
-  process.kill(stream_pid)
-  process.new_selector()
-  |> process.select_specific_monitor(stream_monitor, fn(_down) { Nil })
-  |> process.selector_receive_forever
+  let stream_monitor = monitor(stream_pid)
+  kill(stream_pid)
+  new_selector()
+  |> select_specific_monitor(stream_monitor, fn(_down) { Nil })
+  |> selector_receive_forever
 }

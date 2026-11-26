@@ -4,20 +4,25 @@
 //// Supports recording, playback, and passthrough modes.
 
 import dream_http_client/internal
-import dream_http_client/matching
+import dream_http_client/matching.{type MatchKey, request_key}
 import dream_http_client/recording
-import dream_http_client/storage
-import gleam/bit_array
-import gleam/dict
-import gleam/erlang/process
-import gleam/http
+import dream_http_client/storage.{
+  load_recording_files, remove_recording_file, save_recording_immediately,
+}
+import gleam/bit_array.{base64_encode, byte_size, from_string}
+import gleam/dict.{type Dict, delete, get, insert, values}
+import gleam/erlang/process.{type Subject, new_subject, receive, send}
+import gleam/http.{method_to_string, scheme_to_string}
 import gleam/int
-import gleam/list
-import gleam/option
-import gleam/order
-import gleam/otp/actor.{type Next}
+import gleam/list.{
+  all, any, drop, filter, flat_map, flatten, fold, length, map, reverse, sort,
+  take, try_each, unique,
+}
+import gleam/option.{type Option, None, Some}
+import gleam/order.{type Order, break_tie}
+import gleam/otp/actor.{type Next, type Started, continue, on_message}
 import gleam/result
-import gleam/string
+import gleam/string.{contains, inspect, join, split}
 
 /// Opaque recorder handle for managing HTTP request/response recordings
 ///
@@ -74,7 +79,7 @@ import gleam/string
 /// }
 /// ```
 pub opaque type Recorder {
-  Recorder(subject: process.Subject(RecorderMessage))
+  Recorder(subject: Subject(RecorderMessage))
 }
 
 /// A request transformer applied before keying and persistence.
@@ -196,8 +201,8 @@ pub type Mode {
 pub type RecorderBuilder {
   RecorderBuilder(
     mode: Mode,
-    directory: option.Option(String),
-    key: matching.MatchKey,
+    directory: Option(String),
+    key: MatchKey,
     request_transformer: RequestTransformer,
     response_transformer: ResponseTransformer,
   )
@@ -257,13 +262,8 @@ pub type RecorderBuilder {
 pub fn new() -> RecorderBuilder {
   RecorderBuilder(
     mode: Passthrough,
-    directory: option.None,
-    key: matching.request_key(
-      method: True,
-      url: True,
-      headers: False,
-      body: False,
-    ),
+    directory: None,
+    key: request_key(method: True, url: True, headers: False, body: False),
     request_transformer: identity_request_transformer,
     response_transformer: identity_response_transformer,
   )
@@ -320,7 +320,7 @@ pub fn directory(
   builder: RecorderBuilder,
   directory: String,
 ) -> RecorderBuilder {
-  RecorderBuilder(..builder, directory: option.Some(directory))
+  RecorderBuilder(..builder, directory: Some(directory))
 }
 
 /// Set the recorder mode: `Record`, `Playback` or `Passthrough`.
@@ -466,10 +466,7 @@ pub fn parse_mode(text: String) -> Result(Mode, String) {
 ///   |> response_transformer(drop_body)
 /// }
 /// ```
-pub fn key(
-  builder: RecorderBuilder,
-  key: matching.MatchKey,
-) -> RecorderBuilder {
+pub fn key(builder: RecorderBuilder, key: MatchKey) -> RecorderBuilder {
   RecorderBuilder(..builder, key: key)
 }
 
@@ -599,16 +596,16 @@ type RecorderState {
   RecorderState(
     mode: Mode,
     directory: String,
-    key: matching.MatchKey,
+    key: MatchKey,
     request_transformer: RequestTransformer,
     response_transformer: ResponseTransformer,
-    recordings: dict.Dict(String, List(recording.Recording)),
+    recordings: Dict(String, List(recording.Recording)),
     // Playback mode: every recording with the path of its file, after the
     // request transformer. A miss looks here for the nearest recordings.
     files: List(#(String, recording.Recording)),
     // Record mode: the files that were in the directory at start, by key.
     // The first recording of a key in this run removes them.
-    earlier_files: dict.Dict(String, List(String)),
+    earlier_files: Dict(String, List(String)),
   )
 }
 
@@ -675,10 +672,10 @@ pub fn start(builder: RecorderBuilder) -> Result(Recorder, String) {
       earlier_files: earlier_files,
     )
   actor.new(initial_state)
-  |> actor.on_message(handle_recorder_message)
+  |> on_message(handle_recorder_message)
   |> actor.start
   |> result.map(wrap_recorder_subject)
-  |> result.map_error(string.inspect)
+  |> result.map_error(inspect)
   |> result.map_error(string.append("Failed to start recorder: ", _))
 }
 
@@ -691,9 +688,9 @@ fn initial_playback_files(
 ) -> Result(List(#(String, recording.Recording)), String) {
   case builder.mode {
     Playback ->
-      storage.load_recording_files(directory)
+      load_recording_files(directory)
       |> result.map(
-        list.map(_, fn(file) {
+        map(_, fn(file) {
           #(
             file.0,
             transform_recording_request(file.1, builder.request_transformer),
@@ -715,18 +712,18 @@ fn initial_playback_files(
 fn initial_files(
   builder: RecorderBuilder,
   directory: String,
-) -> Result(dict.Dict(String, List(String)), String) {
+) -> Result(Dict(String, List(String)), String) {
   case builder.mode {
     Record ->
-      storage.load_recording_files(directory)
+      load_recording_files(directory)
       |> result.map(
-        list.fold(_, dict.new(), fn(acc, file) {
+        fold(_, dict.new(), fn(acc, file) {
           let #(file_path, rec) = file
           let transformed =
             transform_recording_request(rec, builder.request_transformer)
           let signature = builder.key(transformed.request)
-          let paths = result.unwrap(dict.get(acc, signature), [])
-          dict.insert(acc, signature, [file_path, ..paths])
+          let paths = result.unwrap(get(acc, signature), [])
+          insert(acc, signature, [file_path, ..paths])
         }),
       )
       |> result.map_error(string.append(
@@ -738,21 +735,21 @@ fn initial_files(
 }
 
 fn wrap_recorder_subject(
-  started: actor.Started(process.Subject(RecorderMessage)),
+  started: Started(Subject(RecorderMessage)),
 ) -> Recorder {
   Recorder(subject: started.data)
 }
 
 fn build_recordings_map(
   files: List(#(String, recording.Recording)),
-  key: matching.MatchKey,
-) -> dict.Dict(String, List(recording.Recording)) {
-  list.fold(files, dict.new(), fn(acc, file) {
+  key: MatchKey,
+) -> Dict(String, List(recording.Recording)) {
+  fold(files, dict.new(), fn(acc, file) {
     let transformed = file.1
     let signature = key(transformed.request)
-    case dict.get(acc, signature) {
-      Ok(existing) -> dict.insert(acc, signature, [transformed, ..existing])
-      Error(_) -> dict.insert(acc, signature, [transformed])
+    case get(acc, signature) {
+      Ok(existing) -> insert(acc, signature, [transformed, ..existing])
+      Error(_) -> insert(acc, signature, [transformed])
     }
   })
 }
@@ -779,11 +776,11 @@ fn transform_recording_for_persistence(
 
 fn resolve_directory(
   mode: Mode,
-  directory: option.Option(String),
+  directory: Option(String),
 ) -> Result(String, String) {
   case mode, directory {
-    Record, option.Some(dir) | Playback, option.Some(dir) -> Ok(dir)
-    Record, option.None | Playback, option.None ->
+    Record, Some(dir) | Playback, Some(dir) -> Ok(dir)
+    Record, None | Playback, None ->
       Error("Recorder directory is required for record/playback")
     Passthrough, _ -> Ok("")
   }
@@ -798,8 +795,8 @@ fn handle_recorder_message(
       case state.mode {
         Record -> record_and_reply(state, rec, reply_to)
         _ -> {
-          process.send(reply_to, Ok(Nil))
-          actor.continue(state)
+          send(reply_to, Ok(Nil))
+          continue(state)
         }
       }
     }
@@ -808,25 +805,25 @@ fn handle_recorder_message(
         Playback -> {
           let transformed_request = state.request_transformer(request)
           let key = state.key(transformed_request)
-          case dict.get(state.recordings, key) {
+          case get(state.recordings, key) {
             Error(_) | Ok([]) -> {
-              process.send(reply_to, Ok(option.None))
-              actor.continue(state)
+              send(reply_to, Ok(None))
+              continue(state)
             }
             Ok([rec]) -> {
-              process.send(reply_to, Ok(option.Some(rec)))
-              actor.continue(state)
+              send(reply_to, Ok(Some(rec)))
+              continue(state)
             }
             Ok(records) -> {
-              let count = list.length(records)
+              let count = length(records)
               let resolved = resolve_ambiguous_recordings(records)
               case resolved {
-                Ok(option.Some(rec)) -> {
-                  process.send(reply_to, Ok(option.Some(rec)))
-                  actor.continue(state)
+                Ok(Some(rec)) -> {
+                  send(reply_to, Ok(Some(rec)))
+                  continue(state)
                 }
                 _ -> {
-                  process.send(
+                  send(
                     reply_to,
                     Error(
                       "Ambiguous recording match for key: "
@@ -836,7 +833,7 @@ fn handle_recorder_message(
                       <> " recordings)",
                     ),
                   )
-                  actor.continue(state)
+                  continue(state)
                 }
               }
             }
@@ -844,38 +841,38 @@ fn handle_recorder_message(
         }
         _ -> {
           // Not in playback mode: never return recordings
-          process.send(reply_to, Ok(option.None))
-          actor.continue(state)
+          send(reply_to, Ok(None))
+          continue(state)
         }
       }
     }
     ExplainMiss(request, reply_to) -> {
       let miss = case state.mode {
-        Playback -> option.Some(explain_miss(state, request))
-        Record | Passthrough -> option.None
+        Playback -> Some(explain_miss(state, request))
+        Record | Passthrough -> None
       }
-      process.send(reply_to, miss)
-      actor.continue(state)
+      send(reply_to, miss)
+      continue(state)
     }
     GetRecordings(reply_to) -> {
-      let all_recordings = flatten_recordings(dict.values(state.recordings))
-      process.send(reply_to, all_recordings)
-      actor.continue(state)
+      let all_recordings = flatten_recordings(values(state.recordings))
+      send(reply_to, all_recordings)
+      continue(state)
     }
     CheckMode(reply_to) -> {
-      process.send(reply_to, state.mode)
-      actor.continue(state)
+      send(reply_to, state.mode)
+      continue(state)
     }
     TransformResponse(request, response, reply_to) -> {
       let transformed_request = state.request_transformer(request)
       let transformed =
         state.response_transformer(transformed_request, response)
-      process.send(reply_to, transformed)
-      actor.continue(state)
+      send(reply_to, transformed)
+      continue(state)
     }
     Stop(reply_to) -> {
       // No need to save - recordings already saved immediately
-      process.send(reply_to, Ok(Nil))
+      send(reply_to, Ok(Nil))
       actor.stop()
     }
   }
@@ -889,7 +886,7 @@ fn handle_recorder_message(
 fn record_and_reply(
   state: RecorderState,
   rec: recording.Recording,
-  reply_to: process.Subject(Result(Nil, String)),
+  reply_to: Subject(Result(Nil, String)),
 ) -> Next(RecorderState, RecorderMessage) {
   let transformed =
     transform_recording_for_persistence(
@@ -898,15 +895,15 @@ fn record_and_reply(
       state.response_transformer,
     )
   let key = state.key(transformed.request)
-  let existing = result.unwrap(dict.get(state.recordings, key), [])
+  let existing = result.unwrap(get(state.recordings, key), [])
   let duplicate =
-    list.any(existing, fn(kept) {
+    any(existing, fn(kept) {
       responses_equal(kept.response, transformed.response)
     })
   case duplicate {
     True -> {
-      process.send(reply_to, Ok(Nil))
-      actor.continue(state)
+      send(reply_to, Ok(Nil))
+      continue(state)
     }
     False -> save_and_reply(state, transformed, key, reply_to)
   }
@@ -920,27 +917,27 @@ fn save_and_reply(
   state: RecorderState,
   transformed: recording.Recording,
   key: String,
-  reply_to: process.Subject(Result(Nil, String)),
+  reply_to: Subject(Result(Nil, String)),
 ) -> Next(RecorderState, RecorderMessage) {
-  let earlier = result.unwrap(dict.get(state.earlier_files, key), [])
+  let earlier = result.unwrap(get(state.earlier_files, key), [])
   let saved = {
-    use _ <- result.try(list.try_each(earlier, storage.remove_recording_file))
-    storage.save_recording_immediately(state.directory, transformed, key)
+    use _ <- result.try(try_each(earlier, remove_recording_file))
+    save_recording_immediately(state.directory, transformed, key)
   }
   case saved {
     Ok(Nil) -> {
-      process.send(reply_to, Ok(Nil))
-      actor.continue(
+      send(reply_to, Ok(Nil))
+      continue(
         RecorderState(
           ..state,
-          recordings: dict.insert(state.recordings, key, [transformed]),
-          earlier_files: dict.delete(state.earlier_files, key),
+          recordings: insert(state.recordings, key, [transformed]),
+          earlier_files: delete(state.earlier_files, key),
         ),
       )
     }
     Error(save_error) -> {
-      process.send(reply_to, Error("Failed to save recording: " <> save_error))
-      actor.continue(state)
+      send(reply_to, Error("Failed to save recording: " <> save_error))
+      continue(state)
     }
   }
 }
@@ -948,54 +945,50 @@ fn save_and_reply(
 type RecorderMessage {
   AddRecording(
     recording: recording.Recording,
-    reply_to: process.Subject(Result(Nil, String)),
+    reply_to: Subject(Result(Nil, String)),
   )
   FindRecording(
     request: recording.RecordedRequest,
-    reply_to: process.Subject(
-      Result(option.Option(recording.Recording), String),
-    ),
+    reply_to: Subject(Result(Option(recording.Recording), String)),
   )
   ExplainMiss(
     request: recording.RecordedRequest,
-    reply_to: process.Subject(option.Option(PlaybackMiss)),
+    reply_to: Subject(Option(PlaybackMiss)),
   )
-  GetRecordings(reply_to: process.Subject(List(recording.Recording)))
-  CheckMode(reply_to: process.Subject(Mode))
+  GetRecordings(reply_to: Subject(List(recording.Recording)))
+  CheckMode(reply_to: Subject(Mode))
   TransformResponse(
     request: recording.RecordedRequest,
     response: recording.RecordedResponse,
-    reply_to: process.Subject(recording.RecordedResponse),
+    reply_to: Subject(recording.RecordedResponse),
   )
-  Stop(reply_to: process.Subject(Result(Nil, String)))
+  Stop(reply_to: Subject(Result(Nil, String)))
 }
 
 fn flatten_recordings(
   lists: List(List(recording.Recording)),
 ) -> List(recording.Recording) {
   // Flatten while preserving order within each list as stored (newest-first).
-  list.fold(lists, [], fn(acc, recs) {
-    list.fold(recs, acc, fn(acc2, r) { [r, ..acc2] })
-  })
-  |> list.reverse
+  fold(lists, [], fn(acc, recs) { fold(recs, acc, fn(acc2, r) { [r, ..acc2] }) })
+  |> reverse
 }
 
 fn resolve_ambiguous_recordings(
   records: List(recording.Recording),
-) -> Result(option.Option(recording.Recording), Nil) {
+) -> Result(Option(recording.Recording), Nil) {
   case records {
-    [] -> Ok(option.None)
+    [] -> Ok(None)
     [first, ..rest] -> {
       let recording.Recording(_, first_response) = first
       let all_equal =
         rest
-        |> list.all(fn(rec) {
+        |> all(fn(rec) {
           let recording.Recording(_, response) = rec
           responses_equal(first_response, response)
         })
       case all_equal {
-        True -> Ok(option.Some(first))
-        False -> Ok(option.None)
+        True -> Ok(Some(first))
+        False -> Ok(None)
       }
     }
   }
@@ -1020,7 +1013,7 @@ fn responses_equal(
 // A body that is not text is compared as it is.
 fn normalize_body_for_compare(body: BitArray) -> BitArray {
   case bit_array.to_string(body) {
-    Ok(text) -> bit_array.from_string(normalize_text_for_compare(text))
+    Ok(text) -> from_string(normalize_text_for_compare(text))
     Error(Nil) -> body
   }
 }
@@ -1033,7 +1026,7 @@ fn normalize_text_for_compare(body: String) -> String {
 }
 
 fn response_kind(body: String) -> String {
-  case string.contains(body, "AuthenticationResult") {
+  case contains(body, "AuthenticationResult") {
     True -> "auth_result"
     False -> "other"
   }
@@ -1052,11 +1045,11 @@ fn replace_json_string_value(
   replacement: String,
 ) -> String {
   let marker = "\"" <> key <> "\":\""
-  case string.split(body, marker) {
+  case split(body, marker) {
     // `rest` is the value and the text after it, up to the next marker.
     [prefix, rest, ..] -> {
-      let tail = string.split(rest, "\"") |> list.drop(1)
-      prefix <> marker <> replacement <> "\"" <> string.join(tail, "\"")
+      let tail = split(rest, "\"") |> drop(1)
+      prefix <> marker <> replacement <> "\"" <> join(tail, "\"")
     }
     _ -> body
   }
@@ -1148,10 +1141,10 @@ pub fn add_recording(
   rec: recording.Recording,
 ) -> Result(Nil, String) {
   let Recorder(subject) = recorder
-  let reply_subject = process.new_subject()
-  process.send(subject, AddRecording(rec, reply_subject))
+  let reply_subject = new_subject()
+  send(subject, AddRecording(rec, reply_subject))
 
-  case process.receive(reply_subject, 5000) {
+  case receive(reply_subject, 5000) {
     Ok(saved) -> saved
     Error(Nil) -> Error("Recorder did not save the recording within 5 seconds")
   }
@@ -1210,17 +1203,17 @@ pub fn is_playback_mode(recorder: Recorder) -> Bool {
 /// answer within 1 second.
 fn current_mode(recorder: Recorder) -> Result(Mode, Nil) {
   let Recorder(subject) = recorder
-  let reply_subject = process.new_subject()
-  process.send(subject, CheckMode(reply_subject))
+  let reply_subject = new_subject()
+  send(subject, CheckMode(reply_subject))
 
-  case process.receive(reply_subject, 1000) {
+  case receive(reply_subject, 1000) {
     Ok(mode) -> Ok(mode)
     Error(timeout_error) -> {
       // Process timeout (1 second) - recorder is not responding. Log the
       // timeout, and the caller treats the recorder as in no mode.
       internal.log_warning(
         "Recorder did not respond to CheckMode within 1 second: "
-        <> string.inspect(timeout_error),
+        <> inspect(timeout_error),
       )
       Error(timeout_error)
     }
@@ -1270,15 +1263,15 @@ pub fn transform_response(
   response: recording.RecordedResponse,
 ) -> recording.RecordedResponse {
   let Recorder(subject) = recorder
-  let reply_subject = process.new_subject()
-  process.send(subject, TransformResponse(request, response, reply_subject))
+  let reply_subject = new_subject()
+  send(subject, TransformResponse(request, response, reply_subject))
 
-  case process.receive(reply_subject, 1000) {
+  case receive(reply_subject, 1000) {
     Ok(transformed) -> transformed
     Error(timeout_error) -> {
       internal.log_warning(
         "Recorder did not respond to TransformResponse within 1 second: "
-        <> string.inspect(timeout_error),
+        <> inspect(timeout_error),
       )
       response
     }
@@ -1354,21 +1347,21 @@ pub fn transform_response(
 pub fn find_recording(
   recorder: Recorder,
   request: recording.RecordedRequest,
-) -> Result(option.Option(recording.Recording), String) {
+) -> Result(Option(recording.Recording), String) {
   let Recorder(subject) = recorder
-  let reply_subject = process.new_subject()
-  process.send(subject, FindRecording(request, reply_subject))
+  let reply_subject = new_subject()
+  send(subject, FindRecording(request, reply_subject))
 
-  case process.receive(reply_subject, 1000) {
+  case receive(reply_subject, 1000) {
     Ok(result) -> result
     Error(timeout_error) -> {
       // Process timeout (1 second) - recorder is not responding. Log the
       // timeout and return None as a safe default.
       internal.log_warning(
         "Recorder did not respond to FindRecording within 1 second: "
-        <> string.inspect(timeout_error),
+        <> inspect(timeout_error),
       )
-      Ok(option.None)
+      Ok(None)
     }
   }
 }
@@ -1396,8 +1389,8 @@ pub type RequestPart {
 pub type Difference {
   Difference(
     part: RequestPart,
-    recorded: option.Option(String),
-    requested: option.Option(String),
+    recorded: Option(String),
+    requested: Option(String),
   )
 }
 
@@ -1444,12 +1437,12 @@ pub type PlaybackMiss {
 pub fn playback_miss(
   recorder: Recorder,
   request: recording.RecordedRequest,
-) -> option.Option(PlaybackMiss) {
+) -> Option(PlaybackMiss) {
   let Recorder(subject) = recorder
-  let reply_subject = process.new_subject()
-  process.send(subject, ExplainMiss(request, reply_subject))
-  process.receive(reply_subject, 1000)
-  |> result.unwrap(option.None)
+  let reply_subject = new_subject()
+  send(subject, ExplainMiss(request, reply_subject))
+  receive(reply_subject, 1000)
+  |> result.unwrap(None)
 }
 
 /// The most recordings that a miss names.
@@ -1462,38 +1455,35 @@ fn explain_miss(
   let requested = state.request_transformer(request)
   let nearest =
     state.files
-    |> list.filter(fn(file) {
+    |> filter(fn(file) {
       let recorded = { file.1 }.request
       recorded.method == requested.method && recorded.path == requested.path
     })
-    |> list.map(fn(file) {
+    |> map(fn(file) {
       NearestRecording(
         path: file.0,
         differences: differences(state.key, { file.1 }.request, requested),
       )
     })
-    |> list.sort(compare_nearest)
-    |> list.take(nearest_limit)
+    |> sort(compare_nearest)
+    |> take(nearest_limit)
   PlaybackMiss(
-    method: http.method_to_string(requested.method),
+    method: method_to_string(requested.method),
     url: origin_of(requested) <> requested.path <> query_suffix(requested),
     directory: state.directory,
     nearest: nearest,
   )
 }
 
-fn compare_nearest(
-  left: NearestRecording,
-  right: NearestRecording,
-) -> order.Order {
-  int.compare(list.length(left.differences), list.length(right.differences))
-  |> order.break_tie(string.compare(left.path, right.path))
+fn compare_nearest(left: NearestRecording, right: NearestRecording) -> Order {
+  int.compare(length(left.differences), length(right.differences))
+  |> break_tie(string.compare(left.path, right.path))
 }
 
 // The parts that differ and that the key compares: the key of the request
 // changes when the request takes the recorded value of the part.
 fn differences(
-  key: matching.MatchKey,
+  key: MatchKey,
   recorded: recording.RecordedRequest,
   requested: recording.RecordedRequest,
 ) -> List(Difference) {
@@ -1507,8 +1497,8 @@ fn differences(
   let origin =
     seen(
       Origin,
-      option.Some(origin_of(recorded)),
-      option.Some(origin_of(requested)),
+      Some(origin_of(recorded)),
+      Some(origin_of(requested)),
       recording.RecordedRequest(
         ..requested,
         scheme: recorded.scheme,
@@ -1525,10 +1515,10 @@ fn differences(
     )
   let headers =
     list.append(recorded.headers, requested.headers)
-    |> list.map(fn(header) { header.0 })
-    |> list.unique()
-    |> list.sort(string.compare)
-    |> list.flat_map(fn(name) {
+    |> map(fn(header) { header.0 })
+    |> unique()
+    |> sort(string.compare)
+    |> flat_map(fn(name) {
       seen(
         Header(name),
         header_values(recorded.headers, name),
@@ -1536,8 +1526,8 @@ fn differences(
         recording.RecordedRequest(
           ..requested,
           headers: list.append(
-            list.filter(requested.headers, fn(header) { header.0 != name }),
-            list.filter(recorded.headers, fn(header) { header.0 == name }),
+            filter(requested.headers, fn(header) { header.0 != name }),
+            filter(recorded.headers, fn(header) { header.0 == name }),
           ),
         ),
       )
@@ -1549,42 +1539,41 @@ fn differences(
       body_value(requested.body),
       recording.RecordedRequest(..requested, body: recorded.body),
     )
-  list.flatten([origin, query, headers, body])
+  flatten([origin, query, headers, body])
 }
 
 fn origin_of(request: recording.RecordedRequest) -> String {
   let port = case request.port {
-    option.Some(port) -> ":" <> int.to_string(port)
-    option.None -> ""
+    Some(port) -> ":" <> int.to_string(port)
+    None -> ""
   }
-  http.scheme_to_string(request.scheme) <> "://" <> request.host <> port
+  scheme_to_string(request.scheme) <> "://" <> request.host <> port
 }
 
 fn query_suffix(request: recording.RecordedRequest) -> String {
   case request.query {
-    option.Some(query) -> "?" <> query
-    option.None -> ""
+    Some(query) -> "?" <> query
+    None -> ""
   }
 }
 
 fn header_values(
   headers: List(#(String, String)),
   name: String,
-) -> option.Option(String) {
-  case list.filter(headers, fn(header) { header.0 == name }) {
-    [] -> option.None
-    found -> option.Some(string.join(list.map(found, fn(h) { h.1 }), ", "))
+) -> Option(String) {
+  case filter(headers, fn(header) { header.0 == name }) {
+    [] -> None
+    found -> Some(join(map(found, fn(h) { h.1 }), ", "))
   }
 }
 
 // The body as `matching` puts it in a key: its text when it is UTF-8, and
 // "base64:" with the base64 form of any other body. An empty body is None.
-fn body_value(body: BitArray) -> option.Option(String) {
-  case bit_array.byte_size(body), bit_array.to_string(body) {
-    0, _ -> option.None
-    _, Ok(text) -> option.Some(text)
-    _, Error(Nil) ->
-      option.Some("base64:" <> bit_array.base64_encode(body, True))
+fn body_value(body: BitArray) -> Option(String) {
+  case byte_size(body), bit_array.to_string(body) {
+    0, _ -> None
+    _, Ok(text) -> Some(text)
+    _, Error(Nil) -> Some("base64:" <> base64_encode(body, True))
   }
 }
 
@@ -1646,17 +1635,17 @@ fn body_value(body: BitArray) -> option.Option(String) {
 /// - Timeout is 1 second - recorder should respond quickly
 pub fn get_recordings(recorder: Recorder) -> List(recording.Recording) {
   let Recorder(subject) = recorder
-  let reply_subject = process.new_subject()
-  process.send(subject, GetRecordings(reply_subject))
+  let reply_subject = new_subject()
+  send(subject, GetRecordings(reply_subject))
 
-  case process.receive(reply_subject, 1000) {
+  case receive(reply_subject, 1000) {
     Ok(recordings) -> recordings
     Error(timeout_error) -> {
       // Process timeout (1 second) - recorder is not responding. Log the
       // timeout and return an empty list as a safe default.
       internal.log_warning(
         "Recorder did not respond to GetRecordings within 1 second: "
-        <> string.inspect(timeout_error),
+        <> inspect(timeout_error),
       )
       []
     }
@@ -1711,17 +1700,16 @@ pub fn get_recordings(recorder: Recorder) -> List(recording.Recording) {
 /// - After calling `stop()`, the recorder handle is no longer valid
 pub fn stop(recorder: Recorder) -> Result(Nil, String) {
   let Recorder(subject) = recorder
-  let reply_subject = process.new_subject()
-  process.send(subject, Stop(reply_subject))
+  let reply_subject = new_subject()
+  send(subject, Stop(reply_subject))
 
-  case process.receive(reply_subject, 5000) {
+  case receive(reply_subject, 5000) {
     Ok(result) -> result
     Error(timeout_error) -> {
       // Process timeout (5 seconds) - recorder is not responding. Include the
       // timeout error details in the message.
       Error(
-        "Recorder did not respond within 5 seconds: "
-        <> string.inspect(timeout_error),
+        "Recorder did not respond within 5 seconds: " <> inspect(timeout_error),
       )
     }
   }

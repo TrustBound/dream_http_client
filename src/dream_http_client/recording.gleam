@@ -3,15 +3,23 @@
 //// Defines the structure for storing HTTP request/response recordings
 //// in a custom JSON format that supports both blocking and streaming responses.
 
-import dream_http_client/internal
-import gleam/bit_array
-import gleam/dynamic/decode
-import gleam/http
-import gleam/json
-import gleam/list
-import gleam/option
-import gleam/result
-import gleam/string
+import dream_http_client/internal.{log_warning}
+import gleam/bit_array.{base64_decode, base64_encode, from_string, to_string}
+import gleam/dynamic/decode.{
+  type Decoder, at, field, optional, optional_field, success, then,
+}
+import gleam/http.{
+  type Method, type Scheme, Connect, Delete, Get, Head, Http, Https, Options,
+  Other, Patch, Post, Put, Trace,
+}
+import gleam/json.{
+  type Json, UnableToDecode, UnexpectedByte, UnexpectedEndOfInput,
+  UnexpectedSequence, array, null, object, parse,
+}
+import gleam/list.{append, take}
+import gleam/option.{type Option, None, Some}
+import gleam/result.{map_error}
+import gleam/string.{concat, join, lowercase, uppercase}
 
 /// A recorded HTTP request
 ///
@@ -54,12 +62,12 @@ import gleam/string
 /// ```
 pub type RecordedRequest {
   RecordedRequest(
-    method: http.Method,
-    scheme: http.Scheme,
+    method: Method,
+    scheme: Scheme,
     host: String,
-    port: option.Option(Int),
+    port: Option(Int),
     path: String,
-    query: option.Option(String),
+    query: Option(String),
     headers: List(#(String, String)),
     body: BitArray,
   )
@@ -251,35 +259,35 @@ pub type RecordingFile {
 /// - Most callers should use `storage.save_recordings()` instead of calling this directly
 /// - This function is used internally by the storage module
 /// - The JSON format includes a version field for future compatibility
-pub fn encode_recording_file(file: RecordingFile) -> json.Json {
+pub fn encode_recording_file(file: RecordingFile) -> Json {
   let entries_json = list.map(file.entries, encode_recording)
-  json.object([
+  object([
     #("version", json.string(file.version)),
-    #("entries", json.array(from: entries_json, of: identity_json)),
+    #("entries", array(from: entries_json, of: identity_json)),
   ])
 }
 
-fn identity_json(value: json.Json) -> json.Json {
+fn identity_json(value: Json) -> Json {
   value
 }
 
-fn encode_recording(recording: Recording) -> json.Json {
-  json.object([
+fn encode_recording(recording: Recording) -> Json {
+  object([
     #("request", encode_recorded_request(recording.request)),
     #("response", encode_recorded_response(recording.response)),
   ])
 }
 
-fn encode_recorded_request(req: RecordedRequest) -> json.Json {
+fn encode_recorded_request(req: RecordedRequest) -> Json {
   let port_json = case req.port {
-    option.Some(p) -> json.int(p)
-    option.None -> json.null()
+    Some(p) -> json.int(p)
+    None -> null()
   }
   let query_json = case req.query {
-    option.Some(q) -> json.string(q)
-    option.None -> json.null()
+    Some(q) -> json.string(q)
+    None -> null()
   }
-  json.object(list.append(
+  object(append(
     [
       #("method", encode_method(req.method)),
       #("scheme", encode_scheme(req.scheme)),
@@ -293,10 +301,10 @@ fn encode_recorded_request(req: RecordedRequest) -> json.Json {
   ))
 }
 
-fn encode_recorded_response(resp: RecordedResponse) -> json.Json {
+fn encode_recorded_response(resp: RecordedResponse) -> Json {
   case resp {
     BlockingResponse(status, headers, body) ->
-      json.object(list.append(
+      object(append(
         [
           #("mode", json.string("blocking")),
           #("status", json.int(status)),
@@ -306,11 +314,11 @@ fn encode_recorded_response(resp: RecordedResponse) -> json.Json {
       ))
     StreamingResponse(status, headers, chunks) -> {
       let chunks_json = list.map(chunks, encode_chunk)
-      json.object([
+      object([
         #("mode", json.string("streaming")),
         #("status", json.int(status)),
         #("headers", encode_headers(headers)),
-        #("chunks", json.array(from: chunks_json, of: identity_json)),
+        #("chunks", array(from: chunks_json, of: identity_json)),
       ])
     }
   }
@@ -323,68 +331,65 @@ fn encode_recorded_response(resp: RecordedResponse) -> json.Json {
 /// so fixtures stay easy to read. Any other body is base64-encoded and
 /// tagged with `"body_encoding": "base64"`, so the decoder restores the
 /// exact bytes.
-fn encode_body_fields(body: BitArray) -> List(#(String, json.Json)) {
-  case bit_array.to_string(body) {
+fn encode_body_fields(body: BitArray) -> List(#(String, Json)) {
+  case to_string(body) {
     Ok(text) -> [#("body", json.string(text))]
     Error(Nil) -> [
-      #("body", json.string(bit_array.base64_encode(body, True))),
+      #("body", json.string(base64_encode(body, True))),
       #("body_encoding", json.string("base64")),
     ]
   }
 }
 
-fn encode_chunk(chunk: Chunk) -> json.Json {
+fn encode_chunk(chunk: Chunk) -> Json {
   // Chunk data is a BitArray and may hold raw binary. UTF-8 chunks are
   // stored verbatim (keeps SSE fixtures human-readable); binary chunks
   // are base64-encoded and tagged with `"data_encoding": "base64"` —
   // never silently replaced with a placeholder.
-  case bit_array.to_string(chunk.data) {
+  case to_string(chunk.data) {
     Ok(string_value) ->
-      json.object([
+      object([
         #("data", json.string(string_value)),
         #("delay_ms", json.int(chunk.delay_ms)),
       ])
     Error(_) ->
-      json.object([
-        #("data", json.string(bit_array.base64_encode(chunk.data, True))),
+      object([
+        #("data", json.string(base64_encode(chunk.data, True))),
         #("data_encoding", json.string("base64")),
         #("delay_ms", json.int(chunk.delay_ms)),
       ])
   }
 }
 
-fn encode_headers(headers: List(#(String, String))) -> json.Json {
+fn encode_headers(headers: List(#(String, String))) -> Json {
   let header_arrays = list.map(headers, encode_header_pair)
-  json.array(from: header_arrays, of: identity_json)
+  array(from: header_arrays, of: identity_json)
 }
 
-fn encode_header_pair(header: #(String, String)) -> json.Json {
-  json.array(
-    from: [json.string(header.0), json.string(header.1)],
-    of: identity_json,
-  )
+fn encode_header_pair(header: #(String, String)) -> Json {
+  array(from: [json.string(header.0), json.string(header.1)], of: identity_json)
 }
 
-fn encode_method(method: http.Method) -> json.Json {
+fn encode_method(method: Method) -> Json {
   let method_str = case method {
-    http.Get -> "GET"
-    http.Post -> "POST"
-    http.Put -> "PUT"
-    http.Delete -> "DELETE"
-    http.Patch -> "PATCH"
-    http.Head -> "HEAD"
-    http.Options -> "OPTIONS"
-    http.Trace -> "TRACE"
-    http.Connect -> "CONNECT"
-    http.Other(s) -> string.uppercase(s)
+    Get -> "GET"
+    Post -> "POST"
+    Put -> "PUT"
+    Delete -> "DELETE"
+    Patch -> "PATCH"
+    Head -> "HEAD"
+    Options -> "OPTIONS"
+    Trace -> "TRACE"
+    Connect -> "CONNECT"
+    Other(s) -> uppercase(s)
   }
   json.string(method_str)
 }
 
-fn encode_scheme(scheme: http.Scheme) -> json.Json {
+fn encode_scheme(scheme: Scheme) -> Json {
   let scheme_str = case scheme {
-    http.Http -> "http"
-    http.Https -> "https"
+    Http -> "http"
+    Https -> "https"
   }
   json.string(scheme_str)
 }
@@ -446,65 +451,55 @@ fn encode_scheme(scheme: http.Scheme) -> json.Json {
 pub fn decode_recording_file(
   json_string: String,
 ) -> Result(RecordingFile, String) {
-  json.parse(json_string, decode_recording_file_decoder())
-  |> result.map_error(format_json_error)
+  parse(json_string, decode_recording_file_decoder())
+  |> map_error(format_json_error)
 }
 
-fn decode_recording_file_decoder() -> decode.Decoder(RecordingFile) {
-  use version <- decode.field("version", decode.string)
-  use entries <- decode.field(
-    "entries",
-    decode.list(decode_recording_decoder()),
-  )
-  decode.success(RecordingFile(version: version, entries: entries))
+fn decode_recording_file_decoder() -> Decoder(RecordingFile) {
+  use version <- field("version", decode.string)
+  use entries <- field("entries", decode.list(decode_recording_decoder()))
+  success(RecordingFile(version: version, entries: entries))
 }
 
 fn format_json_error(error: json.DecodeError) -> String {
   case error {
-    json.UnexpectedEndOfInput -> "Unexpected end of JSON input"
-    json.UnexpectedByte(msg) -> "Unexpected byte: " <> msg
-    json.UnexpectedSequence(msg) -> "Unexpected sequence: " <> msg
-    json.UnableToDecode(errors) -> format_decode_errors(errors)
+    UnexpectedEndOfInput -> "Unexpected end of JSON input"
+    UnexpectedByte(msg) -> "Unexpected byte: " <> msg
+    UnexpectedSequence(msg) -> "Unexpected sequence: " <> msg
+    UnableToDecode(errors) -> format_decode_errors(errors)
   }
 }
 
 // decode.run gives at least one error. The message names the first one.
 fn format_decode_errors(errors: List(decode.DecodeError)) -> String {
   errors
-  |> list.take(1)
+  |> take(1)
   |> list.map(format_single_decode_error)
-  |> string.concat
+  |> concat
 }
 
 fn format_single_decode_error(error: decode.DecodeError) -> String {
   let decode.DecodeError(expected, found, path) = error
-  let field_path = string.join(path, ".")
+  let field_path = join(path, ".")
   "Expected " <> expected <> ", found " <> found <> " at " <> field_path
 }
 
-fn decode_recording_decoder() -> decode.Decoder(Recording) {
-  use request <- decode.field("request", decode_recorded_request_decoder())
-  use response <- decode.field("response", decode_recorded_response_decoder())
-  decode.success(Recording(request: request, response: response))
+fn decode_recording_decoder() -> Decoder(Recording) {
+  use request <- field("request", decode_recorded_request_decoder())
+  use response <- field("response", decode_recorded_response_decoder())
+  success(Recording(request: request, response: response))
 }
 
-fn decode_recorded_request_decoder() -> decode.Decoder(RecordedRequest) {
-  use method_str <- decode.field("method", decode.string)
-  use scheme_str <- decode.field("scheme", decode.string)
-  use host <- decode.field("host", decode.string)
-  use port <- decode.field("port", decode.optional(decode.int))
-  use path <- decode.field("path", decode.string)
-  use query <- decode.field("query", decode.optional(decode.string))
-  use headers <- decode.field(
-    "headers",
-    decode.list(decode_header_pair_decoder()),
-  )
-  use stored_body <- decode.field("body", decode.string)
-  use body_encoding <- decode.optional_field(
-    "body_encoding",
-    "utf8",
-    decode.string,
-  )
+fn decode_recorded_request_decoder() -> Decoder(RecordedRequest) {
+  use method_str <- field("method", decode.string)
+  use scheme_str <- field("scheme", decode.string)
+  use host <- field("host", decode.string)
+  use port <- field("port", optional(decode.int))
+  use path <- field("path", decode.string)
+  use query <- field("query", optional(decode.string))
+  use headers <- field("headers", decode.list(decode_header_pair_decoder()))
+  use stored_body <- field("body", decode.string)
+  use body_encoding <- optional_field("body_encoding", "utf8", decode.string)
   let body = decode_stored_body(stored_body, body_encoding)
 
   // Parse method and scheme
@@ -515,16 +510,14 @@ fn decode_recorded_request_decoder() -> decode.Decoder(RecordedRequest) {
     Error(parse_error) -> {
       // Preserve the original method string but log the parse error so it is
       // not silently discarded.
-      internal.log_warning(
-        "Failed to parse HTTP method in recording: " <> parse_error,
-      )
-      http.Other(method_str)
+      log_warning("Failed to parse HTTP method in recording: " <> parse_error)
+      Other(method_str)
     }
   }
 
   case parse_scheme_string(scheme_str) {
     Ok(scheme) ->
-      decode.success(RecordedRequest(
+      success(RecordedRequest(
         method: method,
         scheme: scheme,
         host: host,
@@ -537,12 +530,12 @@ fn decode_recorded_request_decoder() -> decode.Decoder(RecordedRequest) {
     Error(parse_error) -> {
       // Invalid scheme in recording - fall back to http and log the error so
       // it is visible when inspecting corrupted recording files.
-      internal.log_warning(
+      log_warning(
         "Unknown scheme in recording; defaulting to http: " <> parse_error,
       )
-      decode.success(RecordedRequest(
+      success(RecordedRequest(
         method: method,
-        scheme: http.Http,
+        scheme: Http,
         host: host,
         port: port,
         path: path,
@@ -554,13 +547,10 @@ fn decode_recorded_request_decoder() -> decode.Decoder(RecordedRequest) {
   }
 }
 
-fn decode_recorded_response_decoder() -> decode.Decoder(RecordedResponse) {
-  use mode <- decode.field("mode", decode.string)
-  use status <- decode.field("status", decode.int)
-  use headers <- decode.field(
-    "headers",
-    decode.list(decode_header_pair_decoder()),
-  )
+fn decode_recorded_response_decoder() -> Decoder(RecordedResponse) {
+  use mode <- field("mode", decode.string)
+  use status <- field("status", decode.int)
+  use headers <- field("headers", decode.list(decode_header_pair_decoder()))
 
   case mode {
     "blocking" -> decode_blocking_response_decoder(status, headers)
@@ -572,14 +562,10 @@ fn decode_recorded_response_decoder() -> decode.Decoder(RecordedResponse) {
 fn decode_blocking_response_decoder(
   status: Int,
   headers: List(#(String, String)),
-) -> decode.Decoder(RecordedResponse) {
-  use stored_body <- decode.field("body", decode.string)
-  use body_encoding <- decode.optional_field(
-    "body_encoding",
-    "utf8",
-    decode.string,
-  )
-  decode.success(BlockingResponse(
+) -> Decoder(RecordedResponse) {
+  use stored_body <- field("body", decode.string)
+  use body_encoding <- optional_field("body_encoding", "utf8", decode.string)
+  success(BlockingResponse(
     status: status,
     headers: headers,
     body: decode_stored_body(stored_body, body_encoding),
@@ -594,45 +580,37 @@ fn decode_blocking_response_decoder(
 fn decode_stored_body(stored: String, encoding: String) -> BitArray {
   case encoding {
     "base64" ->
-      case bit_array.base64_decode(stored) {
+      case base64_decode(stored) {
         Ok(bits) -> bits
         Error(_) -> {
-          internal.log_warning(
+          log_warning(
             "Recording body tagged base64 failed to decode; using raw value",
           )
-          bit_array.from_string(stored)
+          from_string(stored)
         }
       }
-    _ -> bit_array.from_string(stored)
+    _ -> from_string(stored)
   }
 }
 
 fn decode_streaming_response_decoder(
   status: Int,
   headers: List(#(String, String)),
-) -> decode.Decoder(RecordedResponse) {
-  use chunks <- decode.field("chunks", decode.list(decode_chunk_decoder()))
-  decode.success(StreamingResponse(
-    status: status,
-    headers: headers,
-    chunks: chunks,
-  ))
+) -> Decoder(RecordedResponse) {
+  use chunks <- field("chunks", decode.list(decode_chunk_decoder()))
+  success(StreamingResponse(status: status, headers: headers, chunks: chunks))
 }
 
-fn decode_chunk_decoder() -> decode.Decoder(Chunk) {
-  use data_str <- decode.field("data", decode.string)
-  use data_encoding <- decode.optional_field(
-    "data_encoding",
-    "utf8",
-    decode.string,
-  )
-  use delay_ms <- decode.field("delay_ms", decode.int)
+fn decode_chunk_decoder() -> Decoder(Chunk) {
+  use data_str <- field("data", decode.string)
+  use data_encoding <- optional_field("data_encoding", "utf8", decode.string)
+  use delay_ms <- field("delay_ms", decode.int)
   let data = case data_encoding {
     "base64" ->
-      case bit_array.base64_decode(data_str) {
+      case base64_decode(data_str) {
         Ok(bits) -> bits
         Error(_) -> {
-          internal.log_warning(
+          log_warning(
             "Recording chunk tagged base64 failed to decode; using raw value",
           )
           <<data_str:utf8>>
@@ -640,18 +618,16 @@ fn decode_chunk_decoder() -> decode.Decoder(Chunk) {
       }
     _ -> <<data_str:utf8>>
   }
-  decode.success(Chunk(data: data, delay_ms: delay_ms))
+  success(Chunk(data: data, delay_ms: delay_ms))
 }
 
-fn decode_header_pair_decoder() -> decode.Decoder(#(String, String)) {
-  decode.at([0], decode.string)
-  |> decode.then(build_header_value_decoder)
+fn decode_header_pair_decoder() -> Decoder(#(String, String)) {
+  at([0], decode.string)
+  |> then(build_header_value_decoder)
 }
 
-fn build_header_value_decoder(
-  name: String,
-) -> decode.Decoder(#(String, String)) {
-  decode.at([1], decode.string)
+fn build_header_value_decoder(name: String) -> Decoder(#(String, String)) {
+  at([1], decode.string)
   |> decode.map(build_header_pair(name))
 }
 
@@ -659,25 +635,25 @@ fn build_header_pair(name: String) -> fn(String) -> #(String, String) {
   fn(value) { #(name, value) }
 }
 
-fn parse_method_string(method_str: String) -> Result(http.Method, String) {
-  case string.lowercase(method_str) {
-    "get" -> Ok(http.Get)
-    "post" -> Ok(http.Post)
-    "put" -> Ok(http.Put)
-    "delete" -> Ok(http.Delete)
-    "patch" -> Ok(http.Patch)
-    "head" -> Ok(http.Head)
-    "options" -> Ok(http.Options)
-    "trace" -> Ok(http.Trace)
-    "connect" -> Ok(http.Connect)
-    _ -> Ok(http.Other(method_str))
+fn parse_method_string(method_str: String) -> Result(Method, String) {
+  case lowercase(method_str) {
+    "get" -> Ok(Get)
+    "post" -> Ok(Post)
+    "put" -> Ok(Put)
+    "delete" -> Ok(Delete)
+    "patch" -> Ok(Patch)
+    "head" -> Ok(Head)
+    "options" -> Ok(Options)
+    "trace" -> Ok(Trace)
+    "connect" -> Ok(Connect)
+    _ -> Ok(Other(method_str))
   }
 }
 
-fn parse_scheme_string(scheme_str: String) -> Result(http.Scheme, String) {
+fn parse_scheme_string(scheme_str: String) -> Result(Scheme, String) {
   case scheme_str {
-    "http" -> Ok(http.Http)
-    "https" -> Ok(http.Https)
+    "http" -> Ok(Http)
+    "https" -> Ok(Https)
     _ -> Error("Unknown scheme: " <> scheme_str)
   }
 }

@@ -13,14 +13,17 @@
 //// `recorder.request_transformer(...)` so both matching and persistence see the same
 //// normalized request.
 
-import dream_http_client/recording
-import gleam/bit_array
-import gleam/http
+import dream_http_client/recording.{type RecordedRequest}
+import gleam/bit_array.{base64_encode}
+import gleam/http.{
+  type Method, type Scheme, Connect, Delete, Get, Head, Http, Https, Options,
+  Other, Patch, Post, Put, Trace,
+}
 import gleam/int
-import gleam/list
-import gleam/option
-import gleam/order
-import gleam/string
+import gleam/list.{map, sort}
+import gleam/option.{None, Some}
+import gleam/order.{type Order}
+import gleam/string.{compare, join, uppercase}
 
 /// A function that produces a stable match key for a request.
 ///
@@ -48,7 +51,7 @@ import gleam/string
 /// }
 /// ```
 pub type MatchKey =
-  fn(recording.RecordedRequest) -> String
+  fn(RecordedRequest) -> String
 
 /// Create a request key function from simple include/exclude flags.
 ///
@@ -110,7 +113,7 @@ pub fn request_key(
   headers headers: Bool,
   body body: Bool,
 ) -> MatchKey {
-  fn(request: recording.RecordedRequest) {
+  fn(request: RecordedRequest) {
     let method_str = case method {
       True -> method_to_string(request.method)
       False -> ""
@@ -140,33 +143,33 @@ pub fn request_key(
 fn body_key(body: BitArray) -> String {
   case bit_array.to_string(body) {
     Ok(text) -> text
-    Error(Nil) -> "base64:" <> bit_array.base64_encode(body, True)
+    Error(Nil) -> "base64:" <> base64_encode(body, True)
   }
 }
 
-fn method_to_string(method: http.Method) -> String {
+fn method_to_string(method: Method) -> String {
   case method {
-    http.Get -> "GET"
-    http.Post -> "POST"
-    http.Put -> "PUT"
-    http.Delete -> "DELETE"
-    http.Patch -> "PATCH"
-    http.Head -> "HEAD"
-    http.Options -> "OPTIONS"
-    http.Trace -> "TRACE"
-    http.Connect -> "CONNECT"
-    http.Other(s) -> string.uppercase(s)
+    Get -> "GET"
+    Post -> "POST"
+    Put -> "PUT"
+    Delete -> "DELETE"
+    Patch -> "PATCH"
+    Head -> "HEAD"
+    Options -> "OPTIONS"
+    Trace -> "TRACE"
+    Connect -> "CONNECT"
+    Other(s) -> uppercase(s)
   }
 }
 
-fn build_url(request: recording.RecordedRequest) -> String {
+fn build_url(request: RecordedRequest) -> String {
   let port_string = case request.port {
-    option.Some(port) -> ":" <> int.to_string(port)
-    option.None -> ""
+    Some(port) -> ":" <> int.to_string(port)
+    None -> ""
   }
   let query_string = case request.query {
-    option.Some(query) -> "?" <> query
-    option.None -> ""
+    Some(query) -> "?" <> query
+    None -> ""
   }
   scheme_to_string(request.scheme)
   <> "://"
@@ -176,25 +179,25 @@ fn build_url(request: recording.RecordedRequest) -> String {
   <> query_string
 }
 
-fn scheme_to_string(scheme: http.Scheme) -> String {
+fn scheme_to_string(scheme: Scheme) -> String {
   case scheme {
-    http.Http -> "http"
-    http.Https -> "https"
+    Http -> "http"
+    Https -> "https"
   }
 }
 
 fn headers_to_string(headers: List(#(String, String))) -> String {
   // Sort headers for consistent matching
-  let sorted = list.sort(headers, compare_header_names)
-  let header_strings = list.map(sorted, format_header_pair)
-  string.join(header_strings, "|")
+  let sorted = sort(headers, compare_header_names)
+  let header_strings = map(sorted, format_header_pair)
+  join(header_strings, "|")
 }
 
 fn compare_header_names(
   header1: #(String, String),
   header2: #(String, String),
-) -> order.Order {
-  string.compare(header1.0, header2.0)
+) -> Order {
+  compare(header1.0, header2.0)
 }
 
 fn format_header_pair(header: #(String, String)) -> String {
