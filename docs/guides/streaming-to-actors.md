@@ -52,7 +52,7 @@ It helps to know actors in `gleam_otp`: `actor.new_with_initialiser`, `actor.on_
 
 Here's the start of the tracker. The actor's `Message` type wraps the stream messages and adds its own:
 
-### Start an actor that owns a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_actors_tracker.gleam#L6-L56"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Start an actor that owns a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_actors_tracker.gleam#L6-L56"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -120,7 +120,7 @@ A stream sends its messages in a fixed order: one `StreamStart` with the respons
 
 The tracker turns each message into a new `Progress`:
 
-### Update the progress for each message <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_actors_tracker.gleam#L58-L97"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Update the progress for each message <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_actors_tracker.gleam#L58-L97"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 fn handle_message(
@@ -167,7 +167,7 @@ fn update(progress: Progress, message: StreamMessage) -> Progress {
 
 When `/stream/fast` has ended, the tracker's progress is:
 
-### The progress at the end of the stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_actors_progress_end.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The progress at the end of the stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_actors_progress_end.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 Progress(bytes: 81, chunks: 10, finished: True, failure: None)
@@ -179,7 +179,7 @@ The state lives in the actor, and the actor handles one message at a time, so `u
 
 This is the reason to use an actor. Between two stream messages, the actor handles whatever else is in its mailbox. Here's the function the rest of your program calls:
 
-### Ask the tracker how far it got <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_actors_tracker.gleam#L99-L103"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Ask the tracker how far it got <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_actors_tracker.gleam#L99-L103"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 /// Asks the tracker for its progress. The actor answers between two stream
@@ -191,7 +191,7 @@ pub fn progress(tracker: Subject(Message)) -> Progress {
 
 Called right after `start_tracker` on `/stream/slow`, whose first chunk takes 2 seconds, it returns at once:
 
-### The progress right after the start <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_actors_progress_start.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The progress right after the start <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_actors_progress_start.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 Progress(bytes: 0, chunks: 0, finished: False, failure: None)
@@ -203,7 +203,7 @@ A web handler can show this as a progress bar, a supervisor can log it, and anot
 
 To stop a stream before it ends, call `cancel_stream(request_id)` from any process. It waits until the stream has stopped, so no message of that stream reaches the inbox after it returns. The tracker does it when it gets `Cancel`:
 
-### Cancel the download <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_actors_tracker.gleam#L105-L108"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Cancel the download <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_actors_tracker.gleam#L105-L108"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 /// Stops the stream. No message of the stream reaches the actor after this.
@@ -214,7 +214,7 @@ pub fn cancel(tracker: Subject(Message)) -> Nil {
 
 The `Cancel` branch of `handle_message` in Step 2 calls `cancel_stream(state.request_id)` and marks the progress as finished. On `/stream/slow`, a cancel right after the start leaves this, even 2.5 seconds later, when the first chunk would have arrived:
 
-### The progress after a cancel <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_actors_cancel.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The progress after a cancel <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_actors_cancel.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 Progress(bytes: 0, chunks: 0, finished: True, failure: Some("Cancelled"))
@@ -226,7 +226,7 @@ You don't need to cancel when the actor stops. The actor owns the stream, so the
 
 A failure is the last message of a stream: `StreamError(request_id, error)`, where `error` is a `StreamFailure`. The tracker keeps its text, written by `stream_failure_to_string`. Here's what it ends with for the two failing endpoints:
 
-### The progress after a failure <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_actors_failures.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The progress after a failure <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_actors_failures.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 /stream/error  -> Progress(bytes: 0, chunks: 0, finished: True, failure: Some("HTTP 500: Error test chunk 1\nError test chunk 2\nError test chunk 3\n"))
@@ -243,7 +243,7 @@ Match on the `StreamFailure` variants instead of keeping the text when your acto
 
 The tracker has one public way in, `start_tracker(request)`, and one way to look inside, `progress(tracker)`. A test starts it against a mock server and waits until the progress says it finished. Here's a test module with a stream that ends and one that drops. It uses [dream_test](https://hexdocs.pm/dream_test), set up as in [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#test-your-code):
 
-### Test the tracker against a mock server <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_actors_testing.gleam#L6-L77"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test the tracker against a mock server <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_actors_testing.gleam#L6-L77"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{host, path, port, scheme}

@@ -55,7 +55,7 @@ A recorder runs in one of three modes. You pick one with a `recorder.Mode` value
 
 Here are the two pieces: a function that starts a recorder, and an API function that knows nothing about recorders:
 
-### Start a recorder and call the API <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_client.gleam#L6-L44"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Start a recorder and call the API <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_recording_client.gleam#L6-L44"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -101,7 +101,7 @@ fn describe_send_error(error: client.SendError) -> String {
 
 To record, start a recorder in `Record` mode, put it on the base request with `client.recorder`, and stop it when you're done with it:
 
-### Record the text once <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_round_trip.gleam#L10-L19"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Record the text once <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_recording_round_trip.gleam#L10-L19"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 pub fn record_text(
@@ -118,7 +118,7 @@ pub fn record_text(
 
 `record_text(api, "test/recordings")` returns `Ok("Hello, World!")`. The request went to the server, and `fetch_text` got the live answer. The recorder also wrote it to a file in `test/recordings`, one file for each request:
 
-### The name of a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_file_name.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The name of a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_recording_file_name.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 GET_localhost__text_<key hash>.json
@@ -134,7 +134,7 @@ A recorded call returns only when its file is on disk: `send` returns after the 
 
 Now stop the server, start a recorder in `Playback` mode on the same directory, and call the same function:
 
-### Play the text back <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_round_trip.gleam#L21-L27"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Play the text back <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_recording_round_trip.gleam#L21-L27"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 pub fn play_back_text(
@@ -148,7 +148,7 @@ pub fn play_back_text(
 
 With the server stopped:
 
-### Played back with the server stopped <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Played back with the server stopped <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_recording_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 play_back_text(api, "test/recordings")   -> Ok("Hello, World!")
@@ -161,7 +161,7 @@ With the recorder, `fetch_text` gets the recorded answer, although nothing liste
 
 Recording works the same for `stream_yielder`, `start_stream` and `stream_to`. A recording of a stream keeps each chunk on its own, with the time since the chunk before it. Here's a function that reads all the chunks of a stream:
 
-### Read every chunk of a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_stream.gleam#L5-L22"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Read every chunk of a stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_recording_stream.gleam#L5-L22"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -186,7 +186,7 @@ pub fn fetch_chunks(
 
 Recorded from `/stream/fast` and played back with the server stopped, `fetch_chunks` returns the same ten chunks, with the same boundaries:
 
-### The chunks played back <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_stream.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The chunks played back <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_recording_stream.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 Ok([<<"Chunk 1\n">>, <<"Chunk 2\n">>, <<"Chunk 3\n">>, <<"Chunk 4\n">>, <<"Chunk 5\n">>, <<"Chunk 6\n">>, <<"Chunk 7\n">>, <<"Chunk 8\n">>, <<"Chunk 9\n">>, <<"Chunk 10\n">>])
@@ -198,7 +198,7 @@ Playback also waits the recorded time before each chunk, so a test sees the stre
 
 In playback mode, a request with no recording isn't sent anywhere. It fails, and the error names the request and the recordings nearest to it. A GET of `/json`, which the recordings above don't have, through the playback recorder returns:
 
-### A request with no recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_no_recording.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### A request with no recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_recording_no_recording.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 Error(RequestError(NoRecording("GET", "http://localhost:19996/json", "test/recordings", [])))
@@ -206,7 +206,7 @@ Error(RequestError(NoRecording("GET", "http://localhost:19996/json", "test/recor
 
 The fields are `method`, `url`, `directory` (the directory that the recorder searched) and `nearest` (the nearest recordings). `transport_error_to_string` writes the error as text. No recording in the directory has the method and the path, so the text says that:
 
-### The text of a miss with no candidate <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_no_recording_text.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The text of a miss with no candidate <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_recording_no_recording_text.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 No recording matches GET http://localhost:19957/json
@@ -215,7 +215,7 @@ No recording in test/recordings has this method and path
 
 A GET of `/text?lang=en` has the method and the path of a recording, but not its query. The text names that recording and shows the part that differs. The `-` line is the value in the recording, and the `+` line is the value in the request:
 
-### The text of a near miss <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_near_miss.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The text of a near miss <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_recording_near_miss.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 No recording matches GET http://localhost:19958/text?lang=en
@@ -243,7 +243,7 @@ In `Passthrough` mode, the same request goes to the network, and `recorder.get_r
 
 Some responses are hard to get from a real API on purpose: a 429 rate limit, a 503 during maintenance, a body with a field that's rare. Write those recordings yourself. A `Recording` is a `RecordedRequest` and a `RecordedResponse`, and `storage.save_recording_immediately` writes it in the same form the recorder does:
 
-### Save a 429 recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_by_hand.gleam#L6-L39"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Save a 429 recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_recording_by_hand.gleam#L6-L39"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/matching
@@ -284,7 +284,7 @@ pub fn save_rate_limit_recording(recordings: String) -> Result(Nil, String) {
 
 `save_rate_limit_recording("test/recordings")` writes `GET_localhost__text_7646ad0d38469745.json`, with this content:
 
-### The file of the 429 <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_recording_by_hand.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The file of the 429 <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_recording_by_hand.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 {"version":"1.0","entries":[{"request":{"method":"GET","scheme":"http","host":"localhost","port":9876,"path":"/text","query":null,"headers":[],"body":""},"response":{"mode":"blocking","status":429,"headers":[["retry-after","30"]],"body":"Slow down"}}]}
@@ -298,7 +298,7 @@ You can also add a recording to a running recorder with `recorder.add_recording(
 
 To check recording files with a script, read them with `recording.decode_recording_file`. It turns the JSON of a file into a `RecordingFile`, with a `version` and a list of `entries`:
 
-### Read the statuses of a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_inspect.gleam#L6-L17"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Read the statuses of a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_recording_inspect.gleam#L6-L17"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/recording
@@ -321,7 +321,7 @@ For the file of the 429 above, `recorded_statuses` returns `Ok([429])`. `recordi
 
 The usual setup: commit the recordings to your repository, and start a playback recorder on their directory in your tests. This package has one such file, `test/fixtures/api/GET_localhost__text_7646ad.json`, which answers `GET http://localhost:9876/text` with `Recorded text from the fixture`. Here's a test of `fetch_text` that plays it back. It uses [dream_test](https://hexdocs.pm/dream_test), set up as in [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#test-your-code):
 
-### Test fetch_text with a committed recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_recording_testing.gleam#L6-L37"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test fetch_text with a committed recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_recording_testing.gleam#L6-L37"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{host, port, recorder as with_recorder, scheme}

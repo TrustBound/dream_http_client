@@ -34,7 +34,7 @@ import gleam/string
 ///
 /// ## Example
 ///
-/// ### Key on method and URL <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_matching_key.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Key on method and URL <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_matching_key.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/matching
@@ -69,7 +69,7 @@ pub type MatchKey =
 ///
 /// ## Example
 ///
-/// ### Key without the Authorization header <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_matching_scrubbed_key.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Key without the Authorization header <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_matching_scrubbed_key.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/matching

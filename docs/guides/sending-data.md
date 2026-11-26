@@ -40,7 +40,7 @@ The examples run against [dream_mock_server](https://github.com/TrustBound/dream
 
 Every function in this guide takes the API's base request as its first argument, the way [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#step-2-wrap-the-api-in-a-module-of-your-own) builds it. For the mock server, that's the `local_api` of Getting started:
 
-### The base request of the mock server <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_getting_started_api_client.gleam#L30-L37"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The base request of the mock server <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_getting_started_api_client.gleam#L30-L37"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 /// The base request of the API: its scheme, host and port. Every endpoint
@@ -67,7 +67,7 @@ pub fn local_api() -> ClientRequest {
 
 To create something, an API usually wants a POST with a JSON body. Build the JSON with `gleam_json`, set the method and the content type, and give the text to `body`:
 
-### Create a to-do with a JSON POST <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_sending_data_create.gleam#L5-L25"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Create a to-do with a JSON POST <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_sending_data_create.gleam#L5-L25"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -95,7 +95,7 @@ pub fn create_todo(
 
 `create_todo(api, "Buy milk")` returns a response with status 201 and this body, which is the mock server telling you what it got:
 
-### The echo of the new todo <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_sending_data_create.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The echo of the new todo <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_sending_data_create.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 {"method":"POST","url":"/post","data":"{\"title\":\"Buy milk\",\"done\":false}"}
@@ -111,7 +111,7 @@ The `data` field is your JSON, byte for byte. A few things to notice:
 
 PUT, PATCH and DELETE only differ in the method and the body, so put the common part in one helper and keep each public function to a line or two:
 
-### Replace, change and delete a to-do <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_sending_data_update.gleam#L5-L49"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Replace, change and delete a to-do <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_sending_data_update.gleam#L5-L49"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -163,7 +163,7 @@ fn send_json(
 
 Here's what the mock server answers to each:
 
-### The answers to the update, the patch and the delete <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_sending_data_update.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The answers to the update, the patch and the delete <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_sending_data_update.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 replace_todo(api, "Buy oat milk") -> 200 {"method":"PUT","url":"/put","data":"{\"title\":\"Buy oat milk\",\"done\":false}"}
@@ -179,7 +179,7 @@ These methods differ in one more way that matters when a connection fails. PUT a
 
 `query()` takes the part of the URL after the `?`, exactly as it'll be sent. User input such as `milk & eggs` has a space and an `&` in it, and both mean something in a URL. Let `uri.query_to_string` encode each value:
 
-### Search with an encoded query <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_sending_data_search.gleam#L5-L23"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Search with an encoded query <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_sending_data_search.gleam#L5-L23"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -205,7 +205,7 @@ pub fn search_todos(
 
 `search_todos(api, "milk & eggs", 2)` sends `/get?q=milk%20%26%20eggs&page=2`, and the mock server echoes:
 
-### The echo of the search <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_sending_data_search.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The echo of the search <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_sending_data_search.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 {"method":"GET","url":"/get","query":"q=milk%20%26%20eggs&page=2","headers":[]}
@@ -217,7 +217,7 @@ The `&` in the search term became `%26`, so the server sees one `q` value, not a
 
 Most APIs want a token in the `Authorization` header. Add it to the base request once, and every endpoint function that starts from that base sends it:
 
-### Add a token and a user agent <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_sending_data_headers.gleam#L5-L11"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Add a token and a user agent <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_sending_data_headers.gleam#L5-L11"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{type ClientRequest, add_header}
@@ -231,7 +231,7 @@ pub fn authorized(api: ClientRequest, token: String) -> ClientRequest {
 
 Here's the request head that a server receives for `api |> path("/items") |> authorized("test-token-123") |> send()`, apart from the `host` line:
 
-### The request head that the server receives <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_sending_data_headers.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The request head that the server receives <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_sending_data_headers.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 GET /items HTTP/1.1
@@ -249,7 +249,7 @@ Header names go out in lower case, whatever case you write them in. That's fine:
 
 `body` is for text. For a file, an image or any other bytes, use `body_bits`, which sends a `BitArray` exactly as it is:
 
-### Upload bytes <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_sending_data_upload.gleam#L5-L21"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Upload bytes <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_sending_data_upload.gleam#L5-L21"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -277,7 +277,7 @@ Sent to a server that echoes the body, `upload(api, <<137, 80, 78, 71, 0, 255>>)
 
 The response gives you more than a status and a body. `response.headers` is a list of `Header(name, value)`, and when a server refuses a request, its answer usually explains why. These two functions read both:
 
-### Read a header and explain a refusal <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_sending_data_responses.gleam#L6-L36"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Read a header and explain a refusal <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_sending_data_responses.gleam#L6-L36"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -315,7 +315,7 @@ pub fn explain(result: Result(HttpResponse, SendError)) -> String {
 
 What they return:
 
-### What the response helpers return <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_sending_data_responses.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### What the response helpers return <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_sending_data_responses.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 header_value(response, "x-request-id")          -> Ok("req-42")      (the server sent X-Request-Id: req-42)
@@ -335,7 +335,7 @@ Two kinds of server cover everything in this guide:
 
 For your own tests, the mock server's echo is usually enough. Here's a test module for `create_todo` and `search_todos` that starts a mock server for each test, each on a port of its own. Tests run at the same time, so two tests that start a server on the same port get in each other's way. It uses [dream_test](https://hexdocs.pm/dream_test), set up as in [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#test-your-code):
 
-### Test the to-do client against a mock server <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_sending_data_testing.gleam#L6-L70"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test the to-do client against a mock server <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_sending_data_testing.gleam#L6-L70"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{host, port, scheme}

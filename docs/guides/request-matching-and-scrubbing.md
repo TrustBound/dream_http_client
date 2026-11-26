@@ -50,7 +50,7 @@ This guide builds on [Testing with recorded responses](https://github.com/TrustB
 
 The recorder files and finds each recording under a key: a string made from the parts of the request you choose. `matching.request_key` builds the function that makes it. For a POST to `http://localhost:9876/search` with the body `milk` and an `Authorization` header:
 
-### Two keys of one request <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_matching_keys.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Two keys of one request <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_matching_keys.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 request_key(method: True, url: True, headers: False, body: False)   -> "POSThttp://localhost:9876/search"
@@ -63,7 +63,7 @@ The first one is the default, and it's what a recorder uses when you don't set a
 
 A search API that takes its terms in a POST body needs the body in the key. Otherwise every search finds the same recording. Here's a recorder for it:
 
-### Match requests by their body as well <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_matching_body_key.gleam#L6-L23"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Match requests by their body as well <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_matching_body_key.gleam#L6-L23"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/matching
@@ -88,7 +88,7 @@ pub fn start_search_recorder(
 
 Record a search for `milk` and one for `eggs` through it, stop it, and start it again in playback mode on the same directory. Each body gets its own answer back:
 
-### Two searches played back with a body key <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_matching_body_key.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Two searches played back with a body key <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_matching_body_key.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 search "milk" -> {"method":"POST","url":"/post","data":"milk"}
@@ -103,7 +103,7 @@ A request transformer is a function from `RecordedRequest` to `RecordedRequest`.
 
 Here's a recorder that does it, together with the response side from Step 4:
 
-### Remove the token and the cookies <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_matching_scrub.gleam#L7-L66"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Remove the token and the cookies <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_matching_scrub.gleam#L7-L66"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/recorder.{
@@ -170,7 +170,7 @@ fn without_cookies(
 
 Record a request with `Authorization: Bearer test-token-123` through it, then play back with `Bearer other-token`:
 
-### A request with its token removed <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_matching_request_scrub.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### A request with its token removed <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_matching_request_scrub.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 the saved file contains "test-token-123"         -> no
@@ -183,7 +183,7 @@ The comparison in `drop_authorization` uses `string.lowercase`, because the head
 
 A response transformer gets the request and the response, and returns the response to save. `drop_cookies` above removes every `set-cookie` header, from blocking and streaming responses alike. It runs only in record mode, and only on what's saved:
 
-### A response with its cookie removed <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_matching_response_scrub.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### A response with its cookie removed <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_matching_response_scrub.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 the response your code gets while recording   -> headers set-cookie: session=abc123, content-length: 2
@@ -197,7 +197,7 @@ Because it runs only when recording, a response transformer doesn't change a fil
 
 When the key of a request matches more than one recording, playback compares their responses. If they're all equal, it uses one of them. If they differ, the request fails:
 
-### Two different responses for one key <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_matching_ambiguous.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Two different responses for one key <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_matching_ambiguous.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 Error(RequestError(Unexpected("Ambiguous recording match for key: POSThttp://localhost:9876/post (2 recordings)")))
@@ -209,7 +209,7 @@ That's what happens when you record the `milk` and `eggs` searches of Step 2 wit
 
 The test worth having is the one that keeps secrets out of your repository: record through your recorder, load what it saved, and check it. `storage.load_recordings` reads every recording in a directory, so the test doesn't depend on file names. Here's one for the scrubbing recorder. It uses [dream_test](https://hexdocs.pm/dream_test), set up as in [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#test-your-code):
 
-### Test that recordings hold no token <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_matching_testing.gleam#L6-L59"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test that recordings hold no token <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_matching_testing.gleam#L6-L59"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{

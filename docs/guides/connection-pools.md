@@ -53,7 +53,7 @@ There's nothing to set up before the first request. The client keeps its connect
 
 To see the pool at work, you need requests that run at the same time. This helper sends each request from its own process and collects the statuses in order:
 
-### Send requests at the same time <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_connections_parallel.gleam#L6-L31"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Send requests at the same time <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_connections_parallel.gleam#L6-L31"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{type ClientRequest, type SendError, send}
@@ -86,7 +86,7 @@ fn await_status(
 
 Here's how many connections the client has open after each of these, starting from none:
 
-### Connections after each round of requests <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_1.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Connections after each round of requests <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_connections_step_1.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 send() four times, one after another, to /stream/fast   -> 1 connection
@@ -106,7 +106,7 @@ Connections are kept per origin: the scheme, the host and the port, and also the
 
 HTTP/2 sends many requests over one connection at the same time, each on its own stream. Tell the client to speak HTTP/2 with `protocols`:
 
-### Ask for HTTP/2 over plain HTTP <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_connections_http2.gleam#L5-L11"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Ask for HTTP/2 over plain HTTP <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_connections_http2.gleam#L5-L11"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{type ClientRequest, Http2Only, path, protocols}
@@ -120,7 +120,7 @@ pub fn feed_request(api: ClientRequest) -> ClientRequest {
 
 Four of these at once, with the same `send_all`, give:
 
-### Four HTTP/2 requests at once <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Four HTTP/2 requests at once <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_connections_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 [Ok(200), Ok(200), Ok(200), Ok(200)], 1 connection
@@ -138,7 +138,7 @@ Plain HTTP uses HTTP/1.1 unless you set `Http2Only`. An HTTP/2 connection carrie
 
 By default the client opens up to 50 connections to each host. To change that for the whole program, set `max_connections` in the transport configuration:
 
-### Limit the connections to each host <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_connections_limit.gleam#L5-L11"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Limit the connections to each host <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_connections_limit.gleam#L5-L11"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{configure_transport, max_connections}
@@ -152,7 +152,7 @@ pub fn limit_connections(limit: Int) -> Nil {
 
 After `limit_connections(2)`, four requests at once to `/stream/fast` still all succeed, but they share two connections: two run, and two wait until a connection is free.
 
-### Four requests at a limit of two connections <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_3.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Four requests at a limit of two connections <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_connections_step_3.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 send_all of four requests            -> [Ok(200), Ok(200), Ok(200), Ok(200)], 2 connections
@@ -167,7 +167,7 @@ A global limit is fair to nobody in particular. Suppose your program calls a rep
 
 A pool of its own fixes that. Make it once with `new_pool`, and send the report requests through it with `pool`:
 
-### Give report requests their own pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_connections_pool.gleam#L5-L21"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Give report requests their own pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_connections_pool.gleam#L5-L21"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -191,7 +191,7 @@ pub fn report_request(
 
 Three report requests and two ordinary requests to the same host, all at once, give:
 
-### Report requests and ordinary requests at once <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_4.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Report requests and ordinary requests at once <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_connections_step_4.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 [Ok(200), Ok(200), Ok(200), Ok(200), Ok(200)], 3 connections
@@ -205,7 +205,7 @@ Make the pool once and keep it, for example in your application's state. `client
 
 `max_connections` is one of the transport settings. They all live in one `TransportConfig`, which you build with `transport_config()` and the setting functions, then apply with `configure_transport()`:
 
-### Configure a busy service <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_connections_tuning.gleam#L5-L17"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Configure a busy service <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_connections_tuning.gleam#L5-L17"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{type TransportConfig}
@@ -231,7 +231,7 @@ Getters read a configuration back. For `busy_service_config()`, `get_max_connect
 
 The client writes a few lines to the OTP logger about its connections and bodies. With the default `log_level`, `LogWarning`, you see only the warnings:
 
-### The warnings of the client <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_6.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The warnings of the client <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_connections_step_6.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 warning: [dream_http] connection down: pid=<pid> protocol=http reason=closed killed_streams=1
@@ -244,7 +244,7 @@ warning: unrecognized Content-Encoding, passing through raw bytes: br
 
 A server can also close a connection while it is idle. That is normal, and the next request opens a new one, so the default level writes nothing for it. To see a line for each of these closes, set `client.log_level(client.LogInfo)` and apply it with `configure_transport`. Then the same requests give one more line:
 
-### The log lines at LogInfo <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_connections_step_6_info.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The log lines at LogInfo <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_connections_step_6_info.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 info: [dream_http] connection closed: pid=<pid> protocol=http reason=closed
@@ -269,7 +269,7 @@ Connection behavior is global: the pool, the transport configuration and the log
 
 For the code of your program, the more useful test is the one from Step 4: does the heavy caller stay inside its pool? You can see it from the outside. Give every request a 500 ms timeout and send three report requests and two ordinary ones at once. The report requests share one connection, so two of them wait longer than their timeout. The ordinary ones get connections of their own and don't wait. A pool is a value, not global state, so this test can run in parallel with the others. It uses [dream_test](https://hexdocs.pm/dream_test), set up as in [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#test-your-code):
 
-### Test that report requests stay in their pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_connections_testing.gleam#L6-L53"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test that report requests stay in their pool <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_connections_testing.gleam#L6-L53"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{

@@ -30,7 +30,7 @@ import simplifile
 ///
 /// ## Examples
 ///
-/// ### Load recordings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_storage_load.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Load recordings <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_storage_load.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/storage
@@ -156,7 +156,7 @@ pub fn remove_recording_file(file_path: String) -> Result(Nil, String) {
 ///
 /// ## Examples
 ///
-/// ### Save one recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_storage_save_one.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Save one recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_storage_save_one.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/matching
@@ -245,7 +245,7 @@ pub fn save_recording_immediately(
 ///
 /// ## Examples
 ///
-/// ### Save many recordings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_storage_save_many.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Save many recordings <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_storage_save_many.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/matching

@@ -74,7 +74,7 @@ This guide covers the first two.
 
 Start with the yielder. `stream_yielder()` sends the request and gives you a `Yielder` with one item for each chunk of the body. Here's a complete program that prints each chunk as it arrives, with its size:
 
-### Print each chunk as it arrives <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_streaming_print_chunks.gleam#L5-L37"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Print each chunk as it arrives <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_streaming_print_chunks.gleam#L5-L37"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -114,7 +114,7 @@ fn print_chunk(
 
 When you run `print_chunks()`, it returns `Ok(10)` and prints this, one line every 100 ms:
 
-### What print_chunks prints <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_streaming_print_chunks.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### What print_chunks prints <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_streaming_print_chunks.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 [8 bytes] Chunk 1
@@ -146,7 +146,7 @@ Printing raw chunks is fine for a demo. Real feeds send records, such as one JSO
 
 So if you decode each chunk as one JSON object, your code works in your tests and fails at random in production. The fix is a buffer. Keep the bytes after the last newline, and put them in front of the next chunk. This function splits the complete lines off the front of a buffer:
 
-### Split the complete lines off a buffer <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_streaming_json_lines.gleam#L77-L95"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Split the complete lines off a buffer <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_streaming_json_lines.gleam#L77-L95"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 /// Splits the complete lines off the front of `buffer`. Returns the lines
@@ -172,7 +172,7 @@ fn collect_lines(
 
 It works on bytes, not text, so a character that's split across two chunks doesn't break it. Here's what it returns when a line arrives in two pieces:
 
-### A line in two pieces <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_streaming_complete_lines.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### A line in two pieces <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_streaming_complete_lines.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 complete_lines(<<"{\"message\":\"first\"}\n{\"mess">>)
@@ -186,7 +186,7 @@ The first call returns the one complete line, and keeps `{"mess` for later. The 
 
 Now use it in a stream. The fold carries two things from chunk to chunk: how many events it printed, and the bytes that wait for the rest of their line. This code goes in the same module as `complete_lines`:
 
-### Print the message of each JSON line <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_streaming_json_lines.gleam#L6-L75"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Print the message of each JSON line <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_streaming_json_lines.gleam#L6-L75"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -263,7 +263,7 @@ fn message_decoder() -> decode.Decoder(String) {
 
 `print_mock_events()` returns `Ok(5)` and prints:
 
-### What print_mock_events prints <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_streaming_json_events.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### What print_mock_events prints <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_streaming_json_events.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 JSON event 1
@@ -289,7 +289,7 @@ A stream can fail before the first chunk or in the middle of the body, and the f
 
 Here's a byte counter that turns each of those into a result your program can act on, and that keeps the number of bytes that arrived before the failure:
 
-### Count bytes and tell failures apart <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_streaming_failures.gleam#L5-L49"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Count bytes and tell failures apart <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_streaming_failures.gleam#L5-L49"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -343,7 +343,7 @@ The trick is that `try_fold` passes the running total into `add_chunk`. When an 
 
 Here's what `count_bytes` returns for each mock endpoint:
 
-### What count_bytes returns for each endpoint <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_streaming_failures.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### What count_bytes returns for each endpoint <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_streaming_failures.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 /stream/fast                     -> Ok(81)
@@ -370,7 +370,7 @@ For that, use `start_stream()`. It starts a new process for the stream and retur
 
 You need only the callbacks you care about. This program downloads `/stream/fast` to a file in the background, then waits for the result:
 
-### Download a stream to a file in the background <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_streaming_callbacks.gleam#L6-L54"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Download a stream to a file in the background <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_streaming_callbacks.gleam#L6-L54"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -444,7 +444,7 @@ Callbacks don't carry state from one call to the next. They work well for passin
 
 Sometimes you have what you need before the stream ends: the first event of a feed, a file's header, or a user who closed the page. With `start_stream()`, call `cancel_stream_handle(handle)`. This function takes the first chunk of a stream and stops the rest:
 
-### Take the first chunk and stop the stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_streaming_cancel.gleam#L5-L22"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Take the first chunk and stop the stream <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_streaming_cancel.gleam#L5-L22"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -499,7 +499,7 @@ Here's what you'll see:
 
 This program reads `/stream/slow`, which runs for 10 seconds, with a 3-second timeout:
 
-### Read a 10-second stream with a 3-second timeout <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_streaming_long_timeout.gleam#L6-L32"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Read a 10-second stream with a 3-second timeout <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_streaming_long_timeout.gleam#L6-L32"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -546,7 +546,7 @@ Your streaming code depends on two things you can't control in a unit test: what
 
 Add the test dependencies first, under `[dev-dependencies]` in your `gleam.toml`. These are the lines of this package's own `gleam.toml`:
 
-### The test dependencies <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/gleam.toml#L41-L42"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The test dependencies <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/gleam.toml#L42-L43"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```toml
 dream_mock_server = ">= 2.0.0 and < 3.0.0"
@@ -555,7 +555,7 @@ dream_test = ">= 3.0.0 and < 4.0.0"
 
 Here's a test module for `print_events` from Step 2 that does both. It uses [dream_test](https://hexdocs.pm/dream_test):
 
-### Test print_events with a mock server and a recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_streaming_testing.gleam#L6-L103"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test print_events with a mock server and a recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_streaming_testing.gleam#L6-L103"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{

@@ -39,7 +39,7 @@ import gleam/string
 ///
 /// ## Examples
 ///
-/// ### Record and stop <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_record_and_stop.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Record and stop <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_record_and_stop.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/client
@@ -91,7 +91,7 @@ pub opaque type Recorder {
 ///
 /// ## Example (drop Authorization header)
 ///
-/// ### Drop the Authorization header <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_request_transformer.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Drop the Authorization header <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_request_transformer.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recorder.{directory, mode, request_transformer}
@@ -145,7 +145,7 @@ pub type ResponseTransformer =
 /// Set it with `mode()`. For a mode in a text, for example from an
 /// environment variable, use `parse_mode()`.
 ///
-/// ### Build a playback recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_builder.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Build a playback recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_builder.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recorder.{directory, mode}
@@ -182,7 +182,7 @@ pub type Mode {
 ///   Record mode, as set by `response_transformer()`. The default returns the
 ///   response unchanged.
 ///
-/// ### Build a playback recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_builder.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Build a playback recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_builder.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recorder.{directory, mode}
@@ -214,7 +214,7 @@ pub type RecorderBuilder {
 ///
 /// ## Example
 ///
-/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/matching
@@ -276,7 +276,7 @@ pub fn new() -> RecorderBuilder {
 ///
 /// ## Example
 ///
-/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/matching
@@ -329,7 +329,7 @@ pub fn directory(
 ///
 /// ## Example
 ///
-/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/matching
@@ -380,7 +380,7 @@ pub fn mode(builder: RecorderBuilder, mode: Mode) -> RecorderBuilder {
 /// case-sensitive. Any other text gives
 /// `Error("Unknown recorder mode: <text>. Expected one of: record, playback, passthrough")`.
 ///
-/// ### Start a recorder from a mode text <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_parse_mode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Start a recorder from a mode text <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_parse_mode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recorder.{
@@ -426,7 +426,7 @@ pub fn parse_mode(text: String) -> Result(Mode, String) {
 ///
 /// ## Example
 ///
-/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/matching
@@ -480,7 +480,7 @@ pub fn key(
 ///
 /// ## Example
 ///
-/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/matching
@@ -534,7 +534,7 @@ pub fn request_transformer(
 ///
 /// ## Example
 ///
-/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Build a record recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_builder_steps.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/matching
@@ -629,7 +629,7 @@ type RecorderState {
 ///
 /// ## Examples
 ///
-/// ### Start a playback recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_start.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Start a playback recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_start.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recorder.{directory, mode, start}
@@ -1092,7 +1092,7 @@ fn replace_json_string_value(
 ///
 /// ## Examples
 ///
-/// ### Add a recording by hand <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_add_recording.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Add a recording by hand <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_add_recording.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recorder.{directory, mode, start}
@@ -1173,7 +1173,7 @@ pub fn add_recording(
 ///
 /// ## Examples
 ///
-/// ### Check the mode <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_is_record_mode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Check the mode <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_is_record_mode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recorder.{directory, mode, start}
@@ -1231,7 +1231,7 @@ fn current_mode(recorder: Recorder) -> Result(Mode, Nil) {
 ///
 /// ## Example
 ///
-/// ### Scrub a response <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_transform_response.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Scrub a response <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_transform_response.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recorder.{directory, mode, response_transformer, start}
@@ -1304,7 +1304,7 @@ pub fn transform_response(
 ///
 /// ## Examples
 ///
-/// ### Find a recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_find_recording.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Find a recording <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_find_recording.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recorder.{directory, mode, start}
@@ -1604,7 +1604,7 @@ fn body_value(body: BitArray) -> option.Option(String) {
 ///
 /// ## Examples
 ///
-/// ### Read the captured recordings <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_get_recordings.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Read the captured recordings <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_get_recordings.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/client
@@ -1681,7 +1681,7 @@ pub fn get_recordings(recorder: Recorder) -> List(recording.Recording) {
 ///
 /// ## Examples
 ///
-/// ### Stop a recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recorder_stop.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Stop a recorder <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recorder_stop.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recorder.{directory, mode, start}

@@ -53,7 +53,7 @@ All four take the same request, so everything in this guide about building a req
 
 Here's a complete program. It builds a request for `http://localhost:9876/text`, sends it, and prints what came back:
 
-### Send a request and print the answer <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_getting_started_first_request.gleam#L5-L32"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Send a request and print the answer <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_getting_started_first_request.gleam#L5-L32"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -88,7 +88,7 @@ fn print_response(response: HttpResponse) -> Nil {
 
 Run it with `gleam run`, and it prints:
 
-### What main prints <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_getting_started_step_1.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### What main prints <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_getting_started_step_1.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 Status: 200
@@ -109,7 +109,7 @@ Printing a body is fine for a first try. In a real program you don't want HTTP d
 
 Here's that module. It knows where the API lives, sends the request, and decodes the JSON into a `Greeting`:
 
-### Fetch a greeting and decode its JSON <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_getting_started_api_client.gleam#L6-L61"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Fetch a greeting and decode its JSON <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_getting_started_api_client.gleam#L6-L61"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -172,7 +172,7 @@ fn greeting_decoder() -> decode.Decoder(Greeting) {
 
 `fetch_greeting(local_api())` returns:
 
-### The greeting <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_getting_started_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The greeting <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_getting_started_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 Ok(Greeting("Hello, World!", True))
@@ -188,7 +188,7 @@ A few choices in this module are worth copying:
 
 Each case of `ApiError` asks for a different reaction from your program, so it pays to keep them apart. Here's what `fetch_greeting` returns in each situation:
 
-### What fetch_greeting returns in each case <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_getting_started_step_3.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### What fetch_greeting returns in each case <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_getting_started_step_3.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 the API answers its greeting       -> Ok(Greeting("Hello, World!", True))
@@ -203,7 +203,7 @@ the API answers <html></html>      -> Error(BadBody(UnexpectedByte("0x3C")))
 
 To show an error to a person or write it to a log, add one function to the module that turns it into a message:
 
-### Describe an API error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_getting_started_api_client.gleam#L63-L72"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Describe an API error <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_getting_started_api_client.gleam#L63-L72"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 /// A message about the error, for a log or for the person who waits.
@@ -226,7 +226,7 @@ One thing the client does for you: when a connection closes before the server an
 
 Your `main`, or a request handler, or an actor, now calls one function and handles one error type:
 
-### Print the greeting or the error <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_getting_started_main.gleam#L5-L15"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Print the greeting or the error <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_getting_started_main.gleam#L5-L15"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import gleam/io
@@ -255,7 +255,7 @@ Because `fetch_greeting` takes the base request as a parameter, you can point it
 
 Add the test dependencies first, under `[dev-dependencies]` in your `gleam.toml`. These are the lines of this package's own `gleam.toml`:
 
-### The test dependencies <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/gleam.toml#L41-L42"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The test dependencies <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/gleam.toml#L42-L43"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```toml
 dream_mock_server = ">= 2.0.0 and < 3.0.0"
@@ -264,7 +264,7 @@ dream_test = ">= 3.0.0 and < 4.0.0"
 
 Here's a test module for `fetch_greeting` with one test for the greeting and one for each failure that a server can cause. It uses [dream_test](https://hexdocs.pm/dream_test):
 
-### Test fetch_greeting against mock servers <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_getting_started_testing.gleam#L6-L65"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test fetch_greeting against mock servers <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_getting_started_testing.gleam#L6-L65"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{port}

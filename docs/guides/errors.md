@@ -59,11 +59,23 @@ Here's what each `TransportError` means, and what usually helps:
 
 `transport_error_to_string(error)` turns any of them into one line for a log. The streaming functions report the same `TransportError` inside a `StreamFailure`. The [Streaming a response](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/streaming.md#step-3-handle-a-stream-that-fails) guide covers that side.
 
+### The shared error type
+
+`client.to_error(error)` maps a `TransportError` to `dream_errors.Error(TransportError)`, the error type that the Dream packages share. An app that also uses other Dream packages can then handle all their errors with one type. The `TransportError` stays whole as the cause.
+
+| `TransportError` | `dream_errors.Error` | Message |
+|:---|:---|:---|
+| `TimedOut(timeout_ms)` | `Timeout` | `the HTTP request got no response in <timeout_ms> ms` |
+| `ConnectFailed(reason)` | `Unavailable` | `the HTTP client could not connect to the server: <reason>` |
+| Every other error | `Failed` | `the HTTP request failed: ` and the text of `transport_error_to_string` |
+
+`RemoteClosed` and `ConnectionError` give `Failed`, not `Unavailable`. For both of them, the client reached the server. After `RemoteClosed`, the server can have processed the request, so a blind retry is not safe. A `ResponseError` is not a `TransportError`, because the server answered: read its status to decide what it means for your app. The message is text for developers and logs. Do not show it to the users of an app.
+
 ## Step 1: Sort a result into what to do next
 
 Most programs don't care about all nine transport errors. They care about one question: what now? This function answers it once, so the rest of your code doesn't have to:
 
-### Sort a result into done, try later or give up <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_errors_classify.gleam#L5-L45"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Sort a result into done, try later or give up <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_errors_classify.gleam#L5-L45"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -111,7 +123,7 @@ fn classify_transport(error: TransportError) -> Outcome {
 
 Here's what `classify` returns for real failures:
 
-### What classify returns <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_errors_step_1.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### What classify returns <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_errors_step_1.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 send(api |> path("/text"))                  -> Done(response)  (status 200)
@@ -133,7 +145,7 @@ Two settings decide how long a request may take:
 
 Set both on the request that needs them:
 
-### Wait long enough for a slow report <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_errors_timeouts.gleam#L5-L20"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Wait long enough for a slow report <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_errors_timeouts.gleam#L5-L20"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -156,7 +168,7 @@ pub fn fetch_report(
 
 The mock server answers `/slow` after 5 seconds, so:
 
-### A short and a long timeout <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_errors_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### A short and a long timeout <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_errors_step_2.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 fetch_report(api, 500)    -> Error(RequestError(TimedOut(500)))
@@ -171,7 +183,7 @@ By default the client follows redirects, up to five in a row, and gives you the 
 
 Sometimes you want the redirect itself: to show the user where a short link goes, or to store the new location of a moved resource. Turn redirects off with `auto_redirect(False)` and read the `location` header:
 
-### Read where a redirect points <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_errors_redirects.gleam#L5-L22"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Read where a redirect points <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_errors_redirects.gleam#L5-L22"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{type ClientRequest, auto_redirect, path, send}
@@ -202,7 +214,7 @@ A server that redirects in a loop doesn't hang your program. After five redirect
 
 A `TryLater` outcome invites a retry. Two rules make retries safe: wait longer each time, so a struggling server gets room to recover, and repeat only requests that are safe to repeat. A GET, PUT or DELETE has the same effect if it runs twice. A POST that creates an order doesn't: if the first one reached the server and only the answer got lost, a retry makes a second order.
 
-### Retry with a growing wait <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_errors_retry.gleam#L6-L35"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Retry with a growing wait <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_errors_retry.gleam#L6-L35"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{type ClientRequest, get_method, send}
@@ -239,7 +251,7 @@ fn is_safe_to_repeat(method: http.Method) -> Bool {
 
 Against a server that answers 500 every time, with 3 attempts and a first wait of 10 ms:
 
-### Retries against a server that always fails <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_errors_step_4.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Retries against a server that always fails <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_errors_step_4.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 send_with_retry(GET request, 3, 10)    -> TryLater("HTTP 500"), and the server got 3 requests
@@ -271,7 +283,7 @@ Errors are the part of your code that runs least often in development, so they'r
 
 Here's a test module for `classify` that covers a status to retry, a status to give up on, and a refused connection. It uses [dream_test](https://hexdocs.pm/dream_test), set up as in [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#test-your-code):
 
-### Test classify against failing servers <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_errors_testing.gleam#L5-L66"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test classify against failing servers <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_errors_testing.gleam#L5-L66"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{host, path, port, scheme, send}

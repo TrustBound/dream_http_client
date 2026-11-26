@@ -49,7 +49,7 @@ You also need the certificate authority of the service, as a PEM file: a text fi
 
 Start with what goes wrong. Here's a client for the internal service, with a base request and one endpoint function:
 
-### A client for an internal HTTPS service <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_tls_request.gleam#L7-L25"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### A client for an internal HTTPS service <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_tls_request.gleam#L7-L25"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -75,7 +75,7 @@ pub fn fetch_greeting(api: ClientRequest) -> Result(HttpResponse, SendError) {
 
 Send `fetch_greeting` with a base request that has no certificate authority file, `client.new() |> host("localhost") |> port(service_port)`, and the client checks the server's certificate against your system's authorities. None of them signed it, so the handshake fails:
 
-### The request with no file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_tls_unknown_ca.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The request with no file <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_tls_unknown_ca.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 Error(RequestError(ConnectFailed("{tls_alert,{unknown_ca,...")))
@@ -87,7 +87,7 @@ The reason is the error that Erlang's `ssl` application gave, as text. `unknown_
 
 `internal_api` in the snippet above already has the fix: `certificate_authority_file(ca_file)`. With it, the request trusts the authorities in that file instead of the system's, the same as `curl --cacert`:
 
-### The request with the file of the authority <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_tls_trusted.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### The request with the file of the authority <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_tls_trusted.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 fetch_greeting(internal_api(service_port, "certs/internal-ca.pem"))
@@ -104,7 +104,7 @@ A few things to know:
 
 Two mistakes are common, and they look different:
 
-### Two mistakes with the file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/outputs/guide_tls_mistakes.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Two mistakes with the file <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/outputs/guide_tls_mistakes.txt"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```text
 the file holds another authority   -> Error(RequestError(ConnectFailed("{tls_alert,{unknown_ca,...")))
@@ -120,7 +120,7 @@ Both are `ConnectFailed`, so the request never reached the service. Matching on 
 
 If every service your program calls is signed by the same private authority, set the file once in the transport configuration:
 
-### Trust the company authority by default <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_tls_default.gleam#L6-L14"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Trust the company authority by default <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_tls_default.gleam#L6-L14"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_http_client/client.{
@@ -158,7 +158,7 @@ gleam add --dev dream_http_server
 
 Here's a test module for `fetch_greeting`. It takes the three file paths as a `TestFiles` value, so your `tests()` function passes the paths of your files. It uses [dream_test](https://hexdocs.pm/dream_test), set up as in [Getting started](https://github.com/TrustBound/dream_http_client/blob/main/docs/guides/getting-started.md#test-your-code):
 
-### Test the internal client against a local HTTPS server <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/guide_tls_testing.gleam#L6-L53"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+### Test the internal client against a local HTTPS server <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/guide_tls_testing.gleam#L6-L53"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 
 ```gleam
 import dream_test/matchers.{be_equal, or_fail_with, should}

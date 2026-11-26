@@ -5,6 +5,21 @@ All notable changes to `dream_http_client` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.1.0] - 2026-11-26
+
+### Added
+
+- `client.to_error(error)` maps a `TransportError` to `dream_errors.Error(TransportError)`, the error type that the Dream packages share. `TimedOut` gives `Timeout`, `ConnectFailed` gives `Unavailable`, and every other error gives `Failed`. `RemoteClosed` and `ConnectionError` give `Failed`, because the client reached the server for both of them. Each error keeps the `TransportError` as the cause. The message is text for developers and logs.
+- `dream_errors` (`>= 1.0.0 and < 2.0.0`) is a new dependency.
+
+### Documentation
+
+- The errors guide shows the mapping of each `TransportError`, and why a `ResponseError` has no mapping.
+
+### Testing
+
+- 791 tests, 0 failed, 100% line coverage (1318 of 1318 lines), in 154 seconds over one run, with the coverage report on (with the mock server and the edge server). Apple M1 Max, 10 cores, 64 GB, macOS 26.5.1, OTP 29, Gleam 1.19.2.
+
 ## [6.0.0] - 2026-11-25
 
 This release was first prepared as 5.2.0 and never published. It changes four

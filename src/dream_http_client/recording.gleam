@@ -32,7 +32,7 @@ import gleam/string
 ///
 /// ## Examples
 ///
-/// ### Describe a request <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_request.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Describe a request <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recording_request.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recording
@@ -79,7 +79,7 @@ pub type RecordedRequest {
 ///
 /// ## Examples
 ///
-/// ### Describe responses <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_response.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Describe responses <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recording_response.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recording
@@ -135,7 +135,7 @@ pub type RecordedResponse {
 ///
 /// ## Examples
 ///
-/// ### Describe a chunk <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_chunk.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Describe a chunk <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recording_chunk.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recording
@@ -164,7 +164,7 @@ pub type Chunk {
 ///
 /// ## Examples
 ///
-/// ### Pair a request with a response <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_recording.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Pair a request with a response <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recording_recording.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recording
@@ -193,7 +193,7 @@ pub type Recording {
 ///
 /// ## Examples
 ///
-/// ### Build a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_file.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Build a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recording_file.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recording
@@ -232,7 +232,7 @@ pub type RecordingFile {
 ///
 /// ## Examples
 ///
-/// ### Encode a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_encode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Encode a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recording_encode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recording
@@ -410,7 +410,7 @@ fn encode_scheme(scheme: http.Scheme) -> json.Json {
 ///
 /// ## Examples
 ///
-/// ### Decode a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.0.0/test/snippets/doc_recording_decode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
+/// ### Decode a recording file <a href="https://github.com/TrustBound/dream_http_client/blob/6.1.0/test/snippets/doc_recording_decode.gleam"><img align="right" alt="Tested snippet" src="https://img.shields.io/badge/%F0%9F%A7%AA_tested-snippet-lightgreen.svg?style=flat-square"></a>
 ///
 /// ```gleam
 /// import dream_http_client/recording
