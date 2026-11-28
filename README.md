@@ -20,7 +20,7 @@
 
 ## What is Dream HTTP Client?
 
-Dream HTTP Client is an HTTP and HTTPS client for Gleam, built on gun, with HTTP/1.1 and HTTP/2. You build a request with a pipe of plain functions, then send it and wait, read the response as a stream, or have the chunks arrive as messages in an OTP actor. Record real API calls once and play them back in tests with no network. Every failure comes back as a `Result`, so nothing fails silently.
+Dream HTTP Client is an HTTP and HTTPS client for Gleam, built on gun, with HTTP/1.1 and HTTP/2. You build a request with a pipe of plain functions, then send it and wait, read the response as a stream, or have the chunks arrive as messages in an OTP actor. Record real API calls once and play them back in tests with no network. Every failure comes back as a typed error in a `Result`, such as a timeout or a failed connection, that you can match on.
 
 ## Features
 
