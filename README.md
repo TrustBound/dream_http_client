@@ -108,7 +108,9 @@ This module follows [Dream's design principles](https://github.com/TrustBound/dr
 
 ## About Dream
 
-This module was originally built for the [Dream](https://github.com/TrustBound/dream) web toolkit, but it's completely standalone and can be used in any Gleam project. It follows Dream's design principles and will be maintained as part of the Dream ecosystem.
+[Dream](https://github.com/TrustBound/dream) is a collection of Gleam packages for building production web applications. Each package implements its standards completely, shares the same naming and style as the others, and is fully tested. TrustBound builds Dream for its own production systems and shares it in the hope that it helps yours.
+
+dream_http_client works on its own. You don't need the rest of Dream to use it.
 
 ## Contributing
 
